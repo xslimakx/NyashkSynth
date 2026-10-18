@@ -386,7 +386,7 @@ impl WavEdit {
         }
         if self.dirty_enc && (force || now - self.last_edit > 0.4) {
             let s = wavetable::encode_table(&self.name, &self.tbl);
-            let op = if self.osc == 0 { &p.a } else { &p.b };
+            let op = crate::editor::osc(p, self.osc);
             if let Ok(mut g) = op.wave.lock() {
                 *g = s;
             }
@@ -531,7 +531,7 @@ impl WavEdit {
     #[allow(clippy::too_many_arguments)]
     pub fn show(&mut self, ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, rect: Rect, now: f64, status: &mut String) -> bool {
         let mut close = false;
-        let op = if self.osc == 0 { &p.a } else { &p.b };
+        let op = crate::editor::osc(p, self.osc);
         let nfr = self.tbl.frames();
         if self.peaks_dirty || self.peaks.len() != nfr {
             self.peaks = (0..nfr).map(|i| self.tbl.frame_time(i).iter().fold(0.0f32, |a, b| a.max(b.abs()))).collect();
@@ -549,7 +549,7 @@ impl WavEdit {
         ui.painter().text(
             Pos2::new(x0, rect.top() + 20.0),
             Align2::LEFT_CENTER,
-            format!("WAVETABLE EDITOR   OSC {}   {}   frame {}/{}{}", if self.osc == 0 { "A" } else { "B" }, self.name.chars().take(28).collect::<String>(), self.frame + 1, nfr, sel_txt),
+            format!("WAVETABLE EDITOR   OSC {}   {}   frame {}/{}{}", crate::editor::OSC_NAMES[self.osc.min(2)], self.name.chars().take(28).collect::<String>(), self.frame + 1, nfr, sel_txt),
             mono(12.0),
             WHITE,
         );

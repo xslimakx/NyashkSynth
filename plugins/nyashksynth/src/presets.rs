@@ -1,5 +1,6 @@
 //! Factory presets: lists of (parameter id, plain value). Everything else is reset to default.
 
+use crate::params::{NLFO, N_SRC};
 use crate::files;
 use crate::shared::Shared;
 use crate::SynthParams;
@@ -676,15 +677,15 @@ fn find(map: &[(String, ParamPtr, String)], id: &str) -> Option<ParamPtr> {
 /// Embedded data blobs stored next to the numbers: wavetables, noise sample, drawn LFO shapes.
 #[derive(Default, Clone)]
 pub struct Blobs {
-    pub wave: [String; 2],
+    pub wave: [String; 3],
     pub noise: String,
-    pub lfo: [String; 4],
+    pub lfo: [String; NLFO],
 }
 
 impl Blobs {
     pub fn from_params(p: &SynthParams) -> Blobs {
         let g = |m: &std::sync::Mutex<String>| m.lock().map(|x| x.clone()).unwrap_or_default();
-        Blobs { wave: [g(&p.a.wave), g(&p.b.wave)], noise: g(&p.noise_sample), lfo: std::array::from_fn(|i| g(&p.lfo[i].draw)) }
+        Blobs { wave: [g(&p.a.wave), g(&p.b.wave), g(&p.c.wave)], noise: g(&p.noise_sample), lfo: std::array::from_fn(|i| g(&p.lfo[i].draw)) }
     }
 
     /// Store in the parameters and rebuild the shared audio-side data.
@@ -696,8 +697,9 @@ impl Blobs {
         };
         set(&p.a.wave, &self.wave[0]);
         set(&p.b.wave, &self.wave[1]);
+        set(&p.c.wave, &self.wave[2]);
         set(&p.noise_sample, &self.noise);
-        for i in 0..4 {
+        for i in 0..NLFO {
             set(&p.lfo[i].draw, &self.lfo[i]);
         }
         sh.sync_from_params(p);
@@ -769,11 +771,16 @@ fn parse_file(txt: &str) -> (Vec<(String, f32)>, Blobs) {
             match b {
                 "a_wave" => bl.wave[0] = v.to_string(),
                 "b_wave" => bl.wave[1] = v.to_string(),
+                "c_wave" => bl.wave[2] = v.to_string(),
                 "noise" => bl.noise = v.to_string(),
                 "lfo1" => bl.lfo[0] = v.to_string(),
                 "lfo2" => bl.lfo[1] = v.to_string(),
                 "lfo3" => bl.lfo[2] = v.to_string(),
                 "lfo4" => bl.lfo[3] = v.to_string(),
+                "lfo5" => bl.lfo[4] = v.to_string(),
+                "lfo6" => bl.lfo[5] = v.to_string(),
+                "lfo7" => bl.lfo[6] = v.to_string(),
+                "lfo8" => bl.lfo[7] = v.to_string(),
                 _ => {}
             }
         } else if let Ok(x) = v.parse::<f32>() {
@@ -827,10 +834,13 @@ pub fn save_user(params: &SynthParams, name: &str, cat: &str) -> Result<PathBuf,
     if !bl.wave[1].is_empty() {
         txt.push_str(&format!("@b_wave={}\n", bl.wave[1]));
     }
+    if !bl.wave[2].is_empty() {
+        txt.push_str(&format!("@c_wave={}\n", bl.wave[2]));
+    }
     if !bl.noise.is_empty() {
         txt.push_str(&format!("@noise={}\n", bl.noise));
     }
-    for i in 0..4 {
+    for i in 0..NLFO {
         if !bl.lfo[i].is_empty() {
             txt.push_str(&format!("@lfo{}={}\n", i + 1, bl.lfo[i]));
         }
@@ -843,6 +853,16 @@ pub fn save_user(params: &SynthParams, name: &str, cat: &str) -> Result<PathBuf,
 pub fn delete_user(r: &PresetRef) {
     if let Some(p) = &r.path {
         let _ = std::fs::remove_file(p);
+        // remove the category folder (and parents) if it is now empty, but never the Presets root
+        if let Some(root) = files::presets_dir() {
+            let mut d = p.parent().map(|x| x.to_path_buf());
+            while let Some(dir) = d {
+                if dir == root || !dir.starts_with(&root) || std::fs::remove_dir(&dir).is_err() {
+                    break;
+                }
+                d = dir.parent().map(|x| x.to_path_buf());
+            }
+        }
     }
 }
 

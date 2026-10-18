@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 pub const VOICES: usize = 16;
 const K: usize = 16; // control-rate block
-const DSTS: usize = 37;
+const DSTS: usize = 48;
 const MAX_UNI: usize = 16;
 
 // ---------------------------------------------------------------- patch snapshot
@@ -52,6 +52,7 @@ pub struct EnvP {
     pub ka: f32,
     pub kd: f32,
     pub kr: f32,
+    pub relegato: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -76,6 +77,37 @@ pub struct LfoP {
     pub delay_s: f32,
     pub oneshot: bool,
     pub phase0: f32,
+}
+
+/// Settings of one filter.
+#[derive(Clone, Copy)]
+pub struct FilP {
+    pub on: bool,
+    pub ty: FilterType,
+    pub cutoff: f32,
+    pub res: f32,
+    pub drive: f32,
+    pub keytrack: f32,
+    pub mix: f32,
+    /// A, B, C, sub, noise
+    pub route: [bool; 5],
+    pub cb: [CbP; CBANDS],
+}
+
+impl FilP {
+    pub fn read(f: &FilterParams) -> FilP {
+        FilP {
+            on: f.fl_on.value(),
+            ty: f.fl_type.value(),
+            cutoff: f.cutoff.value(),
+            res: f.res.value(),
+            drive: f.drive.value(),
+            keytrack: f.keytrack.value(),
+            mix: f.fl_mix.value(),
+            route: [f.fl_a.value(), f.fl_b.value(), f.fl_c.value(), f.fl_sub.value(), f.fl_noise.value()],
+            cb: std::array::from_fn(|i| CbP { on: f.cb[i].on.value(), kind: f.cb[i].kind.value(), freq: f.cb[i].freq.value(), gain: f.cb[i].gain.value(), q: f.cb[i].q.value() }),
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -103,7 +135,7 @@ pub fn cband_coef(b: &CbP, shift: f32, fs: f32) -> BqCoef {
 
 #[derive(Clone)]
 pub struct Patch {
-    pub osc: [OscP; 2],
+    pub osc: [OscP; 3],
     pub sub_on: bool,
     pub sub_wave: SubWave,
     pub sub_oct: i32,
@@ -118,21 +150,14 @@ pub struct Patch {
     pub noise_phase: f32,
     pub noise_rand: f32,
     pub sample: Option<Arc<NSample>>,
-    pub fl_on: bool,
-    pub fl_type: FilterType,
-    pub cb: [CbP; CBANDS],
-    pub cutoff: f32,
-    pub res: f32,
-    pub drive: f32,
-    pub keytrack: f32,
-    pub fl_mix: f32,
-    pub route: [bool; 4],
-    pub env: [EnvP; 3],
-    pub lfo: [LfoP; 4],
-    pub lfo_curve: [Option<Arc<LfoCurve>>; 4],
+    pub fl: [FilP; 2],
+    pub fl_serial: bool,
+    pub env: [EnvP; NENV],
+    pub lfo: [LfoP; NLFO],
+    pub lfo_curve: [Option<Arc<LfoCurve>>; NLFO],
     pub slots: [SlotP; MOD_SLOTS],
     pub arp: ArpP,
-    pub macros: [f32; 4],
+    pub macros: [f32; NMAC],
     pub vmode: VoiceMode,
     pub glide_ms: f32,
     pub bend: f32,
@@ -170,7 +195,7 @@ fn env_read(e: &EnvParams, fs: f32) -> EnvP {
     let d = (e.decay.value() * 0.001 / 4.6 * fs).max(1.0);
     let r = (e.release.value() * 0.001 / 4.6 * fs).max(0.006 / 4.6 * fs); // >= 6 ms: no click on note end
     let k = |c: f32| 2f32.powf(c * 2.0);
-    EnvP { delay_n: ms(e.delay.value()), a_inc: 1.0 / a, hold_n: ms(e.hold.value()), d_coef: (-1.0 / d).exp(), s: e.sustain.value(), r_coef: (-1.0 / r).exp(), ka: k(e.atk_curve.value()), kd: k(e.dec_curve.value()), kr: k(e.rel_curve.value()) }
+    EnvP { delay_n: ms(e.delay.value()), a_inc: 1.0 / a, hold_n: ms(e.hold.value()), d_coef: (-1.0 / d).exp(), s: e.sustain.value(), r_coef: (-1.0 / r).exp(), ka: k(e.atk_curve.value()), kd: k(e.dec_curve.value()), kr: k(e.rel_curve.value()), relegato: e.relegato.value() }
 }
 
 fn lfo_read(l: &LfoParams) -> LfoP {
@@ -199,13 +224,13 @@ impl Patch {
             Some(None) => prev.and_then(|pp| pp.sample.clone()),
             None => None,
         };
-        let lfo_curve: [Option<Arc<LfoCurve>>; 4] = std::array::from_fn(|i| match shared.map(|s| s.lfo[i].try_get()) {
+        let lfo_curve: [Option<Arc<LfoCurve>>; NLFO] = std::array::from_fn(|i| match shared.map(|s| s.lfo[i].try_get()) {
             Some(Some(x)) => x,
             Some(None) => prev.and_then(|pp| pp.lfo_curve[i].clone()),
             None => None,
         });
         Patch {
-            osc: [osc_read(&p.a, pick(0, p.a.table.value().to_index())), osc_read(&p.b, pick(1, p.b.table.value().to_index()))],
+            osc: [osc_read(&p.a, pick(0, p.a.table.value().to_index())), osc_read(&p.b, pick(1, p.b.table.value().to_index())), osc_read(&p.c, pick(2, p.c.table.value().to_index()))],
             sub_on: p.sub_on.value(),
             sub_wave: p.sub_wave.value(),
             sub_oct: p.sub_oct.value(),
@@ -220,21 +245,14 @@ impl Patch {
             noise_phase: p.noise_phase.value(),
             noise_rand: p.noise_rand.value(),
             sample,
-            fl_on: p.fl_on.value(),
-            fl_type: p.fl_type.value(),
-            cb: std::array::from_fn(|i| CbP { on: p.cb[i].on.value(), kind: p.cb[i].kind.value(), freq: p.cb[i].freq.value(), gain: p.cb[i].gain.value(), q: p.cb[i].q.value() }),
-            cutoff: p.cutoff.value(),
-            res: p.res.value(),
-            drive: p.drive.value(),
-            keytrack: p.keytrack.value(),
-            fl_mix: p.fl_mix.value(),
-            route: [p.fl_a.value(), p.fl_b.value(), p.fl_sub.value(), p.fl_noise.value()],
-            env: [env_read(&p.e1, fs), env_read(&p.e2, fs), env_read(&p.e3, fs)],
-            lfo: [lfo_read(&p.lfo[0]), lfo_read(&p.lfo[1]), lfo_read(&p.lfo[2]), lfo_read(&p.lfo[3])],
+            fl: [FilP::read(&p.f1), FilP::read(&p.f2)],
+            fl_serial: p.fl_serial.value(),
+            env: [env_read(&p.e1, fs), env_read(&p.e2, fs), env_read(&p.e3, fs), env_read(&p.e4, fs)],
+            lfo: std::array::from_fn(|i| lfo_read(&p.lfo[i])),
             lfo_curve,
             slots: std::array::from_fn(|i| SlotP { src: p.slot[i].src.value(), dst: p.slot[i].dst.value(), amount: p.slot[i].amount.value(), aux: p.slot[i].aux.value(), curve: p.slot[i].curve.value(), uni: p.slot[i].uni.value() }),
             arp: ArpP { on: p.arp_on.value(), mode: p.arp_mode.value(), beats: p.arp_div.value().beats(), octs: p.arp_oct.value().clamp(1, 4) as usize, gate: p.arp_gate.value(), swing: p.arp_swing.value(), hold: p.arp_hold.value() },
-            macros: [p.macro1.value(), p.macro2.value(), p.macro3.value(), p.macro4.value()],
+            macros: p.macros().map(|m| m.value()),
             vmode: p.vmode.value(),
             glide_ms: p.glide.value(),
             bend: p.bend.value() as f32,
@@ -255,6 +273,69 @@ fn hash01(x: u32) -> f32 {
     h = h.wrapping_mul(0x297A_2D39);
     h ^= h >> 15;
     (h >> 8) as f32 / (1u32 << 24) as f32
+}
+
+const CHAOS_N: usize = 4096;
+
+/// One cycle of a chaotic attractor (x variable, normalised), made loopable with a short cross-fade.
+fn chaos_lut(kind: usize) -> &'static [f32; CHAOS_N] {
+    use std::sync::OnceLock;
+    static L: OnceLock<[Box<[f32; CHAOS_N]>; 2]> = OnceLock::new();
+    let l = L.get_or_init(|| {
+        let mk = |kind: usize| -> Box<[f32; CHAOS_N]> {
+            let n = CHAOS_N + 512;
+            let mut raw = vec![0.0f64; n];
+            let (mut x, mut y, mut z) = if kind == 0 { (1.0f64, 1.0, 1.0) } else { (0.1f64, 0.0, 0.0) };
+            let (dt, stride) = if kind == 0 { (0.004f64, 2usize) } else { (0.02f64, 1usize) };
+            let step = |x: &mut f64, y: &mut f64, z: &mut f64| {
+                let (dx, dy, dz) = if kind == 0 {
+                    (10.0 * (*y - *x), *x * (28.0 - *z) - *y, *x * *y - 8.0 / 3.0 * *z)
+                } else {
+                    (-*y - *z, *x + 0.2 * *y, 0.2 + *z * (*x - 5.7))
+                };
+                *x += dx * dt;
+                *y += dy * dt;
+                *z += dz * dt;
+            };
+            for _ in 0..4000 {
+                step(&mut x, &mut y, &mut z);
+            }
+            for r in raw.iter_mut() {
+                for _ in 0..stride {
+                    step(&mut x, &mut y, &mut z);
+                }
+                *r = x;
+            }
+            let mean = raw.iter().sum::<f64>() / n as f64;
+            let mx = raw.iter().map(|v| (v - mean).abs()).fold(1e-9, f64::max);
+            let mut out = Box::new([0.0f32; CHAOS_N]);
+            for i in 0..CHAOS_N {
+                let a = (raw[i] - mean) / mx;
+                out[i] = if i < 512 {
+                    // the head blends in the samples that would follow the end: the loop is seamless
+                    let t = i as f64 / 512.0;
+                    let b = (raw[CHAOS_N + i] - mean) / mx;
+                    (a * t + b * (1.0 - t)) as f32
+                } else {
+                    a as f32
+                };
+            }
+            out
+        };
+        [mk(0), mk(1)]
+    });
+    &l[kind]
+}
+
+fn chaos_eval(kind: usize, f: f32, seed: u32) -> f32 {
+    let l = chaos_lut(kind);
+    let off = (seed & 0x3FF) as usize * 3;
+    let x = f * CHAOS_N as f32;
+    let i = x as usize;
+    let fr = x - i as f32;
+    let a = l[(i + off) % CHAOS_N];
+    let b = l[(i + 1 + off) % CHAOS_N];
+    a + (b - a) * fr
 }
 
 pub fn lfo_eval(shape: LfoShape, ph: f64, seed: u32) -> f32 {
@@ -307,6 +388,8 @@ pub fn lfo_eval_c(shape: LfoShape, ph: f64, seed: u32, curve: Option<&LfoCurve>)
             (t * std::f32::consts::FRAC_PI_2).sin()
         }
         LfoShape::Stairs => ((f * 6.0).floor() / 2.5 - 1.0).clamp(-1.0, 1.0),
+        LfoShape::Lorenz => chaos_eval(0, f, seed),
+        LfoShape::Rossler => chaos_eval(1, f, seed),
     }
 }
 
@@ -586,18 +669,18 @@ struct Voice {
     freq: f32,
     tfreq: f32,
     t: f32,
-    env: [Env; 3],
-    ph: [[f32; MAX_UNI]; 2],
+    env: [Env; NENV],
+    ph: [[f32; MAX_UNI]; 3],
     sub_ph: f32,
     rnd: u32,
     rnd_val: f32,
-    prev: [f32; 2],
+    prev: [f32; 3],
     nz: [f32; 10],
     nph: f32,
     nplaying: bool,
-    lfo_s: [f32; 4],
-    last_lfo: [f32; 4],
-    fl: Fst,
+    lfo_s: [f32; NLFO],
+    last_lfo: [f32; NLFO],
+    fl: [Fst; 2],
     /// de-click on retrigger: the old output level decays away while the new note fades in
     dc: [f32; 2],
     last: [f32; 2],
@@ -615,21 +698,21 @@ impl Voice {
             freq: 440.0,
             tfreq: 440.0,
             t: 0.0,
-            env: [Env::default(); 3],
-            ph: [[0.0; MAX_UNI]; 2],
+            env: [Env::default(); NENV],
+            ph: [[0.0; MAX_UNI]; 3],
             sub_ph: 0.0,
             rnd: 1,
             rnd_val: 0.0,
-            prev: [0.0; 2],
+            prev: [0.0; 3],
             dc: [0.0; 2],
             last: [0.0; 2],
             fade: 1.0,
             nz: [0.0; 10],
             nph: 0.0,
             nplaying: false,
-            lfo_s: [0.0; 4],
-            last_lfo: [0.0; 4],
-            fl: Fst::new(comb_len),
+            lfo_s: [0.0; NLFO],
+            last_lfo: [0.0; NLFO],
+            fl: [Fst::new(comb_len), Fst::new(comb_len)],
         }
     }
 }
@@ -639,7 +722,7 @@ struct Ctx {
     bend: f32,
     modwheel: f32,
     aftertouch: f32,
-    glfo: [f32; 4],
+    glfo: [f32; NLFO],
     bpm: f32,
     glide_coef: f32,
     tune: f32,
@@ -689,6 +772,14 @@ fn uni_offset(mode: UniMode, j: usize, n: usize, seed: u32) -> f32 {
 const STACK_ST: [f32; 16] = [0.0, 12.0, -12.0, 7.0, 19.0, 24.0, -24.0, 5.0, 17.0, 3.0, 15.0, 10.0, -5.0, 31.0, 28.0, -7.0];
 
 /// Everything the filter needs for one control block.
+struct FilRun {
+    co: Fc,
+    drive: f32,
+    mix: f32,
+    gd: f32,
+    dcomp: f32,
+}
+
 struct Fc {
     ty: FilterType,
     k1: f32,
@@ -901,7 +992,7 @@ fn run_filter(f: &Fc, st: &mut Fst, ch: usize, x: f32) -> f32 {
 
 /// Bipolar sources are mapped to 0..1 when a slot is unipolar or used as scaler.
 pub fn src_bipolar(s: ModSrc) -> bool {
-    matches!(s, ModSrc::Lfo1 | ModSrc::Lfo2 | ModSrc::Lfo3 | ModSrc::Lfo4 | ModSrc::Random | ModSrc::Key | ModSrc::Bend)
+    matches!(s, ModSrc::Lfo1 | ModSrc::Lfo2 | ModSrc::Lfo3 | ModSrc::Lfo4 | ModSrc::Lfo5 | ModSrc::Lfo6 | ModSrc::Lfo7 | ModSrc::Lfo8 | ModSrc::Random | ModSrc::Key | ModSrc::Bend)
 }
 
 /// Value of one matrix slot (curve, polarity, amount and aux scaling applied).
@@ -932,8 +1023,8 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
     v.t += m as f32 / fs;
 
     // ---- modulation sources
-    let mut lfo = [0.0f32; 4];
-    for i in 0..4 {
+    let mut lfo = [0.0f32; NLFO];
+    for i in 0..NLFO {
         let raw = if p.lfo[i].trig {
             let lp = &p.lfo[i];
             let rate = if lp.sync { c.bpm / 60.0 / lp.div.beats() } else { lp.rate };
@@ -975,6 +1066,15 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
             ModSrc::Lfo2 => lfo[1],
             ModSrc::Lfo3 => lfo[2],
             ModSrc::Lfo4 => lfo[3],
+            ModSrc::Lfo5 => lfo[4],
+            ModSrc::Lfo6 => lfo[5],
+            ModSrc::Lfo7 => lfo[6],
+            ModSrc::Lfo8 => lfo[7],
+            ModSrc::Env4 => v.env[3].out,
+            ModSrc::Macro5 => p.macros[4],
+            ModSrc::Macro6 => p.macros[5],
+            ModSrc::Macro7 => p.macros[6],
+            ModSrc::Macro8 => p.macros[7],
             ModSrc::Vel => v.vel,
             ModSrc::Key => ((v.note as f32 - 60.0) / 60.0).clamp(-1.0, 1.0),
             ModSrc::ModWheel => c.modwheel,
@@ -996,13 +1096,13 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
     }
 
     // ---- oscillators set-up
-    let mut run = [OscRun::off(), OscRun::off()];
-    for o in 0..2 {
+    let mut run = [OscRun::off(), OscRun::off(), OscRun::off()];
+    for o in 0..3 {
         let op = &p.osc[o];
         if !op.on {
             continue;
         }
-        let (pos_i, lvl_i, pit_i, wrp_i, pan_i, bl_i) = if o == 0 { (1, 3, 5, 7, 17, 19) } else { (2, 4, 6, 8, 18, 20) };
+        let (pos_i, lvl_i, pit_i, wrp_i, pan_i, bl_i) = [(1, 3, 5, 7, 17, 19), (2, 4, 6, 8, 18, 20), (37, 38, 39, 40, 41, 42)][o];
         let semis = (op.oct * 12 + op.semi) as f32 + op.fine * 0.01 + md[pit_i] * 24.0 + c.bend;
         let base = v.freq * c.tune * 2f32.powf(semis / 12.0);
         let r = &mut run[o];
@@ -1014,7 +1114,7 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
         r.wmode = op.wmode;
         r.warp = (op.warp + md[wrp_i]).clamp(0.0, 1.0);
         r.wmode2 = op.wmode2;
-        r.warp2 = (op.warp2 + md[if o == 0 { 23 } else { 24 }]).clamp(0.0, 1.0);
+        r.warp2 = (op.warp2 + md[[23, 24, 43][o]]).clamp(0.0, 1.0);
         let n = op.uni;
         r.n = n;
         let det = (op.detune + md[12]).clamp(0.0, 1.0);
@@ -1057,23 +1157,31 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
     let noise_level = (p.noise + md[16]).clamp(0.0, 1.0);
     let sub_inc = v.freq * c.tune * 2f32.powf((p.sub_oct * 12) as f32 / 12.0 + c.bend / 12.0) / fs;
     let sub_inc = sub_inc.clamp(0.0, 0.49);
-    let drive = (p.drive + md[11]).clamp(0.0, 1.0);
-    let res = (p.res + md[10]).clamp(0.0, 1.0);
-    let fl_mix = (p.fl_mix + md[22]).clamp(0.0, 1.0);
-    let fc = (p.cutoff * 2f32.powf(md[9] * 6.0 + p.keytrack * (v.note as f32 - 60.0) / 12.0)).clamp(20.0, (0.45 * fs).min(20000.0));
-    let comb_len = v.fl.comb[0].len();
-    let mut fco = filter_coefs(p.fl_type, fc, res, fs, comb_len);
-    if p.fl_type == FilterType::Custom {
-        let shift = 2f32.powf(md[9] * 6.0 + p.keytrack * (v.note as f32 - 60.0) / 12.0);
-        for b in p.cb.iter().filter(|b| b.on) {
-            fco.cc[fco.cn] = cband_coef(b, shift, fs);
-            fco.cn += 1;
+    let comb_len = v.fl[0].comb[0].len();
+    let mut fcs: [Option<FilRun>; 2] = [None, None];
+    for fi in 0..2 {
+        let fp = &p.fl[fi];
+        if !fp.on {
+            continue;
         }
+        let (i_cut, i_res, i_drv, i_mix) = if fi == 0 { (9, 10, 11, 22) } else { (44, 45, 46, 47) };
+        let drive = (fp.drive + md[i_drv]).clamp(0.0, 1.0);
+        let res = (fp.res + md[i_res]).clamp(0.0, 1.0);
+        let mix = (fp.mix + md[i_mix]).clamp(0.0, 1.0);
+        let shift = 2f32.powf(md[i_cut] * 6.0 + fp.keytrack * (v.note as f32 - 60.0) / 12.0);
+        let fc = (fp.cutoff * shift).clamp(20.0, (0.45 * fs).min(20000.0));
+        let mut co = filter_coefs(fp.ty, fc, res, fs, comb_len);
+        if fp.ty == FilterType::Custom {
+            for b in fp.cb.iter().filter(|b| b.on) {
+                co.cc[co.cn] = cband_coef(b, shift, fs);
+                co.cn += 1;
+            }
+        }
+        let gd = 1.0 + drive * 8.0;
+        fcs[fi] = Some(FilRun { co, drive, mix, gd, dcomp: gd.sqrt() });
     }
     let vol = (1.0 + md[14]).clamp(0.0, 2.0);
     let vg = (0.25 + 0.75 * v.vel) * vol;
-    let gain_drive = 1.0 + drive * 8.0;
-    let dcomp = gain_drive.sqrt();
     let sub_pan = p.sub_pan;
     let (sub_l, sub_r) = (1.0 - sub_pan.max(0.0), 1.0 + sub_pan.min(0.0));
     // noise sample playback rate
@@ -1086,14 +1194,14 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
 
     for s in 0..m {
         // oscillators
-        let mut sig = [[0.0f32; 2]; 2]; // [osc][ch]
-        for o in 0..2 {
+        let mut sig = [[0.0f32; 2]; 3]; // [osc][ch]
+        for o in 0..3 {
             let r = &run[o];
             if !r.on {
                 continue;
             }
             let t = &p.osc[o].tbl;
-            let fm = v.prev[1 - o].clamp(-1.0, 1.0);
+            let fm = v.prev[[1, 0, 1][o]].clamp(-1.0, 1.0);
             let (mut l, mut rr) = (0.0, 0.0);
             for j in 0..r.n {
                 let ph = &mut v.ph[o][j];
@@ -1121,7 +1229,7 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
             }
             sig[o] = [l, rr];
         }
-        v.prev = [(sig[0][0] + sig[0][1]) * 0.5, (sig[1][0] + sig[1][1]) * 0.5];
+        v.prev = [(sig[0][0] + sig[0][1]) * 0.5, (sig[1][0] + sig[1][1]) * 0.5, (sig[2][0] + sig[2][1]) * 0.5];
 
         // sub + noise
         let mut sub = [0.0f32; 2];
@@ -1242,42 +1350,56 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
             noise = [nz * (1.0 - pan.max(0.0)), nz * (1.0 + pan.min(0.0))];
         }
 
-        // routing
-        let mut ro = [0.0f32; 2];
+        // routing: every source goes to filter 1, filter 2 or straight to the output
+        let mut ro = [[0.0f32; 2]; 2];
         let mut dr = [0.0f32; 2];
         for ch in 0..2 {
-            let srcs = [sig[0][ch], sig[1][ch], sub[ch], noise[ch]];
+            let srcs = [sig[0][ch], sig[1][ch], sig[2][ch], sub[ch], noise[ch]];
             for (i, x) in srcs.iter().enumerate() {
-                if p.fl_on && p.route[i] {
-                    ro[ch] += *x;
-                } else {
+                let to1 = fcs[0].is_some() && p.fl[0].route[i];
+                let to2 = fcs[1].is_some() && p.fl[1].route[i] && !p.fl_serial;
+                let g = if to1 && to2 { 0.5 } else { 1.0 }; // balanced split between the two filters
+                if to1 {
+                    ro[0][ch] += *x * g;
+                }
+                if to2 {
+                    ro[1][ch] += *x * g;
+                }
+                if !to1 && !to2 {
                     dr[ch] += *x;
                 }
             }
         }
 
-        // filter
-        let mut f = ro;
-        if p.fl_on {
+        // filters (parallel, or filter 1 feeding filter 2)
+        let mut f = [0.0f32; 2];
+        for fi in 0..2 {
+            let Some(fr) = &fcs[fi] else { continue };
             for ch in 0..2 {
-                let x0 = ro[ch];
-                let x = x0 * (1.0 - drive) + drive * (gain_drive * x0).tanh() / dcomp;
-                let mut y = run_filter(&fco, &mut v.fl, ch, x);
+                let x0 = if fi == 1 && p.fl_serial && fcs[0].is_some() { f[ch] } else { ro[fi][ch] };
+                let x = x0 * (1.0 - fr.drive) + fr.drive * (fr.gd * x0).tanh() / fr.dcomp;
+                let mut y = run_filter(&fr.co, &mut v.fl[fi], ch, x);
                 if !y.is_finite() {
-                    v.fl.clear();
+                    v.fl[fi].clear();
                     y = 0.0;
                 }
-                f[ch] = y * fl_mix + x0 * (1.0 - fl_mix);
+                let out = y * fr.mix + x0 * (1.0 - fr.mix);
+                if fi == 1 && p.fl_serial && fcs[0].is_some() {
+                    f[ch] = out;
+                } else {
+                    f[ch] += out;
+                }
             }
-            v.fl.cw += 1;
-            if v.fl.cw >= comb_len {
-                v.fl.cw = 0;
+            v.fl[fi].cw += 1;
+            if v.fl[fi].cw >= comb_len {
+                v.fl[fi].cw = 0;
             }
         }
 
         let amp = v.env[0].tick(&p.env[0]);
         v.env[1].tick(&p.env[1]);
         v.env[2].tick(&p.env[2]);
+        v.env[3].tick(&p.env[3]);
         let ga = amp * vg;
         if v.fade < 1.0 {
             v.fade = (v.fade + fade_inc).min(1.0);
@@ -1303,9 +1425,9 @@ pub struct Engine {
     comb_len: usize,
     voices: Vec<Voice>,
     pub patch: Patch,
-    glfo_ph: [f64; 4],
-    glfo_s: [f32; 4],
-    glfo_out: [f32; 4],
+    glfo_ph: [f64; NLFO],
+    glfo_s: [f32; NLFO],
+    glfo_out: [f32; NLFO],
     bend_norm: f32,
     modwheel: f32,
     aftertouch: f32,
@@ -1331,9 +1453,9 @@ impl Engine {
             comb_len,
             voices: vec![Voice::new(comb_len); VOICES],
             patch,
-            glfo_ph: [0.0; 4],
-            glfo_s: [0.0; 4],
-            glfo_out: [0.0; 4],
+            glfo_ph: [0.0; NLFO],
+            glfo_s: [0.0; NLFO],
+            glfo_out: [0.0; NLFO],
             bend_norm: 0.0,
             modwheel: 0.0,
             aftertouch: 0.0,
@@ -1359,8 +1481,9 @@ impl Engine {
         for v in self.voices.iter_mut() {
             v.active = false;
             v.key_down = false;
-            v.env = [Env::default(); 3];
-            v.fl.clear();
+            v.env = [Env::default(); NENV];
+            v.fl[0].clear();
+            v.fl[1].clear();
         }
         self.stack.clear();
         self.sustained.clear();
@@ -1369,6 +1492,10 @@ impl Engine {
     }
 
     /// `norm` 0..1 with 0.5 as centre (as delivered by the host).
+    /// Current pitch-wheel (-1..1) and mod-wheel (0..1) positions, for the GUI wheels.
+    pub fn wheels(&self) -> (f32, f32) {
+        (self.bend_norm, self.modwheel)
+    }
     pub fn set_bend(&mut self, norm: f32) {
         self.bend_norm = (norm * 2.0 - 1.0).clamp(-1.0, 1.0);
     }
@@ -1406,7 +1533,7 @@ impl Engine {
         for v in self.voices.iter_mut() {
             v.active = false;
             v.key_down = false;
-            v.env = [Env::default(); 3];
+            v.env = [Env::default(); NENV];
         }
         self.stack.clear();
         self.sustained.clear();
@@ -1428,7 +1555,7 @@ impl Engine {
         let r1 = self.rand01();
         let r2 = self.rand01();
         let r3 = self.rand01();
-        let mut phases = [0.0f32; 2 * MAX_UNI];
+        let mut phases = [0.0f32; 3 * MAX_UNI];
         for p in phases.iter_mut() {
             *p = self.rand01();
         }
@@ -1456,7 +1583,7 @@ impl Engine {
         v.t = 0.0;
         v.rnd = ((r1 * 4_000_000_000.0) as u32) | 1;
         v.rnd_val = r2 * 2.0 - 1.0;
-        for o in 0..2 {
+        for o in 0..3 {
             for j in 0..MAX_UNI {
                 v.ph[o][j] = (patch.osc[o].phase + patch.osc[o].rand * phases[o * MAX_UNI + j]).fract();
             }
@@ -1466,10 +1593,11 @@ impl Engine {
             e.start(&patch.env[i]);
         }
         if !was_sounding {
-            v.fl.clear();
+            v.fl[0].clear();
+            v.fl[1].clear();
         }
         v.nz = [0.0; 10];
-        v.lfo_s = [0.0; 4];
+        v.lfo_s = [0.0; NLFO];
         if let Some(sm) = patch.sample.as_ref() {
             v.nph = ((patch.noise_phase + patch.noise_rand * r3).fract() * sm.data.len() as f32).min(sm.data.len() as f32 - 1.0);
             v.nplaying = true;
@@ -1535,6 +1663,12 @@ impl Engine {
             if self.patch.vmode == VoiceMode::Legato && held {
                 self.voices[0].tfreq = midi_freq(note as f32);
                 self.voices[0].note = note;
+                for i in 0..NENV {
+                    if self.patch.env[i].relegato {
+                        let ep = self.patch.env[i];
+                        self.voices[0].env[i].start(&ep);
+                    }
+                }
                 self.last_freq = self.voices[0].tfreq;
                 self.last_note = note;
             } else {
@@ -1649,26 +1783,27 @@ impl Engine {
 
     /// Current value of every modulation source (index = `ModSrc` index) for the GUI.
     /// Per-voice sources come from the most recently started sounding voice.
-    pub fn live_sources(&self) -> [f32; 18] {
-        let mut o = [0.0f32; 18];
+    pub fn live_sources(&self) -> [f32; N_SRC] {
+        let mut o = [0.0f32; N_SRC];
         let newest = self.voices.iter().filter(|v| v.active).max_by_key(|v| v.order);
-        let (e1, e2, e3, lf, vel, key, rnd) = match newest {
-            Some(v) => (v.env[0].out, v.env[1].out, v.env[2].out, v.last_lfo, v.vel, ((v.note as f32 - 60.0) / 60.0).clamp(-1.0, 1.0), v.rnd_val),
-            None => (0.0, 0.0, 0.0, self.glfo_out, self.last_vel, ((self.last_note as f32 - 60.0) / 60.0).clamp(-1.0, 1.0), 0.0),
+        let (e1, e2, e3, e4, lf, vel, key, rnd) = match newest {
+            Some(v) => (v.env[0].out, v.env[1].out, v.env[2].out, v.env[3].out, v.last_lfo, v.vel, ((v.note as f32 - 60.0) / 60.0).clamp(-1.0, 1.0), v.rnd_val),
+            None => (0.0, 0.0, 0.0, 0.0, self.glfo_out, self.last_vel, ((self.last_note as f32 - 60.0) / 60.0).clamp(-1.0, 1.0), 0.0),
         };
         o[ModSrc::Env1 as usize] = e1;
         o[ModSrc::Env2 as usize] = e2;
         o[ModSrc::Env3 as usize] = e3;
-        for i in 0..4 {
-            o[ModSrc::Lfo1 as usize + i] = if self.patch.lfo[i].trig { lf[i] } else { self.glfo_out[i] };
+        o[ModSrc::Env4 as usize] = e4;
+        for i in 0..NLFO {
+            o[lfo_src(i) as usize] = if self.patch.lfo[i].trig { lf[i] } else { self.glfo_out[i] };
         }
         o[ModSrc::Vel as usize] = vel;
         o[ModSrc::Key as usize] = key;
         o[ModSrc::ModWheel as usize] = self.modwheel;
         o[ModSrc::Aftertouch as usize] = self.aftertouch;
         o[ModSrc::Random as usize] = rnd;
-        for i in 0..4 {
-            o[ModSrc::Macro1 as usize + i] = self.patch.macros[i];
+        for i in 0..NMAC {
+            o[mac_src(i) as usize] = self.patch.macros[i];
         }
         o[ModSrc::Bend as usize] = self.bend_norm;
         o
@@ -1684,6 +1819,14 @@ impl Engine {
                 ModSrc::Lfo2 => self.glfo_out[1],
                 ModSrc::Lfo3 => self.glfo_out[2],
                 ModSrc::Lfo4 => self.glfo_out[3],
+                ModSrc::Lfo5 => self.glfo_out[4],
+                ModSrc::Lfo6 => self.glfo_out[5],
+                ModSrc::Lfo7 => self.glfo_out[6],
+                ModSrc::Lfo8 => self.glfo_out[7],
+                ModSrc::Macro5 => self.patch.macros[4],
+                ModSrc::Macro6 => self.patch.macros[5],
+                ModSrc::Macro7 => self.patch.macros[6],
+                ModSrc::Macro8 => self.patch.macros[7],
                 ModSrc::Vel => self.last_vel,
                 ModSrc::Key => ((self.last_note as f32 - 60.0) / 60.0).clamp(-1.0, 1.0),
                 ModSrc::ModWheel => self.modwheel,
@@ -1776,8 +1919,8 @@ impl Engine {
         let _ = self.comb_len;
         while i < n {
             let m = (n - i).min(K);
-            let mut glfo = [0.0f32; 4];
-            for k in 0..4 {
+            let mut glfo = [0.0f32; NLFO];
+            for k in 0..NLFO {
                 let lp = &self.patch.lfo[k];
                 let rate = if lp.sync { self.bpm / 60.0 / lp.div.beats() } else { lp.rate } as f64;
                 self.glfo_ph[k] += rate * m as f64 / fs as f64;

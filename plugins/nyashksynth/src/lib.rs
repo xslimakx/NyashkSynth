@@ -23,7 +23,7 @@ pub mod wav;
 pub mod wavetable;
 
 use engine::{Engine, Patch};
-use fx::{Fx, FxPatch};
+use fx::{FxPatch, FxRack};
 pub use params::*;
 
 pub const SCOPE_LEN: usize = 1024;
@@ -44,6 +44,16 @@ pub struct Meters {
     pub sounding: [std::sync::atomic::AtomicU64; 2],
     /// current value of every modulation source (GUI animation)
     pub live: Vec<AtomicU32>,
+    /// MIDI learn: controller -> parameter pointers, applied on the audio thread
+    pub cc_map: std::sync::Mutex<Vec<(u8, nih_plug::params::internals::ParamPtr)>>,
+    /// last controller number that arrived: low byte = cc, upper bits = running counter
+    pub last_cc: AtomicU32,
+    /// on-screen wheels: value bits (f32), written by the GUI when the user touches them
+    pub gui_bend: AtomicU32,
+    pub gui_mod: AtomicU32,
+    /// positions of the wheels as the engine sees them (MIDI or GUI), for drawing
+    pub bend_val: AtomicU32,
+    pub mod_val: AtomicU32,
 }
 
 impl Meters {
@@ -57,7 +67,13 @@ impl Meters {
             gui_beat: AtomicU32::new(0),
             panic: std::sync::atomic::AtomicBool::new(false),
             sounding: [std::sync::atomic::AtomicU64::new(0), std::sync::atomic::AtomicU64::new(0)],
-            live: (0..18).map(|_| AtomicU32::new(0)).collect(),
+            live: (0..N_SRC).map(|_| AtomicU32::new(0)).collect(),
+            cc_map: std::sync::Mutex::new(Vec::new()),
+            last_cc: AtomicU32::new(0),
+            gui_bend: AtomicU32::new(f32::NAN.to_bits()),
+            gui_mod: AtomicU32::new(f32::NAN.to_bits()),
+            bend_val: AtomicU32::new(0),
+            mod_val: AtomicU32::new(0),
         }
     }
     /// Latest scope samples, oldest first.
@@ -65,9 +81,9 @@ impl Meters {
         let w = self.scope_w.load(Ordering::Relaxed) as usize % SCOPE_LEN;
         (0..SCOPE_LEN).map(|i| f32::from_bits(self.scope[(w + i) % SCOPE_LEN].load(Ordering::Relaxed))).collect()
     }
-    pub fn live_sources(&self) -> [f32; 18] {
-        let mut o = [0.0f32; 18];
-        for (i, x) in self.live.iter().enumerate().take(18) {
+    pub fn live_sources(&self) -> [f32; N_SRC] {
+        let mut o = [0.0f32; N_SRC];
+        for (i, x) in self.live.iter().enumerate().take(N_SRC) {
             o[i] = f32::from_bits(x.load(Ordering::Relaxed));
         }
         o
@@ -89,11 +105,15 @@ pub struct NyashkSynth {
     meters: Arc<Meters>,
     shared: Arc<shared::Shared>,
     engine: Engine,
-    fx: Fx,
+    fx: FxRack,
     fs: f32,
     peak_hold: f32,
     fx_mod_s: [f32; 12],
     gui_prev: [bool; 128],
+    tmap: [u8; 128],
+    cc_count: u32,
+    gui_bend_prev: u32,
+    gui_mod_prev: u32,
     beat_last: u32,
     beat_age: usize,
     dec_n: u32,
@@ -104,12 +124,12 @@ impl Default for NyashkSynth {
     fn default() -> Self {
         let params = Arc::new(SynthParams::default());
         let patch = Patch::read(&params, 44100.0);
-        Self { engine: Engine::new(44100.0, patch), fx: Fx::new(44100.0), params, meters: Arc::new(Meters::new()), shared: Arc::new(shared::Shared::new()), fs: 44100.0, peak_hold: 0.0, fx_mod_s: [0.0; 12], gui_prev: [false; 128], beat_last: 0, beat_age: 0, dec_n: 0, dec_acc: 0.0 }
+        Self { engine: Engine::new(44100.0, patch), fx: FxRack::new(44100.0), params, meters: Arc::new(Meters::new()), shared: Arc::new(shared::Shared::new()), fs: 44100.0, peak_hold: 0.0, fx_mod_s: [0.0; 12], gui_prev: [false; 128], tmap: std::array::from_fn(|i| i as u8), cc_count: 1, gui_bend_prev: f32::NAN.to_bits(), gui_mod_prev: f32::NAN.to_bits(), beat_last: 0, beat_age: 0, dec_n: 0, dec_acc: 0.0 }
     }
 }
 
 /// Snapshot of all effect parameters (also used by offline tools).
-pub fn fx_patch_from(p: &SynthParams, bpm: f32) -> FxPatch {
+pub fn fx_patch_from_bank(p: &params::FxBank, bpm: f32) -> FxPatch {
     {
         let beat_ms = 60000.0 / bpm.max(20.0);
         let rate = |hz: f32, sync: bool, div: Div| if sync { bpm.max(20.0) / 60.0 / div.beats() } else { hz };
@@ -121,13 +141,13 @@ pub fn fx_patch_from(p: &SynthParams, bpm: f32) -> FxPatch {
         } else {
             p.dl_time_r.value()
         };
-        let mut order = [0usize; 10];
-        for (i, o) in p.fx_order_params().iter().enumerate() {
-            order[i] = o.value().clamp(0, 9) as usize;
+        let mut order = [0usize; FX_SLOTS];
+        for (i, o) in p.order_params().iter().enumerate() {
+            order[i] = o.value().clamp(0, 11) as usize;
         }
         FxPatch {
             order,
-            on: [p.hy_on.value(), p.ds_on.value(), p.fg_on.value(), p.ph_on.value(), p.ch_on.value(), p.dl_on.value(), p.cp_on.value(), p.rv_on.value(), p.eq_on.value(), p.ff_on.value()],
+            on: [p.hy_on.value(), p.ds_on.value(), p.fg_on.value(), p.ph_on.value(), p.ch_on.value(), p.dl_on.value(), p.cp_on.value(), p.rv_on.value(), p.eq_on.value(), p.ff_on.value(), p.bd_on.value(), p.ut_on.value()],
             hy_rate: p.hy_rate.value(),
             hy_detune: p.hy_detune.value(),
             hy_uni: p.hy_uni.value() as usize,
@@ -192,7 +212,44 @@ pub fn fx_patch_from(p: &SynthParams, bpm: f32) -> FxPatch {
             ff_res: p.ff_res.value(),
             ff_drive: p.ff_drive.value(),
             ff_mix: p.ff_mix.value(),
+            bd_shift: p.bd_shift.value(),
+            bd_fb: p.bd_fb.value(),
+            bd_mix: p.bd_mix.value(),
+            ut_gain: p.ut_gain.value(),
+            ut_pan: p.ut_pan.value(),
+            ut_width: p.ut_width.value(),
+            ut_mono: p.ut_mono.value(),
+            ut_invert: p.ut_invert.value(),
         }
+    }
+}
+
+pub fn fx_patch_from(p: &SynthParams, bpm: f32) -> FxPatch {
+    fx_patch_from_bank(&p.fx, bpm)
+}
+
+impl NyashkSynth {
+    /// Incoming note + keyboard transposition (octave + semitones).
+    fn transposed(&self, note: u8) -> u8 {
+        let t = self.params.kb_octave.value() * 12 + self.params.kb_transpose.value();
+        (note as i32 + t).clamp(0, 127) as u8
+    }
+}
+
+/// Rebuild the audio-side controller table from the saved "cc=id;..." string.
+pub fn rebuild_cc_map(params: &SynthParams, meters: &Meters) {
+    let txt = params.cc_map.lock().map(|g| g.clone()).unwrap_or_default();
+    let pm = params.param_map();
+    let mut v = Vec::new();
+    for part in txt.split(';') {
+        let Some((c, id)) = part.split_once('=') else { continue };
+        let Ok(c) = c.trim().parse::<u8>() else { continue };
+        if let Some((_, ptr, _)) = pm.iter().find(|(pid, _, _)| pid == id.trim()) {
+            v.push((c, *ptr));
+        }
+    }
+    if let Ok(mut g) = meters.cc_map.lock() {
+        *g = v;
     }
 }
 
@@ -227,7 +284,8 @@ impl Plugin for NyashkSynth {
         self.shared.sync_from_params(&self.params);
         let patch = Patch::read_with(&self.params, self.fs, Some(&self.shared), None);
         self.engine = Engine::new(self.fs, patch);
-        self.fx = Fx::new(self.fs);
+        self.fx = FxRack::new(self.fs);
+        rebuild_cc_map(&self.params, &self.meters);
         let _ = wavetable::tables();
         true
     }
@@ -243,6 +301,8 @@ impl Plugin for NyashkSynth {
         let np = Patch::read_with(&self.params, self.fs, Some(&self.shared), Some(&self.engine.patch));
         self.engine.patch = np;
         let fxp = fx_patch_from(&self.params, bpm);
+        let fxp2 = fx_patch_from_bank(&self.params.fx2, bpm);
+        let (route, split, lvl2) = (self.params.fx_route.value(), self.params.fx_split.value(), self.params.fx2_level.value());
         let master = util::db_to_gain(self.params.master.value());
 
         // safety nets against stuck notes: GUI gone / frozen, or the PANIC click
@@ -269,12 +329,34 @@ impl Plugin for NyashkSynth {
             if want != self.gui_prev[k] {
                 self.gui_prev[k] = want;
                 if want {
-                    self.engine.note_on(k as u8, 0.8);
+                    let t = self.transposed(k as u8);
+                    self.tmap[k] = t;
+                    self.engine.note_on(t, 0.8);
                 } else {
-                    self.engine.note_off(k as u8);
+                    self.engine.note_off(self.tmap[k]);
                 }
             }
         }
+        // on-screen wheels
+        let gb = self.meters.gui_bend.load(Ordering::Relaxed);
+        if gb != self.gui_bend_prev {
+            self.gui_bend_prev = gb;
+            let v = f32::from_bits(gb);
+            if v.is_finite() {
+                self.engine.set_bend(v);
+            }
+        }
+        let gm = self.meters.gui_mod.load(Ordering::Relaxed);
+        if gm != self.gui_mod_prev {
+            self.gui_mod_prev = gm;
+            let v = f32::from_bits(gm);
+            if v.is_finite() {
+                self.engine.set_modwheel(v);
+            }
+        }
+        let (wb, wm) = self.engine.wheels();
+        self.meters.bend_val.store(wb.to_bits(), Ordering::Relaxed);
+        self.meters.mod_val.store(wm.to_bits(), Ordering::Relaxed);
         let n = buffer.samples();
         let mut next = ctx.next_event();
         let mut pos = 0usize;
@@ -291,11 +373,27 @@ impl Plugin for NyashkSynth {
                     break;
                 }
                 match ev {
-                    NoteEvent::NoteOn { note, velocity, .. } => self.engine.note_on(note, velocity),
-                    NoteEvent::NoteOff { note, .. } => self.engine.note_off(note),
+                    NoteEvent::NoteOn { note, velocity, .. } => {
+                        let t = self.transposed(note);
+                        self.tmap[note as usize & 127] = t;
+                        self.engine.note_on(t, velocity)
+                    }
+                    NoteEvent::NoteOff { note, .. } => self.engine.note_off(self.tmap[note as usize & 127]),
                     NoteEvent::MidiPitchBend { value, .. } => self.engine.set_bend(value),
                     NoteEvent::MidiChannelPressure { pressure, .. } => self.engine.set_aftertouch(pressure),
                     NoteEvent::MidiCC { cc, value, .. } => {
+                        self.meters.last_cc.store((cc as u32) | ((self.cc_count & 0xFFFFFF) << 8), Ordering::Relaxed);
+                        self.cc_count = self.cc_count.wrapping_add(1);
+                        if let Ok(map) = self.meters.cc_map.try_lock() {
+                            for (c, ptr) in map.iter() {
+                                if *c == cc {
+                                    // SAFETY: the pointers point into `self.params`, which lives as long as the plugin
+                                    unsafe {
+                                        ptr.set_normalized_value(value.clamp(0.0, 1.0));
+                                    }
+                                }
+                            }
+                        }
                         match cc {
                             1 => self.engine.set_modwheel(value),
                             64 => self.engine.set_sustain(value >= 0.5),
@@ -315,7 +413,7 @@ impl Plugin for NyashkSynth {
         }
 
         match self.engine.fx_mod() {
-            None => self.fx.process(&fxp, l_all, r_all),
+            None => self.fx.process(&fxp, &fxp2, route, split, lvl2, l_all, r_all),
             Some(m) => {
                 // effect modulation: update the parameters every 64 samples
                 let mut fxp = fxp;
@@ -327,7 +425,7 @@ impl Plugin for NyashkSynth {
                     }
                     let mut cur = fxp.clone();
                     cur.apply_mod(&self.fx_mod_s);
-                    self.fx.process(&cur, &mut l_all[s..e], &mut r_all[s..e]);
+                    self.fx.process(&cur, &fxp2, route, split, lvl2, &mut l_all[s..e], &mut r_all[s..e]);
                     s = e;
                 }
                 let _ = &mut fxp;

@@ -7,18 +7,20 @@ use crate::fx::{eq_response_db, BqCoef};
 use crate::params::*;
 use crate::ui::*;
 
-fn on_param(p: &SynthParams, m: usize) -> &BoolParam {
+fn on_param(b: &FxBank, m: usize) -> &BoolParam {
     match m {
-        0 => &p.hy_on,
-        1 => &p.ds_on,
-        2 => &p.fg_on,
-        3 => &p.ph_on,
-        4 => &p.ch_on,
-        5 => &p.dl_on,
-        6 => &p.cp_on,
-        7 => &p.rv_on,
-        8 => &p.eq_on,
-        _ => &p.ff_on,
+        0 => &b.hy_on,
+        1 => &b.ds_on,
+        2 => &b.fg_on,
+        3 => &b.ph_on,
+        4 => &b.ch_on,
+        5 => &b.dl_on,
+        6 => &b.cp_on,
+        7 => &b.rv_on,
+        8 => &b.eq_on,
+        9 => &b.ff_on,
+        10 => &b.bd_on,
+        _ => &b.ut_on,
     }
 }
 
@@ -27,16 +29,23 @@ fn kn<P: Param>(ui: &mut Ui, setter: &ParamSetter, prm: &P, label: &str, x: f32,
 }
 
 pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, c: Rect) {
-    let order: Vec<usize> = p.fx_order_params().iter().map(|q| (q.value().clamp(0, 9)) as usize).collect();
-    let cw = (c.width() - 9.0 * 4.0) / 10.0;
+    let bus = st.fx_bus.min(1);
+    let b = p.bank(bus);
+    let md = |d: ModDst| {
+        if bus == 0 {
+            mdst(d);
+        }
+    };
+    let order: Vec<usize> = b.order_params().iter().map(|q| (q.value().clamp(0, 11)) as usize).collect();
+    let cw = (c.width() - 11.0 * 4.0) / 12.0;
     let chip = |i: usize| Rect::from_min_size(Pos2::new(c.left() + (cw + 4.0) * i as f32, c.top()), Vec2::new(cw, 30.0));
     let mut clicked: Option<usize> = None;
     let mut dropped: Option<(usize, usize)> = None;
-    for slot in 0..10 {
+    for slot in 0..FX_SLOTS {
         let m = order[slot];
         let r = chip(slot);
-        let resp = ui.interact(r, egui::Id::new(("fxchip", slot)), Sense::click_and_drag()).on_hover_text("Click: edit. Drag onto another slot: reorder the chain. Dot: on/off");
-        let on = on_param(p, m).value();
+        let resp = ui.interact(r, egui::Id::new(("fxchip", bus, slot)), Sense::click_and_drag()).on_hover_text("Click: edit. Drag onto another slot: reorder the chain. Dot: on/off");
+        let on = on_param(b, m).value();
         let sel = st.fx_sel == m;
         let painter = ui.painter();
         let dragging = st.fx_drag == Some(slot);
@@ -52,7 +61,7 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
         if resp.drag_stopped() {
             if let Some(from) = st.fx_drag.take() {
                 if let Some(pt) = ui.input(|i| i.pointer.latest_pos()) {
-                    if let Some(to) = (0..10).find(|&j| chip(j).contains(pt)) {
+                    if let Some(to) = (0..FX_SLOTS).find(|&j| chip(j).contains(pt)) {
                         if to != from {
                             dropped = Some((from, to));
                         }
@@ -62,7 +71,7 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
         } else if resp.clicked() {
             if let Some(pt) = ui.input(|i| i.pointer.interact_pos()) {
                 if dot.contains(pt) {
-                    set_b(setter, on_param(p, m), !on);
+                    set_b(setter, on_param(b, m), !on);
                 } else {
                     clicked = Some(m);
                 }
@@ -77,7 +86,7 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
         let mut o = order.clone();
         let v = o.remove(from);
         o.insert(to, v);
-        for (q, val) in p.fx_order_params().iter().zip(o.iter()) {
+        for (q, val) in b.order_params().iter().zip(o.iter()) {
             setter.begin_set_parameter(*q);
             setter.set_parameter(*q, *val as i32);
             setter.end_set_parameter(*q);
@@ -94,12 +103,27 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
     }
 
     // ---- detail
-    let m = st.fx_sel.min(9);
+    let m = st.fx_sel.min(11);
     let d = Rect::from_min_max(Pos2::new(c.left(), c.top() + 40.0), c.right_bottom());
     ui.painter().text(Pos2::new(d.left() + 2.0, d.top() + 8.0), Align2::LEFT_CENTER, FX_NAMES[m], mono(11.5), WHITE);
     let pos_in_chain = order.iter().position(|&x| x == m).unwrap_or(0) + 1;
-    ui.painter().text(Pos2::new(d.left() + 90.0, d.top() + 8.0), Align2::LEFT_CENTER, format!("slot {pos_in_chain}/10"), mono(9.0), DIM);
-    let on_p = on_param(p, m);
+    ui.painter().text(Pos2::new(d.left() + 90.0, d.top() + 8.0), Align2::LEFT_CENTER, format!("slot {pos_in_chain}/12"), mono(9.0), DIM);
+    // ---- busses and routing (right side of the header line)
+    {
+        let bx = d.right() - 470.0;
+        for k in 0..2 {
+            if pill_tip(ui, Rect::from_min_size(Pos2::new(bx + 62.0 * k as f32, d.top() - 3.0), Vec2::new(58.0, 22.0)), if k == 0 { "BUS 1" } else { "BUS 2" }, bus == k, "Switch between the two effect busses (each has the full set of modules)") {
+                st.fx_bus = k;
+            }
+        }
+        ui.painter().text(Pos2::new(bx + 134.0, d.top() + 8.0), Align2::LEFT_CENTER, "ROUTING", mono(9.0), DIM);
+        enum_combo(ui, setter, &p.fx_route, "fx_route", Rect::from_min_size(Pos2::new(bx + 190.0, d.top() - 3.0), Vec2::new(150.0, 22.0)));
+        if matches!(p.fx_route.value(), FxRoute::SplitLh) {
+            knob_s(ui, setter, &p.fx_split, "SPLIT", cell(bx + 346.0, d.top() - 16.0, 52.0), "Crossover: lows go to bus 1, highs to bus 2", false);
+        }
+        knob_s(ui, setter, &p.fx2_level, "BUS 2", cell(bx + 402.0, d.top() - 16.0, 52.0), "Level of bus 2 in the mix", false);
+    }
+    let on_p = on_param(b, m);
     if pill_tip(ui, Rect::from_min_size(Pos2::new(d.left() + 160.0, d.top() - 3.0), Vec2::new(44.0, 22.0)), if on_p.value() { "ON" } else { "OFF" }, on_p.value(), "Module on/off") {
         set_b(setter, on_p, !on_p.value());
     }
@@ -112,24 +136,24 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
             set_b(setter, prm, !prm.value());
         }
     };
-    let fp = crate::fx_patch_from(p, 120.0);
+    let fp = crate::fx_patch_from_bank(b, 120.0);
     match m {
         0 => {
-            kn(ui, setter, &p.hy_rate, "RATE", x0, y0, "Hyper chorus speed");
-            kn(ui, setter, &p.hy_detune, "DETUNE", x0 + w, y0, "Depth of the voices' pitch wobble");
-            kn(ui, setter, &p.hy_uni, "UNISON", x0 + w * 2.0, y0, "Number of chorus voices");
-            kn(ui, setter, &p.hy_dim, "DIMENSION", x0 + w * 3.0, y0, "Dimension-style stereo widening");
-            mdst(ModDst::FxHyperMix);
-            kn(ui, setter, &p.hy_mix, "MIX", x0 + w * 4.0, y0, "Dry / wet");
+            kn(ui, setter, &b.hy_rate, "RATE", x0, y0, "Hyper chorus speed");
+            kn(ui, setter, &b.hy_detune, "DETUNE", x0 + w, y0, "Depth of the voices' pitch wobble");
+            kn(ui, setter, &b.hy_uni, "UNISON", x0 + w * 2.0, y0, "Number of chorus voices");
+            kn(ui, setter, &b.hy_dim, "DIMENSION", x0 + w * 3.0, y0, "Dimension-style stereo widening");
+            md(ModDst::FxHyperMix);
+            kn(ui, setter, &b.hy_mix, "MIX", x0 + w * 4.0, y0, "Dry / wet");
             ui.painter().text(Pos2::new(x0 + 2.0, y1 + 10.0), Align2::LEFT_CENTER, "Hyper + Dimension: Serum-style thick stereo chorus.", mono(9.5), DIM);
         }
         1 => {
-            enum_combo(ui, setter, &p.ds_type, "ds_type", Rect::from_min_size(Pos2::new(x0, y0 + 4.0), Vec2::new(150.0, 24.0)));
-            mdst(ModDst::FxDistDrive);
-            kn(ui, setter, &p.ds_drive, "DRIVE", x0, y0 + 36.0, "Distortion amount");
-            kn(ui, setter, &p.ds_tone, "TONE", x0 + w, y0 + 36.0, "Tilt: dark to bright");
-            mdst(ModDst::FxDistMix);
-            kn(ui, setter, &p.ds_mix, "MIX", x0 + w * 2.0, y0 + 36.0, "Dry / wet");
+            enum_combo(ui, setter, &b.ds_type, "ds_type", Rect::from_min_size(Pos2::new(x0, y0 + 4.0), Vec2::new(150.0, 24.0)));
+            md(ModDst::FxDistDrive);
+            kn(ui, setter, &b.ds_drive, "DRIVE", x0, y0 + 36.0, "Distortion amount");
+            kn(ui, setter, &b.ds_tone, "TONE", x0 + w, y0 + 36.0, "Tilt: dark to bright");
+            md(ModDst::FxDistMix);
+            kn(ui, setter, &b.ds_mix, "MIX", x0 + w * 2.0, y0 + 36.0, "Dry / wet");
             // transfer curve
             let g = Rect::from_min_size(Pos2::new(x0 + 340.0, y0), Vec2::new(150.0, 120.0));
             dark_box(ui, g);
@@ -155,88 +179,88 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
             pa.add(egui::Shape::line(pts, PathStroke::new(1.6_f32, WHITE)));
         }
         2 => {
-            if p.fg_sync.value() {
-                enum_combo(ui, setter, &p.fg_div, "fg_div", Rect::from_min_size(Pos2::new(x0, y0 + 18.0), Vec2::new(62.0, 24.0)));
+            if b.fg_sync.value() {
+                enum_combo(ui, setter, &b.fg_div, "fg_div", Rect::from_min_size(Pos2::new(x0, y0 + 18.0), Vec2::new(62.0, 24.0)));
             } else {
-                kn(ui, setter, &p.fg_rate, "RATE", x0, y0, "Flanger LFO speed");
+                kn(ui, setter, &b.fg_rate, "RATE", x0, y0, "Flanger LFO speed");
             }
-            mdst(ModDst::FxFlangerDepth);
-            kn(ui, setter, &p.fg_depth, "DEPTH", x0 + w, y0, "Sweep depth");
-            kn(ui, setter, &p.fg_delay, "DELAY", x0 + w * 2.0, y0, "Base delay");
-            kn(ui, setter, &p.fg_fb, "FEEDBACK", x0 + w * 3.0, y0, "Feedback");
-            kn(ui, setter, &p.fg_phase, "PHASE", x0 + w * 4.0, y0, "Stereo phase of the LFO");
-            kn(ui, setter, &p.fg_mix, "MIX", x0 + w * 5.0, y0, "Dry / wet");
-            sync_pill(ui, &p.fg_sync, x0, y0 + 74.0);
+            md(ModDst::FxFlangerDepth);
+            kn(ui, setter, &b.fg_depth, "DEPTH", x0 + w, y0, "Sweep depth");
+            kn(ui, setter, &b.fg_delay, "DELAY", x0 + w * 2.0, y0, "Base delay");
+            kn(ui, setter, &b.fg_fb, "FEEDBACK", x0 + w * 3.0, y0, "Feedback");
+            kn(ui, setter, &b.fg_phase, "PHASE", x0 + w * 4.0, y0, "Stereo phase of the LFO");
+            kn(ui, setter, &b.fg_mix, "MIX", x0 + w * 5.0, y0, "Dry / wet");
+            sync_pill(ui, &b.fg_sync, x0, y0 + 74.0);
         }
         3 => {
-            if p.ph_sync.value() {
-                enum_combo(ui, setter, &p.ph_div, "ph_div", Rect::from_min_size(Pos2::new(x0, y0 + 18.0), Vec2::new(62.0, 24.0)));
+            if b.ph_sync.value() {
+                enum_combo(ui, setter, &b.ph_div, "ph_div", Rect::from_min_size(Pos2::new(x0, y0 + 18.0), Vec2::new(62.0, 24.0)));
             } else {
-                kn(ui, setter, &p.ph_rate, "RATE", x0, y0, "Phaser LFO speed");
+                kn(ui, setter, &b.ph_rate, "RATE", x0, y0, "Phaser LFO speed");
             }
-            kn(ui, setter, &p.ph_depth, "DEPTH", x0 + w, y0, "Sweep depth");
-            mdst(ModDst::FxPhaserFreq);
-            kn(ui, setter, &p.ph_freq, "FREQ", x0 + w * 2.0, y0, "Centre frequency");
-            kn(ui, setter, &p.ph_fb, "FEEDBACK", x0 + w * 3.0, y0, "Resonance");
-            kn(ui, setter, &p.ph_stages, "STAGES", x0 + w * 4.0, y0, "Number of all-pass stages");
-            kn(ui, setter, &p.ph_phase, "PHASE", x0 + w * 5.0, y0, "Stereo phase of the LFO");
-            kn(ui, setter, &p.ph_mix, "MIX", x0 + w * 6.0, y0, "Dry / wet");
-            sync_pill(ui, &p.ph_sync, x0, y0 + 74.0);
+            kn(ui, setter, &b.ph_depth, "DEPTH", x0 + w, y0, "Sweep depth");
+            md(ModDst::FxPhaserFreq);
+            kn(ui, setter, &b.ph_freq, "FREQ", x0 + w * 2.0, y0, "Centre frequency");
+            kn(ui, setter, &b.ph_fb, "FEEDBACK", x0 + w * 3.0, y0, "Resonance");
+            kn(ui, setter, &b.ph_stages, "STAGES", x0 + w * 4.0, y0, "Number of all-pass stages");
+            kn(ui, setter, &b.ph_phase, "PHASE", x0 + w * 5.0, y0, "Stereo phase of the LFO");
+            kn(ui, setter, &b.ph_mix, "MIX", x0 + w * 6.0, y0, "Dry / wet");
+            sync_pill(ui, &b.ph_sync, x0, y0 + 74.0);
         }
         4 => {
-            if p.ch_sync.value() {
-                enum_combo(ui, setter, &p.ch_div, "ch_div", Rect::from_min_size(Pos2::new(x0, y0 + 18.0), Vec2::new(62.0, 24.0)));
+            if b.ch_sync.value() {
+                enum_combo(ui, setter, &b.ch_div, "ch_div", Rect::from_min_size(Pos2::new(x0, y0 + 18.0), Vec2::new(62.0, 24.0)));
             } else {
-                kn(ui, setter, &p.ch_rate, "RATE", x0, y0, "Chorus LFO speed");
+                kn(ui, setter, &b.ch_rate, "RATE", x0, y0, "Chorus LFO speed");
             }
-            kn(ui, setter, &p.ch_depth, "DEPTH", x0 + w, y0, "Depth");
-            kn(ui, setter, &p.ch_delay, "DELAY", x0 + w * 2.0, y0, "Base delay");
-            kn(ui, setter, &p.ch_fb, "FEEDBACK", x0 + w * 3.0, y0, "Feedback");
-            kn(ui, setter, &p.ch_filter, "FILTER", x0 + w * 4.0, y0, "Tone of the chorus signal");
-            mdst(ModDst::FxChorusMix);
-            kn(ui, setter, &p.ch_mix, "MIX", x0 + w * 5.0, y0, "Dry / wet");
-            sync_pill(ui, &p.ch_sync, x0, y0 + 74.0);
+            kn(ui, setter, &b.ch_depth, "DEPTH", x0 + w, y0, "Depth");
+            kn(ui, setter, &b.ch_delay, "DELAY", x0 + w * 2.0, y0, "Base delay");
+            kn(ui, setter, &b.ch_fb, "FEEDBACK", x0 + w * 3.0, y0, "Feedback");
+            kn(ui, setter, &b.ch_filter, "FILTER", x0 + w * 4.0, y0, "Tone of the chorus signal");
+            md(ModDst::FxChorusMix);
+            kn(ui, setter, &b.ch_mix, "MIX", x0 + w * 5.0, y0, "Dry / wet");
+            sync_pill(ui, &b.ch_sync, x0, y0 + 74.0);
         }
         5 => {
-            if p.dl_sync.value() {
-                enum_combo(ui, setter, &p.dl_div, "dl_div", Rect::from_min_size(Pos2::new(x0, y0 + 18.0), Vec2::new(62.0, 24.0)));
-                if !p.dl_link.value() {
-                    enum_combo(ui, setter, &p.dl_div_r, "dl_divr", Rect::from_min_size(Pos2::new(x0 + w, y0 + 18.0), Vec2::new(62.0, 24.0)));
+            if b.dl_sync.value() {
+                enum_combo(ui, setter, &b.dl_div, "dl_div", Rect::from_min_size(Pos2::new(x0, y0 + 18.0), Vec2::new(62.0, 24.0)));
+                if !b.dl_link.value() {
+                    enum_combo(ui, setter, &b.dl_div_r, "dl_divr", Rect::from_min_size(Pos2::new(x0 + w, y0 + 18.0), Vec2::new(62.0, 24.0)));
                 }
             } else {
-                kn(ui, setter, &p.dl_time, "TIME L", x0, y0, "Delay time (left)");
-                if !p.dl_link.value() {
-                    kn(ui, setter, &p.dl_time_r, "TIME R", x0 + w, y0, "Delay time (right)");
+                kn(ui, setter, &b.dl_time, "TIME L", x0, y0, "Delay time (left)");
+                if !b.dl_link.value() {
+                    kn(ui, setter, &b.dl_time_r, "TIME R", x0 + w, y0, "Delay time (right)");
                 }
             }
-            mdst(ModDst::FxDelayFb);
-            kn(ui, setter, &p.dl_fb, "FEEDBACK", x0 + w * 2.0, y0, "Feedback");
-            kn(ui, setter, &p.dl_lp, "LOW PASS", x0 + w * 3.0, y0, "Dampens repeats (high cut)");
-            kn(ui, setter, &p.dl_hp, "HIGH PASS", x0 + w * 4.0, y0, "Removes lows from repeats");
-            kn(ui, setter, &p.dl_width, "WIDTH", x0 + w * 5.0, y0, "Stereo width of the repeats");
-            mdst(ModDst::FxDelayMix);
-            kn(ui, setter, &p.dl_mix, "MIX", x0 + w * 6.0, y0, "Dry / wet");
-            sync_pill(ui, &p.dl_sync, x0, y0 + 74.0);
-            if pill_tip(ui, Rect::from_min_size(Pos2::new(x0 + 60.0, y0 + 74.0), Vec2::new(54.0, 22.0)), "LINK", p.dl_link.value(), "Left and right use the same time") {
-                set_b(setter, &p.dl_link, !p.dl_link.value());
+            md(ModDst::FxDelayFb);
+            kn(ui, setter, &b.dl_fb, "FEEDBACK", x0 + w * 2.0, y0, "Feedback");
+            kn(ui, setter, &b.dl_lp, "LOW PASS", x0 + w * 3.0, y0, "Dampens repeats (high cut)");
+            kn(ui, setter, &b.dl_hp, "HIGH PASS", x0 + w * 4.0, y0, "Removes lows from repeats");
+            kn(ui, setter, &b.dl_width, "WIDTH", x0 + w * 5.0, y0, "Stereo width of the repeats");
+            md(ModDst::FxDelayMix);
+            kn(ui, setter, &b.dl_mix, "MIX", x0 + w * 6.0, y0, "Dry / wet");
+            sync_pill(ui, &b.dl_sync, x0, y0 + 74.0);
+            if pill_tip(ui, Rect::from_min_size(Pos2::new(x0 + 60.0, y0 + 74.0), Vec2::new(54.0, 22.0)), "LINK", b.dl_link.value(), "Left and right use the same time") {
+                set_b(setter, &b.dl_link, !b.dl_link.value());
             }
-            if pill_tip(ui, Rect::from_min_size(Pos2::new(x0 + 120.0, y0 + 74.0), Vec2::new(80.0, 22.0)), "PINGPONG", p.dl_pp.value(), "Repeats bounce between left and right") {
-                set_b(setter, &p.dl_pp, !p.dl_pp.value());
+            if pill_tip(ui, Rect::from_min_size(Pos2::new(x0 + 120.0, y0 + 74.0), Vec2::new(80.0, 22.0)), "PINGPONG", b.dl_pp.value(), "Repeats bounce between left and right") {
+                set_b(setter, &b.dl_pp, !b.dl_pp.value());
             }
         }
         6 => {
-            kn(ui, setter, &p.cp_thresh, "THRESH", x0, y0, "Threshold in dB");
-            kn(ui, setter, &p.cp_ratio, "RATIO", x0 + w, y0, "Compression ratio");
-            kn(ui, setter, &p.cp_attack, "ATTACK", x0 + w * 2.0, y0, "Attack time");
-            kn(ui, setter, &p.cp_release, "RELEASE", x0 + w * 3.0, y0, "Release time");
-            kn(ui, setter, &p.cp_gain, "GAIN", x0 + w * 4.0, y0, "Make-up gain");
-            kn(ui, setter, &p.cp_mix, "MIX", x0 + w * 5.0, y0, "Dry / wet (parallel compression)");
-            if pill_tip(ui, Rect::from_min_size(Pos2::new(x0, y0 + 74.0), Vec2::new(54.0, 22.0)), "MULTI", p.cp_multi.value(), "3-band multiband mode") {
-                set_b(setter, &p.cp_multi, !p.cp_multi.value());
+            kn(ui, setter, &b.cp_thresh, "THRESH", x0, y0, "Threshold in dB");
+            kn(ui, setter, &b.cp_ratio, "RATIO", x0 + w, y0, "Compression ratio");
+            kn(ui, setter, &b.cp_attack, "ATTACK", x0 + w * 2.0, y0, "Attack time");
+            kn(ui, setter, &b.cp_release, "RELEASE", x0 + w * 3.0, y0, "Release time");
+            kn(ui, setter, &b.cp_gain, "GAIN", x0 + w * 4.0, y0, "Make-up gain");
+            kn(ui, setter, &b.cp_mix, "MIX", x0 + w * 5.0, y0, "Dry / wet (parallel compression)");
+            if pill_tip(ui, Rect::from_min_size(Pos2::new(x0, y0 + 74.0), Vec2::new(54.0, 22.0)), "MULTI", b.cp_multi.value(), "3-band multiband mode") {
+                set_b(setter, &b.cp_multi, !b.cp_multi.value());
             }
-            if p.cp_multi.value() {
-                kn(ui, setter, &p.cp_f1, "LOW/MID", x0 + w * 6.0, y0, "Crossover 1");
-                kn(ui, setter, &p.cp_f2, "MID/HI", x0 + w * 7.0, y0, "Crossover 2");
+            if b.cp_multi.value() {
+                kn(ui, setter, &b.cp_f1, "LOW/MID", x0 + w * 6.0, y0, "Crossover 1");
+                kn(ui, setter, &b.cp_f2, "MID/HI", x0 + w * 7.0, y0, "Crossover 2");
             }
             // static curve
             let g = Rect::from_min_size(Pos2::new(x0 + 340.0, y0 + 74.0), Vec2::new(110.0, 52.0));
@@ -252,36 +276,54 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
             pa.add(egui::Shape::line(pts, PathStroke::new(1.5_f32, WHITE)));
         }
         7 => {
-            mdst(ModDst::FxReverbSize);
-            kn(ui, setter, &p.rv_size, "SIZE", x0, y0, "Room size / decay time");
-            kn(ui, setter, &p.rv_damp, "DAMPING", x0 + w, y0, "High-frequency damping");
-            kn(ui, setter, &p.rv_pre, "PRE-DLY", x0 + w * 2.0, y0, "Pre-delay");
-            kn(ui, setter, &p.rv_lowcut, "LOW CUT", x0 + w * 3.0, y0, "Low cut of the reverb signal");
-            kn(ui, setter, &p.rv_highcut, "HIGH CUT", x0 + w * 4.0, y0, "High cut of the reverb signal");
-            kn(ui, setter, &p.rv_width, "WIDTH", x0 + w * 5.0, y0, "Stereo width");
-            mdst(ModDst::FxReverbMix);
-            kn(ui, setter, &p.rv_mix, "MIX", x0 + w * 6.0, y0, "Dry / wet");
+            md(ModDst::FxReverbSize);
+            kn(ui, setter, &b.rv_size, "SIZE", x0, y0, "Room size / decay time");
+            kn(ui, setter, &b.rv_damp, "DAMPING", x0 + w, y0, "High-frequency damping");
+            kn(ui, setter, &b.rv_pre, "PRE-DLY", x0 + w * 2.0, y0, "Pre-delay");
+            kn(ui, setter, &b.rv_lowcut, "LOW CUT", x0 + w * 3.0, y0, "Low cut of the reverb signal");
+            kn(ui, setter, &b.rv_highcut, "HIGH CUT", x0 + w * 4.0, y0, "High cut of the reverb signal");
+            kn(ui, setter, &b.rv_width, "WIDTH", x0 + w * 5.0, y0, "Stereo width");
+            md(ModDst::FxReverbMix);
+            kn(ui, setter, &b.rv_mix, "MIX", x0 + w * 6.0, y0, "Dry / wet");
         }
         8 => {
-            kn(ui, setter, &p.eq_lf, "LOW F", x0, y0, "Low shelf frequency");
-            kn(ui, setter, &p.eq_lg, "LOW dB", x0 + w, y0, "Low shelf gain");
-            kn(ui, setter, &p.eq_mf, "MID F", x0 + w * 2.0, y0, "Mid frequency");
-            kn(ui, setter, &p.eq_mq, "MID Q", x0 + w * 3.0, y0, "Mid bandwidth");
-            kn(ui, setter, &p.eq_mg, "MID dB", x0 + w * 4.0, y0, "Mid gain");
-            kn(ui, setter, &p.eq_hf, "HIGH F", x0 + w * 5.0, y0, "High shelf frequency");
-            kn(ui, setter, &p.eq_hg, "HIGH dB", x0 + w * 6.0, y0, "High shelf gain");
+            kn(ui, setter, &b.eq_lf, "LOW F", x0, y0, "Low shelf frequency");
+            kn(ui, setter, &b.eq_lg, "LOW dB", x0 + w, y0, "Low shelf gain");
+            kn(ui, setter, &b.eq_mf, "MID F", x0 + w * 2.0, y0, "Mid frequency");
+            kn(ui, setter, &b.eq_mq, "MID Q", x0 + w * 3.0, y0, "Mid bandwidth");
+            kn(ui, setter, &b.eq_mg, "MID dB", x0 + w * 4.0, y0, "Mid gain");
+            kn(ui, setter, &b.eq_hf, "HIGH F", x0 + w * 5.0, y0, "High shelf frequency");
+            kn(ui, setter, &b.eq_hg, "HIGH dB", x0 + w * 6.0, y0, "High shelf gain");
             let g = Rect::from_min_size(Pos2::new(x0, y0 + 72.0), Vec2::new(d.width() - 4.0, d.bottom() - y0 - 78.0));
             graph(ui, g, |f| eq_response_db(&fp, f, 48000.0), (-18.0, 18.0));
-            eq_nodes(ui, setter, p, g);
+            eq_nodes(ui, setter, b, g);
+        }
+        10 => {
+            kn(ui, setter, &b.bd_shift, "SHIFT", x0, y0, "Frequency shift in Hz (every partial moves by the same amount, so sounds turn inharmonic)");
+            kn(ui, setter, &b.bd_fb, "FEEDBACK", x0 + w, y0, "Feed the shifted signal back: endless rising / falling tones");
+            kn(ui, setter, &b.bd_mix, "MIX", x0 + w * 2.0, y0, "Dry / wet");
+            ui.painter().text(Pos2::new(x0 + 2.0, y1 + 10.0), Align2::LEFT_CENTER, "Bode: single-sideband frequency shifter (not a pitch shifter).", mono(9.5), DIM);
+        }
+        11 => {
+            kn(ui, setter, &b.ut_gain, "GAIN", x0, y0, "Output gain in dB");
+            knob_s(ui, setter, &b.ut_pan, "PAN", cell(x0 + w, y0, w), "Balance", true);
+            kn(ui, setter, &b.ut_width, "WIDTH", x0 + w * 2.0, y0, "Stereo width: 0 = mono, 100% = unchanged, 200% = extra wide");
+            if pill_tip(ui, Rect::from_min_size(Pos2::new(x0 + w * 3.0 + 6.0, y0 + 6.0), Vec2::new(70.0, 22.0)), "MONO", b.ut_mono.value(), "Sum to mono") {
+                set_b(setter, &b.ut_mono, !b.ut_mono.value());
+            }
+            if pill_tip(ui, Rect::from_min_size(Pos2::new(x0 + w * 3.0 + 6.0, y0 + 34.0), Vec2::new(70.0, 22.0)), "INVERT", b.ut_invert.value(), "Flip the polarity") {
+                set_b(setter, &b.ut_invert, !b.ut_invert.value());
+            }
+            ui.painter().text(Pos2::new(x0 + 2.0, y1 + 10.0), Align2::LEFT_CENTER, "Utility: gain, balance, width, mono and polarity.", mono(9.5), DIM);
         }
         _ => {
-            enum_combo(ui, setter, &p.ff_type, "ff_type", Rect::from_min_size(Pos2::new(x0, y0 + 4.0), Vec2::new(110.0, 24.0)));
-            mdst(ModDst::FxFilterCut);
-            kn(ui, setter, &p.ff_cut, "CUTOFF", x0 + w * 2.0, y0, "Cutoff");
-            mdst(ModDst::FxFilterRes);
-            kn(ui, setter, &p.ff_res, "RES", x0 + w * 3.0, y0, "Resonance");
-            kn(ui, setter, &p.ff_drive, "DRIVE", x0 + w * 4.0, y0, "Drive");
-            kn(ui, setter, &p.ff_mix, "MIX", x0 + w * 5.0, y0, "Dry / wet");
+            enum_combo(ui, setter, &b.ff_type, "ff_type", Rect::from_min_size(Pos2::new(x0, y0 + 4.0), Vec2::new(110.0, 24.0)));
+            md(ModDst::FxFilterCut);
+            kn(ui, setter, &b.ff_cut, "CUTOFF", x0 + w * 2.0, y0, "Cutoff");
+            md(ModDst::FxFilterRes);
+            kn(ui, setter, &b.ff_res, "RES", x0 + w * 3.0, y0, "Resonance");
+            kn(ui, setter, &b.ff_drive, "DRIVE", x0 + w * 4.0, y0, "Drive");
+            kn(ui, setter, &b.ff_mix, "MIX", x0 + w * 5.0, y0, "Dry / wet");
             let g = Rect::from_min_size(Pos2::new(x0, y0 + 72.0), Vec2::new(d.width() - 4.0, d.bottom() - y0 - 78.0));
             let (fc, q, ty) = (fp.ff_cut, 0.5 + fp.ff_res * 9.0, fp.ff_type);
             graph(
@@ -325,13 +367,13 @@ fn graph(ui: &mut Ui, g: Rect, f: impl Fn(f32) -> f32, range: (f32, f32)) {
 }
 
 /// Draggable EQ nodes on top of the response graph (drag = frequency / gain, wheel on the mid node = Q).
-fn eq_nodes(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, g: Rect) {
+fn eq_nodes(ui: &mut Ui, setter: &ParamSetter, b: &FxBank, g: Rect) {
     let (lo, hi) = (20.0f32, 20000.0f32);
     let xf = |fr: f32| g.left() + g.width() * ((fr / lo).ln() / (hi / lo).ln());
     let fx = |x: f32| lo * (hi / lo).powf(((x - g.left()) / g.width()).clamp(0.0, 1.0));
     let yd = |db: f32| g.bottom() - g.height() * ((db.clamp(-18.0, 18.0) + 18.0) / 36.0);
     let dbf = |y: f32| (((g.bottom() - y) / g.height()) * 36.0 - 18.0).clamp(-18.0, 18.0);
-    let nodes: [(&FloatParam, &FloatParam, &str); 3] = [(&p.eq_lf, &p.eq_lg, "LOW"), (&p.eq_mf, &p.eq_mg, "MID"), (&p.eq_hf, &p.eq_hg, "HIGH")];
+    let nodes: [(&FloatParam, &FloatParam, &str); 3] = [(&b.eq_lf, &b.eq_lg, "LOW"), (&b.eq_mf, &b.eq_mg, "MID"), (&b.eq_hf, &b.eq_hg, "HIGH")];
     for (i, (fp, gp, name)) in nodes.iter().enumerate() {
         let c = Pos2::new(xf(fp.value()), yd(gp.value()));
         let hit = Rect::from_center_size(c, Vec2::splat(20.0));
@@ -356,8 +398,8 @@ fn eq_nodes(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, g: Rect) {
         if i == 1 && resp.hovered() {
             let sc = ui.input(|i| i.smooth_scroll_delta.y);
             if sc != 0.0 {
-                let q = p.eq_mq.unmodulated_normalized_value();
-                set_norm(setter, &p.eq_mq, q + sc / 1200.0);
+                let q = b.eq_mq.unmodulated_normalized_value();
+                set_norm(setter, &b.eq_mq, q + sc / 1200.0);
             }
         }
         let hot = resp.hovered() || resp.dragged();

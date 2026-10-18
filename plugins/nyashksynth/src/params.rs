@@ -225,6 +225,10 @@ pub enum LfoShape {
     TriSoft,
     #[name = "Stairs"]
     Stairs,
+    #[name = "Chaos Lorenz"]
+    Lorenz,
+    #[name = "Chaos Rossler"]
+    Rossler,
 }
 
 #[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
@@ -330,6 +334,39 @@ pub enum ModSrc {
     Env1,
     #[name = "Pitch Bend"]
     Bend,
+    #[name = "Env 4"]
+    Env4,
+    #[name = "LFO 5"]
+    Lfo5,
+    #[name = "LFO 6"]
+    Lfo6,
+    #[name = "LFO 7"]
+    Lfo7,
+    #[name = "LFO 8"]
+    Lfo8,
+    #[name = "Macro 5"]
+    Macro5,
+    #[name = "Macro 6"]
+    Macro6,
+    #[name = "Macro 7"]
+    Macro7,
+    #[name = "Macro 8"]
+    Macro8,
+}
+
+pub const N_SRC: usize = 27;
+pub const NLFO: usize = 8;
+pub const NENV: usize = 4;
+pub const NMAC: usize = 8;
+
+pub fn lfo_src(i: usize) -> ModSrc {
+    [ModSrc::Lfo1, ModSrc::Lfo2, ModSrc::Lfo3, ModSrc::Lfo4, ModSrc::Lfo5, ModSrc::Lfo6, ModSrc::Lfo7, ModSrc::Lfo8][i.min(7)]
+}
+pub fn env_src(i: usize) -> ModSrc {
+    [ModSrc::Env1, ModSrc::Env2, ModSrc::Env3, ModSrc::Env4][i.min(3)]
+}
+pub fn mac_src(i: usize) -> ModSrc {
+    [ModSrc::Macro1, ModSrc::Macro2, ModSrc::Macro3, ModSrc::Macro4, ModSrc::Macro5, ModSrc::Macro6, ModSrc::Macro7, ModSrc::Macro8][i.min(7)]
 }
 
 #[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
@@ -408,6 +445,28 @@ pub enum ModDst {
     FxFilterCut,
     #[name = "FX Filter Res"]
     FxFilterRes,
+    #[name = "C Position"]
+    CPos,
+    #[name = "C Level"]
+    CLevel,
+    #[name = "C Pitch"]
+    CPitch,
+    #[name = "C Warp"]
+    CWarp,
+    #[name = "C Pan"]
+    CPan,
+    #[name = "C Blend"]
+    CBlend,
+    #[name = "C Warp 2"]
+    CWarp2,
+    #[name = "Filter 2 Cutoff"]
+    Cutoff2,
+    #[name = "Filter 2 Resonance"]
+    Res2,
+    #[name = "Filter 2 Drive"]
+    Drive2,
+    #[name = "Filter 2 Mix"]
+    FilterMix2,
 }
 
 #[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
@@ -489,7 +548,7 @@ pub enum FxFilterType {
 }
 
 /// Effect modules (the order of the chain is stored as module indices).
-pub const FX_NAMES: [&str; 10] = ["HYPER", "DIST", "FLANGER", "PHASER", "CHORUS", "DELAY", "COMP", "REVERB", "EQ", "FILTER"];
+pub const FX_NAMES: [&str; 12] = ["HYPER", "DIST", "FLANGER", "PHASER", "CHORUS", "DELAY", "COMP", "REVERB", "EQ", "FILTER", "BODE", "UTILITY"];
 
 #[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
 pub enum VoiceMode {
@@ -578,237 +637,9 @@ fn db_param(name: &str, default: f32, min: f32, max: f32) -> FloatParam {
         .with_value_to_string(formatters::v2s_f32_rounded(1))
 }
 
+/// One complete filter (the synth has two).
 #[derive(Params)]
-pub struct OscParams {
-    #[persist = "wave"]
-    pub wave: Arc<std::sync::Mutex<String>>,
-    #[id = "on"]
-    pub on: BoolParam,
-    #[id = "tb"]
-    pub table: EnumParam<TableId>,
-    #[id = "pos"]
-    pub pos: FloatParam,
-    #[id = "wm"]
-    pub warp_mode: EnumParam<WarpMode>,
-    #[id = "wa"]
-    pub warp: FloatParam,
-    #[id = "w2m"]
-    pub warp2_mode: EnumParam<WarpMode>,
-    #[id = "w2a"]
-    pub warp2: FloatParam,
-    #[id = "lv"]
-    pub level: FloatParam,
-    #[id = "pan"]
-    pub pan: FloatParam,
-    #[id = "oc"]
-    pub oct: IntParam,
-    #[id = "st"]
-    pub semi: IntParam,
-    #[id = "fn"]
-    pub fine: FloatParam,
-    #[id = "un"]
-    pub uni: IntParam,
-    #[id = "dt"]
-    pub detune: FloatParam,
-    #[id = "bl"]
-    pub blend: FloatParam,
-    #[id = "um"]
-    pub uni_mode: EnumParam<UniMode>,
-    #[id = "sp"]
-    pub spread: FloatParam,
-    #[id = "ph"]
-    pub phase: FloatParam,
-    #[id = "rn"]
-    pub rand: FloatParam,
-}
-
-impl OscParams {
-    fn new(on: bool, level: f32) -> Self {
-        Self {
-            wave: Arc::new(std::sync::Mutex::new(String::new())),
-            on: BoolParam::new("On", on),
-            table: EnumParam::new("Table", TableId::Basic),
-            pos: unit_param("Position", 0.0),
-            warp_mode: EnumParam::new("Warp", WarpMode::Off),
-            warp: unit_param("Warp Amount", 0.0),
-            warp2_mode: EnumParam::new("Warp 2", WarpMode::Off),
-            warp2: unit_param("Warp 2 Amount", 0.0),
-            level: unit_param("Level", level),
-            pan: FloatParam::new("Pan", 0.0, FloatRange::Linear { min: -1.0, max: 1.0 }).with_step_size(0.01),
-            oct: IntParam::new("Octave", 0, IntRange::Linear { min: -4, max: 4 }),
-            semi: IntParam::new("Semi", 0, IntRange::Linear { min: -12, max: 12 }),
-            fine: FloatParam::new("Fine", 0.0, FloatRange::Linear { min: -100.0, max: 100.0 }).with_unit(" ct").with_step_size(0.1),
-            uni: IntParam::new("Unison", 1, IntRange::Linear { min: 1, max: 16 }),
-            detune: unit_param("Detune", 0.25),
-            blend: unit_param("Blend", 0.75),
-            uni_mode: EnumParam::new("Unison Mode", UniMode::Linear),
-            spread: unit_param("Stereo Spread", 1.0),
-            phase: FloatParam::new("Phase", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 })
-                .with_value_to_string(Arc::new(|v| format!("{:.0}", v * 360.0)))
-                .with_unit(" deg"),
-            rand: unit_param("Random", 1.0),
-        }
-    }
-}
-
-#[derive(Params)]
-pub struct EnvParams {
-    #[id = "de"]
-    pub delay: FloatParam,
-    #[id = "a"]
-    pub attack: FloatParam,
-    #[id = "h"]
-    pub hold: FloatParam,
-    #[id = "d"]
-    pub decay: FloatParam,
-    #[id = "s"]
-    pub sustain: FloatParam,
-    #[id = "r"]
-    pub release: FloatParam,
-    #[id = "ac"]
-    pub atk_curve: FloatParam,
-    #[id = "dc"]
-    pub dec_curve: FloatParam,
-    #[id = "rc"]
-    pub rel_curve: FloatParam,
-}
-
-impl EnvParams {
-    fn new(a: f32, d: f32, s: f32, r: f32) -> Self {
-        Self {
-            delay: time_param("Delay", 0.5, 10000.0),
-            attack: time_param("Attack", a, 10000.0),
-            hold: time_param("Hold", 0.5, 10000.0),
-            decay: time_param("Decay", d, 10000.0),
-            sustain: unit_param("Sustain", s),
-            release: time_param("Release", r, 10000.0),
-            atk_curve: bi_param("Attack Slope", 0.0),
-            dec_curve: bi_param("Decay Slope", 0.0),
-            rel_curve: bi_param("Release Slope", 0.0),
-        }
-    }
-}
-
-#[derive(Params)]
-pub struct LfoParams {
-    #[persist = "draw"]
-    pub draw: Arc<std::sync::Mutex<String>>,
-    #[id = "sh"]
-    pub shape: EnumParam<LfoShape>,
-    #[id = "rt"]
-    pub rate: FloatParam,
-    #[id = "sy"]
-    pub sync: BoolParam,
-    #[id = "dv"]
-    pub div: EnumParam<Div>,
-    #[id = "tg"]
-    pub trig: BoolParam,
-    #[id = "ri"]
-    pub rise: FloatParam,
-    #[id = "sm"]
-    pub smooth: FloatParam,
-    #[id = "ld"]
-    pub delay: FloatParam,
-    #[id = "os"]
-    pub oneshot: BoolParam,
-    #[id = "lp"]
-    pub phase: FloatParam,
-}
-
-impl LfoParams {
-    fn new() -> Self {
-        Self {
-            draw: Arc::new(std::sync::Mutex::new(String::new())),
-            shape: EnumParam::new("Shape", LfoShape::Sine),
-            rate: FloatParam::new("Rate", 2.0, FloatRange::Skewed { min: 0.02, max: 40.0, factor: FloatRange::skew_factor(-2.0) })
-                .with_unit(" Hz")
-                .with_value_to_string(formatters::v2s_f32_rounded(2)),
-            sync: BoolParam::new("Sync", false),
-            div: EnumParam::new("Division", Div::D4),
-            trig: BoolParam::new("Retrigger", false),
-            rise: time_param("Rise", 0.5, 8000.0),
-            smooth: unit_param("Smooth", 0.0),
-            delay: time_param("Delay", 0.5, 8000.0),
-            oneshot: BoolParam::new("One Shot", false),
-            phase: unit_param("Start Phase", 0.0),
-        }
-    }
-}
-
-#[derive(Params)]
-pub struct ModSlot {
-    #[id = "ms"]
-    pub src: EnumParam<ModSrc>,
-    #[id = "md"]
-    pub dst: EnumParam<ModDst>,
-    #[id = "ma"]
-    pub amount: FloatParam,
-    #[id = "mx"]
-    pub aux: EnumParam<ModSrc>,
-    #[id = "mc"]
-    pub curve: FloatParam,
-    #[id = "mu"]
-    pub uni: BoolParam,
-}
-
-impl ModSlot {
-    fn new() -> Self {
-        Self {
-            src: EnumParam::new("Source", ModSrc::None),
-            dst: EnumParam::new("Destination", ModDst::None),
-            amount: FloatParam::new("Amount", 0.0, FloatRange::Linear { min: -1.0, max: 1.0 })
-                .with_step_size(0.01)
-                .with_value_to_string(Arc::new(|v| format!("{:+.0}", v * 100.0))),
-            aux: EnumParam::new("Amount Scaled By", ModSrc::None),
-            curve: bi_param("Curve", 0.0),
-            uni: BoolParam::new("Unipolar", false),
-        }
-    }
-}
-
-pub const MOD_SLOTS: usize = 16;
-
-#[derive(Params)]
-pub struct SynthParams {
-    #[persist = "editor-state"]
-    pub editor_state: Arc<EguiState>,
-    #[persist = "preset-name"]
-    pub preset_name: Arc<std::sync::Mutex<String>>,
-    #[persist = "noise-sample"]
-    pub noise_sample: Arc<std::sync::Mutex<String>>,
-
-    #[nested(id_prefix = "a", group = "Osc A")]
-    pub a: OscParams,
-    #[nested(id_prefix = "b", group = "Osc B")]
-    pub b: OscParams,
-
-    #[id = "sub_on"]
-    pub sub_on: BoolParam,
-    #[id = "sub_wv"]
-    pub sub_wave: EnumParam<SubWave>,
-    #[id = "sub_oc"]
-    pub sub_oct: IntParam,
-    #[id = "sub_lv"]
-    pub sub_level: FloatParam,
-    #[id = "sub_pn"]
-    pub sub_pan: FloatParam,
-    #[id = "noi_lv"]
-    pub noise_level: FloatParam,
-    #[id = "noi_ty"]
-    pub noise_type: EnumParam<NoiseType>,
-    #[id = "noi_pan"]
-    pub noise_pan: FloatParam,
-    #[id = "noi_pit"]
-    pub noise_pitch: FloatParam,
-    #[id = "noi_key"]
-    pub noise_key: BoolParam,
-    #[id = "noi_lp"]
-    pub noise_loop: BoolParam,
-    #[id = "noi_ph"]
-    pub noise_phase: FloatParam,
-    #[id = "noi_rn"]
-    pub noise_rand: FloatParam,
-
+pub struct FilterParams {
     #[id = "fl_on"]
     pub fl_on: BoolParam,
     #[id = "fl_ty"]
@@ -827,47 +658,40 @@ pub struct SynthParams {
     pub fl_a: BoolParam,
     #[id = "fl_b"]
     pub fl_b: BoolParam,
+    #[id = "fl_c"]
+    pub fl_c: BoolParam,
     #[id = "fl_s"]
     pub fl_sub: BoolParam,
     #[id = "fl_n"]
     pub fl_noise: BoolParam,
-
-    #[nested(id_prefix = "e1", group = "Env 1 (Amp)")]
-    pub e1: EnvParams,
-    #[nested(id_prefix = "e2", group = "Env 2")]
-    pub e2: EnvParams,
-    #[nested(id_prefix = "e3", group = "Env 3")]
-    pub e3: EnvParams,
-
-    #[nested(array, group = "LFO")]
-    pub lfo: [LfoParams; 4],
-    #[nested(array, group = "Mod")]
-    pub slot: [ModSlot; MOD_SLOTS],
     #[nested(array, group = "Filter Points")]
     pub cb: [CBand; CBANDS],
+}
 
-    #[id = "mc1"]
-    pub macro1: FloatParam,
-    #[id = "mc2"]
-    pub macro2: FloatParam,
-    #[id = "mc3"]
-    pub macro3: FloatParam,
-    #[id = "mc4"]
-    pub macro4: FloatParam,
+impl FilterParams {
+    pub fn new(on: bool) -> Self {
+        Self {
+            fl_on: BoolParam::new("Filter On", on),
+            fl_type: EnumParam::new("Filter Type", FilterType::Lp24),
+            cutoff: FloatRange::Skewed { min: 20.0, max: 20000.0, factor: FloatRange::skew_factor(-2.2) }.pipe(|r| {
+                FloatParam::new("Cutoff", 20000.0, r).with_unit(" Hz").with_value_to_string(formatters::v2s_f32_rounded(0))
+            }),
+            res: unit_param("Resonance", 0.1),
+            drive: unit_param("Drive", 0.0),
+            keytrack: unit_param("Key Track", 0.0),
+            fl_mix: unit_param("Filter Mix", 1.0),
+            fl_a: BoolParam::new("Filter A", true),
+            fl_b: BoolParam::new("Filter B", true),
+            fl_c: BoolParam::new("Filter C", true),
+            fl_sub: BoolParam::new("Filter Sub", true),
+            fl_noise: BoolParam::new("Filter Noise", true),
+            cb: std::array::from_fn(CBand::new),
+        }
+    }
+}
 
-    #[id = "vm"]
-    pub vmode: EnumParam<VoiceMode>,
-    #[id = "gl"]
-    pub glide: FloatParam,
-    #[id = "pb"]
-    pub bend: IntParam,
-    #[id = "pc"]
-    pub poly: IntParam,
-    #[id = "mt"]
-    pub tune: FloatParam,
-    #[id = "mv"]
-    pub master: FloatParam,
-
+#[derive(Params)]
+pub struct FxBank {
     // ---- effect order (slot -> module index, see FX_NAMES)
     #[id = "fo_1"]
     pub fo1: IntParam,
@@ -889,6 +713,10 @@ pub struct SynthParams {
     pub fo9: IntParam,
     #[id = "fo_10"]
     pub fo10: IntParam,
+    #[id = "fo_11"]
+    pub fo11: IntParam,
+    #[id = "fo_12"]
+    pub fo12: IntParam,
 
     // ---- hyper / dimension
     #[id = "hy_on"]
@@ -1078,93 +906,34 @@ pub struct SynthParams {
     #[id = "ff_mx"]
     pub ff_mix: FloatParam,
 
-    // ---- arpeggiator
-    #[id = "ar_on"]
-    pub arp_on: BoolParam,
-    #[id = "ar_md"]
-    pub arp_mode: EnumParam<ArpMode>,
-    #[id = "ar_dv"]
-    pub arp_div: EnumParam<Div>,
-    #[id = "ar_oc"]
-    pub arp_oct: IntParam,
-    #[id = "ar_gt"]
-    pub arp_gate: FloatParam,
-    #[id = "ar_sw"]
-    pub arp_swing: FloatParam,
-    #[id = "ar_hd"]
-    pub arp_hold: BoolParam,
+    // ---- Bode frequency shifter
+    #[id = "bd_on"]
+    pub bd_on: BoolParam,
+    #[id = "bd_sh"]
+    pub bd_shift: FloatParam,
+    #[id = "bd_fb"]
+    pub bd_fb: FloatParam,
+    #[id = "bd_mx"]
+    pub bd_mix: FloatParam,
+
+    // ---- utility
+    #[id = "ut_on"]
+    pub ut_on: BoolParam,
+    #[id = "ut_gn"]
+    pub ut_gain: FloatParam,
+    #[id = "ut_pn"]
+    pub ut_pan: FloatParam,
+    #[id = "ut_wd"]
+    pub ut_width: FloatParam,
+    #[id = "ut_mo"]
+    pub ut_mono: BoolParam,
+    #[id = "ut_iv"]
+    pub ut_invert: BoolParam,
 }
 
-impl SynthParams {
-    /// The ten effect-order parameters in slot order.
-    pub fn fx_order_params(&self) -> [&IntParam; 10] {
-        [&self.fo1, &self.fo2, &self.fo3, &self.fo4, &self.fo5, &self.fo6, &self.fo7, &self.fo8, &self.fo9, &self.fo10]
-    }
-
-    pub fn macros(&self) -> [&FloatParam; 4] {
-        [&self.macro1, &self.macro2, &self.macro3, &self.macro4]
-    }
-}
-
-fn order_param(i: i32) -> IntParam {
-    IntParam::new(format!("FX Slot {}", i + 1), i, IntRange::Linear { min: 0, max: 9 }).non_automatable()
-}
-
-impl Default for SynthParams {
-    fn default() -> Self {
+impl FxBank {
+    pub fn new() -> Self {
         Self {
-            editor_state: EguiState::from_size(1100, 870),
-            preset_name: Arc::new(std::sync::Mutex::new("Init".to_string())),
-            noise_sample: Arc::new(std::sync::Mutex::new(String::new())),
-            a: OscParams::new(true, 0.75),
-            b: OscParams::new(false, 0.75),
-            sub_on: BoolParam::new("Sub On", false),
-            sub_wave: EnumParam::new("Sub Wave", SubWave::Sine),
-            sub_oct: IntParam::new("Sub Octave", -1, IntRange::Linear { min: -3, max: 0 }),
-            sub_level: unit_param("Sub Level", 0.5),
-            sub_pan: bi_param("Sub Pan", 0.0),
-            noise_level: unit_param("Noise Level", 0.0),
-            noise_type: EnumParam::new("Noise Type", NoiseType::White),
-            noise_pan: FloatParam::new("Noise Pan", 0.0, FloatRange::Linear { min: -1.0, max: 1.0 }).with_step_size(0.01),
-            noise_pitch: FloatParam::new("Noise Pitch", 0.0, FloatRange::Linear { min: -48.0, max: 48.0 }).with_step_size(0.1).with_unit(" st"),
-            noise_key: BoolParam::new("Noise Key Track", false),
-            noise_loop: BoolParam::new("Noise Loop", true),
-            noise_phase: unit_param("Noise Phase", 0.0),
-            noise_rand: unit_param("Noise Random", 0.0),
-            fl_on: BoolParam::new("Filter On", true),
-            fl_type: EnumParam::new("Filter Type", FilterType::Lp24),
-            cutoff: FloatRange::Skewed { min: 20.0, max: 20000.0, factor: FloatRange::skew_factor(-2.2) }.pipe(|r| {
-                FloatParam::new("Cutoff", 20000.0, r).with_unit(" Hz").with_value_to_string(formatters::v2s_f32_rounded(0))
-            }),
-            res: unit_param("Resonance", 0.1),
-            drive: unit_param("Drive", 0.0),
-            keytrack: unit_param("Key Track", 0.0),
-            fl_mix: unit_param("Filter Mix", 1.0),
-            fl_a: BoolParam::new("Filter A", true),
-            fl_b: BoolParam::new("Filter B", true),
-            fl_sub: BoolParam::new("Filter Sub", true),
-            fl_noise: BoolParam::new("Filter Noise", true),
-            e1: EnvParams::new(1.0, 400.0, 0.8, 120.0),
-            e2: EnvParams::new(1.0, 300.0, 0.0, 200.0),
-            e3: EnvParams::new(1.0, 300.0, 0.0, 200.0),
-            lfo: [LfoParams::new(), LfoParams::new(), LfoParams::new(), LfoParams::new()],
-            slot: std::array::from_fn(|_| ModSlot::new()),
-            cb: std::array::from_fn(CBand::new),
-            macro1: unit_param("Macro 1", 0.0),
-            macro2: unit_param("Macro 2", 0.0),
-            macro3: unit_param("Macro 3", 0.0),
-            macro4: unit_param("Macro 4", 0.0),
-            vmode: EnumParam::new("Voice Mode", VoiceMode::Poly),
-            glide: FloatParam::new("Glide", 0.5, FloatRange::Skewed { min: 0.5, max: 2000.0, factor: FloatRange::skew_factor(-2.5) })
-                .with_unit(" ms")
-                .with_value_to_string(formatters::v2s_f32_rounded(0)),
-            bend: IntParam::new("Bend Range", 2, IntRange::Linear { min: 0, max: 24 }),
-            poly: IntParam::new("Voices", 16, IntRange::Linear { min: 1, max: 16 }),
-            tune: FloatParam::new("Master Tune", 0.0, FloatRange::Linear { min: -100.0, max: 100.0 }).with_unit(" ct").with_step_size(0.1),
-            master: FloatParam::new("Master", -6.0, FloatRange::Linear { min: -60.0, max: 6.0 })
-                .with_unit(" dB")
-                .with_step_size(0.1)
-                .with_value_to_string(formatters::v2s_f32_rounded(1)),
             fo1: order_param(0),
             fo2: order_param(1),
             fo3: order_param(2),
@@ -1175,6 +944,8 @@ impl Default for SynthParams {
             fo8: order_param(7),
             fo9: order_param(8),
             fo10: order_param(9),
+            fo11: order_param(10),
+            fo12: order_param(11),
 
             hy_on: BoolParam::new("Hyper On", false),
             hy_rate: rate_param("Hyper Rate", 0.6, 0.05, 8.0),
@@ -1275,6 +1046,441 @@ impl Default for SynthParams {
             ff_res: unit_param("Filter FX Resonance", 0.2),
             ff_drive: unit_param("Filter FX Drive", 0.0),
             ff_mix: unit_param("Filter FX Mix", 1.0),
+            bd_on: BoolParam::new("Bode On", false),
+            bd_shift: FloatParam::new("Bode Shift", 0.0, FloatRange::SymmetricalSkewed { min: -4000.0, max: 4000.0, factor: FloatRange::skew_factor(-2.0), center: 0.0 })
+                .with_unit(" Hz")
+                .with_value_to_string(formatters::v2s_f32_rounded(1)),
+            bd_fb: unit_param("Bode Feedback", 0.0),
+            bd_mix: unit_param("Bode Mix", 0.5),
+            ut_on: BoolParam::new("Utility On", false),
+            ut_gain: db_param("Utility Gain", 0.0, -48.0, 24.0),
+            ut_pan: bi_param("Utility Pan", 0.0),
+            ut_width: FloatParam::new("Utility Width", 1.0, FloatRange::Linear { min: 0.0, max: 2.0 }).with_value_to_string(Arc::new(|v| format!("{:.0}%", v * 100.0))),
+            ut_mono: BoolParam::new("Utility Mono", false),
+            ut_invert: BoolParam::new("Utility Invert", false),
+        }
+    }
+
+    /// The effect-order parameters in slot order.
+    pub fn order_params(&self) -> [&IntParam; FX_SLOTS] {
+        [&self.fo1, &self.fo2, &self.fo3, &self.fo4, &self.fo5, &self.fo6, &self.fo7, &self.fo8, &self.fo9, &self.fo10, &self.fo11, &self.fo12]
+    }
+}
+
+#[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
+pub enum FxRoute {
+    #[name = "Bus 1 > Bus 2"]
+    Series,
+    #[name = "Parallel"]
+    Parallel,
+    #[name = "Split Low / High"]
+    SplitLh,
+    #[name = "Split Mid / Side"]
+    SplitMs,
+}
+
+pub const FX_SLOTS: usize = 12;
+
+#[derive(Params)]
+pub struct OscParams {
+    #[persist = "wave"]
+    pub wave: Arc<std::sync::Mutex<String>>,
+    #[id = "on"]
+    pub on: BoolParam,
+    #[id = "tb"]
+    pub table: EnumParam<TableId>,
+    #[id = "pos"]
+    pub pos: FloatParam,
+    #[id = "wm"]
+    pub warp_mode: EnumParam<WarpMode>,
+    #[id = "wa"]
+    pub warp: FloatParam,
+    #[id = "w2m"]
+    pub warp2_mode: EnumParam<WarpMode>,
+    #[id = "w2a"]
+    pub warp2: FloatParam,
+    #[id = "lv"]
+    pub level: FloatParam,
+    #[id = "pan"]
+    pub pan: FloatParam,
+    #[id = "oc"]
+    pub oct: IntParam,
+    #[id = "st"]
+    pub semi: IntParam,
+    #[id = "fn"]
+    pub fine: FloatParam,
+    #[id = "un"]
+    pub uni: IntParam,
+    #[id = "dt"]
+    pub detune: FloatParam,
+    #[id = "bl"]
+    pub blend: FloatParam,
+    #[id = "um"]
+    pub uni_mode: EnumParam<UniMode>,
+    #[id = "sp"]
+    pub spread: FloatParam,
+    #[id = "ph"]
+    pub phase: FloatParam,
+    #[id = "rn"]
+    pub rand: FloatParam,
+}
+
+impl OscParams {
+    fn new(on: bool, level: f32) -> Self {
+        Self {
+            wave: Arc::new(std::sync::Mutex::new(String::new())),
+            on: BoolParam::new("On", on),
+            table: EnumParam::new("Table", TableId::Basic),
+            pos: unit_param("Position", 0.0),
+            warp_mode: EnumParam::new("Warp", WarpMode::Off),
+            warp: unit_param("Warp Amount", 0.0),
+            warp2_mode: EnumParam::new("Warp 2", WarpMode::Off),
+            warp2: unit_param("Warp 2 Amount", 0.0),
+            level: unit_param("Level", level),
+            pan: FloatParam::new("Pan", 0.0, FloatRange::Linear { min: -1.0, max: 1.0 }).with_step_size(0.01),
+            oct: IntParam::new("Octave", 0, IntRange::Linear { min: -4, max: 4 }),
+            semi: IntParam::new("Semi", 0, IntRange::Linear { min: -12, max: 12 }),
+            fine: FloatParam::new("Fine", 0.0, FloatRange::Linear { min: -100.0, max: 100.0 }).with_unit(" ct").with_step_size(0.1),
+            uni: IntParam::new("Unison", 1, IntRange::Linear { min: 1, max: 16 }),
+            detune: unit_param("Detune", 0.25),
+            blend: unit_param("Blend", 0.75),
+            uni_mode: EnumParam::new("Unison Mode", UniMode::Linear),
+            spread: unit_param("Stereo Spread", 1.0),
+            phase: FloatParam::new("Phase", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_value_to_string(Arc::new(|v| format!("{:.0}", v * 360.0)))
+                .with_unit(" deg"),
+            rand: unit_param("Random", 1.0),
+        }
+    }
+}
+
+#[derive(Params)]
+pub struct EnvParams {
+    #[id = "de"]
+    pub delay: FloatParam,
+    #[id = "a"]
+    pub attack: FloatParam,
+    #[id = "h"]
+    pub hold: FloatParam,
+    #[id = "d"]
+    pub decay: FloatParam,
+    #[id = "s"]
+    pub sustain: FloatParam,
+    #[id = "r"]
+    pub release: FloatParam,
+    #[id = "ac"]
+    pub atk_curve: FloatParam,
+    #[id = "dc"]
+    pub dec_curve: FloatParam,
+    #[id = "rc"]
+    pub rel_curve: FloatParam,
+    #[id = "il"]
+    pub relegato: BoolParam,
+}
+
+impl EnvParams {
+    fn new(a: f32, d: f32, s: f32, r: f32) -> Self {
+        Self {
+            delay: time_param("Delay", 0.5, 10000.0),
+            attack: time_param("Attack", a, 10000.0),
+            hold: time_param("Hold", 0.5, 10000.0),
+            decay: time_param("Decay", d, 10000.0),
+            sustain: unit_param("Sustain", s),
+            release: time_param("Release", r, 10000.0),
+            atk_curve: bi_param("Attack Slope", 0.0),
+            dec_curve: bi_param("Decay Slope", 0.0),
+            rel_curve: bi_param("Release Slope", 0.0),
+            relegato: BoolParam::new("Invert Legato", false),
+        }
+    }
+}
+
+#[derive(Params)]
+pub struct LfoParams {
+    #[persist = "draw"]
+    pub draw: Arc<std::sync::Mutex<String>>,
+    #[id = "sh"]
+    pub shape: EnumParam<LfoShape>,
+    #[id = "rt"]
+    pub rate: FloatParam,
+    #[id = "sy"]
+    pub sync: BoolParam,
+    #[id = "dv"]
+    pub div: EnumParam<Div>,
+    #[id = "tg"]
+    pub trig: BoolParam,
+    #[id = "ri"]
+    pub rise: FloatParam,
+    #[id = "sm"]
+    pub smooth: FloatParam,
+    #[id = "ld"]
+    pub delay: FloatParam,
+    #[id = "os"]
+    pub oneshot: BoolParam,
+    #[id = "lp"]
+    pub phase: FloatParam,
+}
+
+impl LfoParams {
+    fn new() -> Self {
+        Self {
+            draw: Arc::new(std::sync::Mutex::new(String::new())),
+            shape: EnumParam::new("Shape", LfoShape::Sine),
+            rate: FloatParam::new("Rate", 2.0, FloatRange::Skewed { min: 0.02, max: 1000.0, factor: FloatRange::skew_factor(-2.6) })
+                .with_unit(" Hz")
+                .with_value_to_string(formatters::v2s_f32_rounded(2)),
+            sync: BoolParam::new("Sync", false),
+            div: EnumParam::new("Division", Div::D4),
+            trig: BoolParam::new("Retrigger", false),
+            rise: time_param("Rise", 0.5, 8000.0),
+            smooth: unit_param("Smooth", 0.0),
+            delay: time_param("Delay", 0.5, 8000.0),
+            oneshot: BoolParam::new("One Shot", false),
+            phase: unit_param("Start Phase", 0.0),
+        }
+    }
+}
+
+#[derive(Params)]
+pub struct ModSlot {
+    #[id = "ms"]
+    pub src: EnumParam<ModSrc>,
+    #[id = "md"]
+    pub dst: EnumParam<ModDst>,
+    #[id = "ma"]
+    pub amount: FloatParam,
+    #[id = "mx"]
+    pub aux: EnumParam<ModSrc>,
+    #[id = "mc"]
+    pub curve: FloatParam,
+    #[id = "mu"]
+    pub uni: BoolParam,
+}
+
+impl ModSlot {
+    fn new() -> Self {
+        Self {
+            src: EnumParam::new("Source", ModSrc::None),
+            dst: EnumParam::new("Destination", ModDst::None),
+            amount: FloatParam::new("Amount", 0.0, FloatRange::Linear { min: -1.0, max: 1.0 })
+                .with_step_size(0.01)
+                .with_value_to_string(Arc::new(|v| format!("{:+.0}", v * 100.0))),
+            aux: EnumParam::new("Amount Scaled By", ModSrc::None),
+            curve: bi_param("Curve", 0.0),
+            uni: BoolParam::new("Unipolar", false),
+        }
+    }
+}
+
+pub const MOD_SLOTS: usize = 16;
+
+#[derive(Params)]
+pub struct SynthParams {
+    #[persist = "editor-state"]
+    pub editor_state: Arc<EguiState>,
+    #[persist = "preset-name"]
+    pub preset_name: Arc<std::sync::Mutex<String>>,
+    #[persist = "noise-sample"]
+    pub noise_sample: Arc<std::sync::Mutex<String>>,
+    /// MIDI learn: "cc=param id;cc=param id" (kept with the plugin state, not with presets)
+    #[persist = "cc-map"]
+    pub cc_map: Arc<std::sync::Mutex<String>>,
+    /// keyboard transposition: octaves and semitones (applies to MIDI input and the on-screen keys)
+    #[id = "tr_oc"]
+    pub kb_octave: IntParam,
+    #[id = "tr_st"]
+    pub kb_transpose: IntParam,
+
+    #[nested(id_prefix = "a", group = "Osc A")]
+    pub a: OscParams,
+    #[nested(id_prefix = "b", group = "Osc B")]
+    pub b: OscParams,
+    #[nested(id_prefix = "c", group = "Osc C")]
+    pub c: OscParams,
+
+    #[id = "sub_on"]
+    pub sub_on: BoolParam,
+    #[id = "sub_wv"]
+    pub sub_wave: EnumParam<SubWave>,
+    #[id = "sub_oc"]
+    pub sub_oct: IntParam,
+    #[id = "sub_lv"]
+    pub sub_level: FloatParam,
+    #[id = "sub_pn"]
+    pub sub_pan: FloatParam,
+    #[id = "noi_lv"]
+    pub noise_level: FloatParam,
+    #[id = "noi_ty"]
+    pub noise_type: EnumParam<NoiseType>,
+    #[id = "noi_pan"]
+    pub noise_pan: FloatParam,
+    #[id = "noi_pit"]
+    pub noise_pitch: FloatParam,
+    #[id = "noi_key"]
+    pub noise_key: BoolParam,
+    #[id = "noi_lp"]
+    pub noise_loop: BoolParam,
+    #[id = "noi_ph"]
+    pub noise_phase: FloatParam,
+    #[id = "noi_rn"]
+    pub noise_rand: FloatParam,
+
+    #[nested(group = "Filter")]
+    pub f1: FilterParams,
+    #[nested(id_prefix = "f2", group = "Filter 2")]
+    pub f2: FilterParams,
+    #[id = "fl_ser"]
+    pub fl_serial: BoolParam,
+
+    #[nested(id_prefix = "e1", group = "Env 1 (Amp)")]
+    pub e1: EnvParams,
+    #[nested(id_prefix = "e2", group = "Env 2")]
+    pub e2: EnvParams,
+    #[nested(id_prefix = "e3", group = "Env 3")]
+    pub e3: EnvParams,
+    #[nested(id_prefix = "e4", group = "Env 4")]
+    pub e4: EnvParams,
+
+    #[nested(array, group = "LFO")]
+    pub lfo: [LfoParams; 8],
+    #[nested(array, group = "Mod")]
+    pub slot: [ModSlot; MOD_SLOTS],
+
+    #[id = "mc1"]
+    pub macro1: FloatParam,
+    #[id = "mc2"]
+    pub macro2: FloatParam,
+    #[id = "mc3"]
+    pub macro3: FloatParam,
+    #[id = "mc4"]
+    pub macro4: FloatParam,
+    #[id = "mc5"]
+    pub macro5: FloatParam,
+    #[id = "mc6"]
+    pub macro6: FloatParam,
+    #[id = "mc7"]
+    pub macro7: FloatParam,
+    #[id = "mc8"]
+    pub macro8: FloatParam,
+
+    #[id = "vm"]
+    pub vmode: EnumParam<VoiceMode>,
+    #[id = "gl"]
+    pub glide: FloatParam,
+    #[id = "pb"]
+    pub bend: IntParam,
+    #[id = "pc"]
+    pub poly: IntParam,
+    #[id = "mt"]
+    pub tune: FloatParam,
+    #[id = "mv"]
+    pub master: FloatParam,
+
+    // ---- effects: two busses (each a full rack), routing between them
+    #[nested(group = "FX")]
+    pub fx: FxBank,
+    #[nested(id_prefix = "b2", group = "FX Bus 2")]
+    pub fx2: FxBank,
+    #[id = "fxrt"]
+    pub fx_route: EnumParam<FxRoute>,
+    #[id = "fxsp"]
+    pub fx_split: FloatParam,
+    #[id = "fxl2"]
+    pub fx2_level: FloatParam,
+
+    // ---- arpeggiator
+    #[id = "ar_on"]
+    pub arp_on: BoolParam,
+    #[id = "ar_md"]
+    pub arp_mode: EnumParam<ArpMode>,
+    #[id = "ar_dv"]
+    pub arp_div: EnumParam<Div>,
+    #[id = "ar_oc"]
+    pub arp_oct: IntParam,
+    #[id = "ar_gt"]
+    pub arp_gate: FloatParam,
+    #[id = "ar_sw"]
+    pub arp_swing: FloatParam,
+    #[id = "ar_hd"]
+    pub arp_hold: BoolParam,
+}
+
+impl SynthParams {
+    pub fn bank(&self, bus: usize) -> &FxBank {
+        if bus == 0 {
+            &self.fx
+        } else {
+            &self.fx2
+        }
+    }
+
+    pub fn macros(&self) -> [&FloatParam; 8] {
+        [&self.macro1, &self.macro2, &self.macro3, &self.macro4, &self.macro5, &self.macro6, &self.macro7, &self.macro8]
+    }
+}
+
+fn order_param(i: i32) -> IntParam {
+    IntParam::new(format!("FX Slot {}", i + 1), i, IntRange::Linear { min: 0, max: 11 }).non_automatable()
+}
+
+impl Default for SynthParams {
+    fn default() -> Self {
+        Self {
+            editor_state: EguiState::from_size(1458, 870),
+            preset_name: Arc::new(std::sync::Mutex::new("Init".to_string())),
+            noise_sample: Arc::new(std::sync::Mutex::new(String::new())),
+            cc_map: Arc::new(std::sync::Mutex::new(String::new())),
+            kb_octave: IntParam::new("Octave", 0, IntRange::Linear { min: -4, max: 4 }),
+            kb_transpose: IntParam::new("Transpose", 0, IntRange::Linear { min: -24, max: 24 }),
+            a: OscParams::new(true, 0.75),
+            b: OscParams::new(false, 0.75),
+            c: OscParams::new(false, 0.75),
+            sub_on: BoolParam::new("Sub On", false),
+            sub_wave: EnumParam::new("Sub Wave", SubWave::Sine),
+            sub_oct: IntParam::new("Sub Octave", -1, IntRange::Linear { min: -3, max: 0 }),
+            sub_level: unit_param("Sub Level", 0.5),
+            sub_pan: bi_param("Sub Pan", 0.0),
+            noise_level: unit_param("Noise Level", 0.0),
+            noise_type: EnumParam::new("Noise Type", NoiseType::White),
+            noise_pan: FloatParam::new("Noise Pan", 0.0, FloatRange::Linear { min: -1.0, max: 1.0 }).with_step_size(0.01),
+            noise_pitch: FloatParam::new("Noise Pitch", 0.0, FloatRange::Linear { min: -48.0, max: 48.0 }).with_step_size(0.1).with_unit(" st"),
+            noise_key: BoolParam::new("Noise Key Track", false),
+            noise_loop: BoolParam::new("Noise Loop", true),
+            noise_phase: unit_param("Noise Phase", 0.0),
+            noise_rand: unit_param("Noise Random", 0.0),
+            f1: FilterParams::new(true),
+            f2: FilterParams::new(false),
+            fl_serial: BoolParam::new("Filters In Series", false),
+            e1: EnvParams::new(1.0, 400.0, 0.8, 120.0),
+            e2: EnvParams::new(1.0, 300.0, 0.0, 200.0),
+            e3: EnvParams::new(1.0, 300.0, 0.0, 200.0),
+            e4: EnvParams::new(1.0, 300.0, 0.0, 200.0),
+            lfo: std::array::from_fn(|_| LfoParams::new()),
+            slot: std::array::from_fn(|_| ModSlot::new()),
+            macro1: unit_param("Macro 1", 0.0),
+            macro2: unit_param("Macro 2", 0.0),
+            macro3: unit_param("Macro 3", 0.0),
+            macro4: unit_param("Macro 4", 0.0),
+            macro5: unit_param("Macro 5", 0.0),
+            macro6: unit_param("Macro 6", 0.0),
+            macro7: unit_param("Macro 7", 0.0),
+            macro8: unit_param("Macro 8", 0.0),
+            vmode: EnumParam::new("Voice Mode", VoiceMode::Poly),
+            glide: FloatParam::new("Glide", 0.5, FloatRange::Skewed { min: 0.5, max: 2000.0, factor: FloatRange::skew_factor(-2.5) })
+                .with_unit(" ms")
+                .with_value_to_string(formatters::v2s_f32_rounded(0)),
+            bend: IntParam::new("Bend Range", 2, IntRange::Linear { min: 0, max: 24 }),
+            poly: IntParam::new("Voices", 16, IntRange::Linear { min: 1, max: 16 }),
+            tune: FloatParam::new("Master Tune", 0.0, FloatRange::Linear { min: -100.0, max: 100.0 }).with_unit(" ct").with_step_size(0.1),
+            master: FloatParam::new("Master", -6.0, FloatRange::Linear { min: -60.0, max: 6.0 })
+                .with_unit(" dB")
+                .with_step_size(0.1)
+                .with_value_to_string(formatters::v2s_f32_rounded(1)),
+            fx: FxBank::new(),
+            fx2: FxBank::new(),
+            fx_route: EnumParam::new("FX Routing", FxRoute::Series),
+            fx_split: hz_param("FX Split Freq", 400.0, 40.0, 12000.0),
+            fx2_level: unit_param("FX Bus 2 Level", 1.0),
 
             arp_on: BoolParam::new("Arp On", false),
             arp_mode: EnumParam::new("Arp Mode", ArpMode::Up),

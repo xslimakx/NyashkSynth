@@ -7,8 +7,8 @@ use std::f32::consts::{PI, TAU};
 #[derive(Clone)]
 pub struct FxPatch {
     /// Module index (see `FX_NAMES`) for every slot of the chain.
-    pub order: [usize; 10],
-    pub on: [bool; 10],
+    pub order: [usize; 12],
+    pub on: [bool; 12],
 
     pub hy_rate: f32,
     pub hy_detune: f32,
@@ -83,6 +83,16 @@ pub struct FxPatch {
     pub ff_res: f32,
     pub ff_drive: f32,
     pub ff_mix: f32,
+
+    pub bd_shift: f32,
+    pub bd_fb: f32,
+    pub bd_mix: f32,
+
+    pub ut_gain: f32,
+    pub ut_pan: f32,
+    pub ut_width: f32,
+    pub ut_mono: bool,
+    pub ut_invert: bool,
 }
 
 impl FxPatch {
@@ -376,6 +386,37 @@ pub struct Fx {
     plate: Plate,
     eq: EqM,
     ff: FiltFx,
+    bode: Bode,
+}
+
+/// Frequency shifter state: two all-pass chains giving a 90 degree phase difference (Hilbert pair).
+#[derive(Clone, Copy, Default)]
+struct Ap {
+    x1: f32,
+    x2: f32,
+    y1: f32,
+    y2: f32,
+}
+
+struct Bode {
+    c1: [[Ap; 4]; 2],
+    c2: [[Ap; 4]; 2],
+    d: [f32; 2],
+    fb: [f32; 2],
+    ph: f64,
+}
+
+const HIL_A: [f32; 4] = [0.6923878, 0.9360654322959, 0.9882295226860, 0.9987488452737];
+const HIL_B: [f32; 4] = [0.4021921162426, 0.8561710882420, 0.9722909545651, 0.9952884791278];
+
+#[inline]
+fn ap_run(a: &mut Ap, x: f32, c: f32) -> f32 {
+    let y = c * (x + a.y2) - a.x2;
+    a.x2 = a.x1;
+    a.x1 = x;
+    a.y2 = a.y1;
+    a.y1 = y;
+    y
 }
 
 fn ms(fs: f32, t: f32) -> usize {
@@ -430,6 +471,7 @@ impl Fx {
             plate: Plate::new(fs),
             eq: EqM { ls: [Bq::default(); 2], pk: [Bq::default(); 2], hs: [Bq::default(); 2] },
             ff: FiltFx { s: [[0.0; 2]; 4] },
+            bode: Bode { c1: [[Ap::default(); 4]; 2], c2: [[Ap::default(); 4]; 2], d: [0.0; 2], fb: [0.0; 2], ph: 0.0 },
         }
     }
 
@@ -439,9 +481,9 @@ impl Fx {
     }
 
     pub fn process(&mut self, p: &FxPatch, l: &mut [f32], r: &mut [f32]) {
-        let mut used = [false; 10];
-        for slot in 0..10 {
-            let m = p.order[slot].min(9);
+        let mut used = [false; 12];
+        for slot in 0..12 {
+            let m = p.order[slot].min(11);
             if used[m] {
                 continue;
             }
@@ -459,7 +501,9 @@ impl Fx {
                 6 => self.run_comp(p, l, r),
                 7 => self.run_reverb(p, l, r),
                 8 => self.run_eq(p, l, r),
-                _ => self.run_filter(p, l, r),
+                9 => self.run_filter(p, l, r),
+                10 => self.run_bode(p, l, r),
+                _ => run_utility(p, l, r),
             }
         }
     }
@@ -860,6 +904,45 @@ impl Fx {
         }
     }
 
+    // ------------------------------------------------------------ bode frequency shifter
+    fn run_bode(&mut self, p: &FxPatch, l: &mut [f32], r: &mut [f32]) {
+        let fs = self.fs;
+        let b = &mut self.bode;
+        let w = TAU as f64 * p.bd_shift as f64 / fs as f64;
+        let fb = p.bd_fb.clamp(0.0, 1.0) * 0.6;
+        for i in 0..l.len() {
+            b.ph += w;
+            if b.ph > TAU as f64 {
+                b.ph -= TAU as f64;
+            } else if b.ph < -(TAU as f64) {
+                b.ph += TAU as f64;
+            }
+            let (s, c) = (b.ph.sin() as f32, b.ph.cos() as f32);
+            for ch in 0..2 {
+                let x0 = if ch == 0 { l[i] } else { r[i] };
+                let x = x0 + fb * b.fb[ch];
+                let mut a = x;
+                let mut q = x;
+                for k in 0..4 {
+                    a = ap_run(&mut b.c1[ch][k], a, HIL_A[k] * HIL_A[k]);
+                    q = ap_run(&mut b.c2[ch][k], q, HIL_B[k] * HIL_B[k]);
+                }
+                // second path is one sample late
+                let qd = b.d[ch];
+                b.d[ch] = q;
+                let y = a * c + qd * s;
+                let y = if y.is_finite() { y } else { 0.0 };
+                b.fb[ch] = y.clamp(-4.0, 4.0).tanh();
+                let o = x0 * (1.0 - p.bd_mix) + y * p.bd_mix;
+                if ch == 0 {
+                    l[i] = o;
+                } else {
+                    r[i] = o;
+                }
+            }
+        }
+    }
+
     // ------------------------------------------------------------ filter
     fn run_filter(&mut self, p: &FxPatch, l: &mut [f32], r: &mut [f32]) {
         let fs = self.fs;
@@ -911,7 +994,164 @@ impl Fx {
     }
 }
 
+/// Gain, balance, stereo width, mono sum and polarity.
+fn run_utility(p: &FxPatch, l: &mut [f32], r: &mut [f32]) {
+    let g = 10f32.powf(p.ut_gain / 20.0) * if p.ut_invert { -1.0 } else { 1.0 };
+    let (gl, gr) = (1.0 - p.ut_pan.max(0.0), 1.0 + p.ut_pan.min(0.0));
+    for i in 0..l.len() {
+        let (mut a, mut b) = (l[i], r[i]);
+        let (m, s) = ((a + b) * 0.5, (a - b) * 0.5 * p.ut_width);
+        if p.ut_mono {
+            a = m;
+            b = m;
+        } else {
+            a = m + s;
+            b = m - s;
+        }
+        l[i] = a * g * gl;
+        r[i] = b * g * gr;
+    }
+}
+
 #[allow(dead_code)]
 fn _unused(d: &mut DelayLine) {
     d.clear();
+}
+
+
+impl FxPatch {
+    /// True when at least one module of the bus is switched on.
+    pub fn any_on(&self) -> bool {
+        self.on.iter().any(|&o| o)
+    }
+}
+
+/// Two effect busses and the routing between them.
+pub struct FxRack {
+    fs: f32,
+    bus: [Fx; 2],
+    xo: [[[Bq; 2]; 2]; 2], // [low/high][stage][channel]
+    tmp: [Vec<f32>; 4],
+}
+
+impl FxRack {
+    pub fn new(fs: f32) -> Self {
+        Self { fs, bus: [Fx::new(fs), Fx::new(fs)], xo: [[[Bq::default(); 2]; 2]; 2], tmp: [Vec::new(), Vec::new(), Vec::new(), Vec::new()] }
+    }
+
+    pub fn reset(&mut self) {
+        let fs = self.fs;
+        *self = FxRack::new(fs);
+    }
+
+    /// Process one block through both busses. `p1` / `p2` are the bus patches.
+    #[allow(clippy::too_many_arguments)]
+    pub fn process(&mut self, p1: &FxPatch, p2: &FxPatch, route: crate::params::FxRoute, split: f32, lvl2: f32, l: &mut [f32], r: &mut [f32]) {
+        use crate::params::FxRoute;
+        let (a1, a2) = (p1.any_on(), p2.any_on());
+        if !a1 && !a2 {
+            return;
+        }
+        let n = l.len();
+        for t in self.tmp.iter_mut() {
+            if t.len() < n {
+                t.resize(n, 0.0);
+            }
+        }
+        match route {
+            FxRoute::Series => {
+                if a1 {
+                    self.bus[0].process(p1, l, r);
+                }
+                if a2 {
+                    // bus 2 level: wet mix of the second bus
+                    let [t0, t1, ..] = &mut self.tmp;
+                    t0[..n].copy_from_slice(l);
+                    t1[..n].copy_from_slice(r);
+                    self.bus[1].process(p2, l, r);
+                    if lvl2 < 0.999 {
+                        for i in 0..n {
+                            l[i] = t0[i] + (l[i] - t0[i]) * lvl2;
+                            r[i] = t1[i] + (r[i] - t1[i]) * lvl2;
+                        }
+                    }
+                }
+            }
+            FxRoute::Parallel => {
+                let [t0, t1, ..] = &mut self.tmp;
+                t0[..n].copy_from_slice(l);
+                t1[..n].copy_from_slice(r);
+                if a1 {
+                    self.bus[0].process(p1, l, r);
+                }
+                if a2 {
+                    self.bus[1].process(p2, &mut t0[..n], &mut t1[..n]);
+                    let g = lvl2;
+                    let norm = if a1 { 1.0 / (1.0 + g) } else { 1.0 };
+                    for i in 0..n {
+                        if a1 {
+                            l[i] = (l[i] + t0[i] * g) * norm;
+                            r[i] = (r[i] + t1[i] * g) * norm;
+                        } else {
+                            l[i] = t0[i];
+                            r[i] = t1[i];
+                        }
+                    }
+                }
+            }
+            FxRoute::SplitLh => {
+                let f = split.clamp(40.0, 0.45 * self.fs);
+                let lp = BqCoef::lowpass(f, 0.7071, self.fs);
+                let hp = BqCoef::highpass(f, 0.7071, self.fs);
+                let [lo_l, lo_r, hi_l, hi_r] = &mut self.tmp;
+                for i in 0..n {
+                    for (ch, x) in [l[i], r[i]].iter().enumerate() {
+                        let a0 = self.xo[0][0][ch].tick(&lp, *x);
+                        let a = self.xo[0][1][ch].tick(&lp, a0);
+                        let b0 = self.xo[1][0][ch].tick(&hp, *x);
+                        let b = self.xo[1][1][ch].tick(&hp, b0);
+                        if ch == 0 {
+                            lo_l[i] = a;
+                            hi_l[i] = b;
+                        } else {
+                            lo_r[i] = a;
+                            hi_r[i] = b;
+                        }
+                    }
+                }
+                if a1 {
+                    self.bus[0].process(p1, &mut lo_l[..n], &mut lo_r[..n]);
+                }
+                if a2 {
+                    self.bus[1].process(p2, &mut hi_l[..n], &mut hi_r[..n]);
+                }
+                for i in 0..n {
+                    l[i] = lo_l[i] + hi_l[i] * lvl2;
+                    r[i] = lo_r[i] + hi_r[i] * lvl2;
+                }
+            }
+            FxRoute::SplitMs => {
+                let [m_l, m_r, s_l, s_r] = &mut self.tmp;
+                for i in 0..n {
+                    let (m, s) = ((l[i] + r[i]) * 0.5, (l[i] - r[i]) * 0.5);
+                    m_l[i] = m;
+                    m_r[i] = m;
+                    s_l[i] = s;
+                    s_r[i] = -s;
+                }
+                if a1 {
+                    self.bus[0].process(p1, &mut m_l[..n], &mut m_r[..n]);
+                }
+                if a2 {
+                    self.bus[1].process(p2, &mut s_l[..n], &mut s_r[..n]);
+                }
+                for i in 0..n {
+                    let m = (m_l[i] + m_r[i]) * 0.5;
+                    let s = (s_l[i] - s_r[i]) * 0.5 * lvl2;
+                    l[i] = m + s;
+                    r[i] = m - s;
+                }
+            }
+        }
+    }
 }

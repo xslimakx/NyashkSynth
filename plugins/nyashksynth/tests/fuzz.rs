@@ -60,14 +60,24 @@ fn randomize(p: &mut Patch, r: &mut R, fs: f32) {
     p.noise_pitch = r.r(-48.0, 48.0);
     p.noise_key = r.b(0.5);
     p.noise_loop = r.b(0.5);
-    p.fl_on = r.b(0.9);
-    p.fl_type = r.e();
-    p.cutoff = 20.0 * (1000.0f32).powf(r.f());
-    p.res = r.f();
-    p.drive = r.f();
-    p.keytrack = r.f();
-    p.fl_mix = r.f();
-    p.route = [r.b(0.8), r.b(0.8), r.b(0.8), r.b(0.8)];
+    p.fl_serial = r.b(0.3);
+    for (fi, f) in p.fl.iter_mut().enumerate() {
+        f.on = r.b(if fi == 0 { 0.9 } else { 0.5 });
+        f.ty = r.e();
+        f.cutoff = 20.0 * (1000.0f32).powf(r.f());
+        f.res = r.f();
+        f.drive = r.f();
+        f.keytrack = r.f();
+        f.mix = r.f();
+        f.route = [r.b(0.8), r.b(0.8), r.b(0.8), r.b(0.8), r.b(0.8)];
+        for b in f.cb.iter_mut() {
+            b.on = r.b(0.5);
+            b.kind = r.e();
+            b.freq = 20.0 * (1000.0f32).powf(r.f());
+            b.gain = r.r(-36.0, 36.0);
+            b.q = r.r(0.15, 16.0);
+        }
+    }
     for e in p.env.iter_mut() {
         let ms = |v: f32| v * 0.001 * fs;
         e.delay_n = if r.b(0.2) { ms(r.r(1.0, 500.0)) } else { 0.0 };
@@ -107,14 +117,22 @@ fn randomize(p: &mut Patch, r: &mut R, fs: f32) {
 }
 
 fn randomize_fx(f: &mut FxPatch, r: &mut R) {
-    for i in 0..10 {
+    for i in 0..12 {
         f.on[i] = r.b(0.7);
     }
-    let mut order: Vec<usize> = (0..10).collect();
-    for i in (1..10).rev() {
+    let mut order: Vec<usize> = (0..12).collect();
+    for i in (1..12).rev() {
         order.swap(i, r.i(i + 1));
     }
     f.order.copy_from_slice(&order);
+    f.bd_shift = r.r(-4000.0, 4000.0);
+    f.bd_fb = r.f();
+    f.bd_mix = r.f();
+    f.ut_gain = r.r(-48.0, 24.0);
+    f.ut_pan = r.r(-1.0, 1.0);
+    f.ut_width = r.r(0.0, 2.0);
+    f.ut_mono = r.b(0.3);
+    f.ut_invert = r.b(0.3);
     f.hy_rate = r.r(0.05, 8.0);
     f.hy_detune = r.f();
     f.hy_uni = 2 + r.i(7);
@@ -195,9 +213,10 @@ fn random_patches_stay_finite_and_bounded() {
         let fs = [22050.0f32, 44100.0, 48000.0, 88200.0, 96000.0, 192000.0][r.i(6)];
         let mut patch = Patch::read(&params, fs);
         randomize(&mut patch, &mut r, fs);
-        if std::env::var("NY_NOFILT").is_ok() { patch.fl_on = false; }
+        if std::env::var("NY_NOFILT").is_ok() { patch.fl[0].on = false;
+            patch.fl[1].on = false; }
         if std::env::var("NY_NOWARP").is_ok() { for o in patch.osc.iter_mut() { o.wmode = nyashksynth::WarpMode::Off; o.wmode2 = nyashksynth::WarpMode::Off; } }
-        if std::env::var("NY_LP").is_ok() { patch.fl_type = nyashksynth::FilterType::Lp12; }
+        if std::env::var("NY_LP").is_ok() { patch.fl[0].ty = nyashksynth::FilterType::Lp12; }
         let mut eng = Engine::new(fs, patch);
         let mut fx = Fx::new(fs);
         let mut fxp = nyashksynth::fx_patch_from(&params, 120.0);
@@ -244,7 +263,7 @@ fn random_patches_stay_finite_and_bounded() {
             }
             if r.b(0.02) && std::env::var("NY_NOLIVE").is_err() {
                 randomize(&mut eng.patch, &mut r, fs); // live patch change while playing
-                if std::env::var("NY_NOFILT").is_ok() { eng.patch.fl_on = false; }
+                if std::env::var("NY_NOFILT").is_ok() { eng.patch.fl[0].on = false; eng.patch.fl[1].on = false; }
                 if std::env::var("NY_NOWARP").is_ok() { for o in eng.patch.osc.iter_mut() { o.wmode = nyashksynth::WarpMode::Off; o.wmode2 = nyashksynth::WarpMode::Off; } }
                 if std::env::var("NY_NOSUB").is_ok() { eng.patch.sub_on = false; }
                 if std::env::var("NY_NOARP").is_ok() { eng.patch.arp.on = false; }
@@ -254,7 +273,7 @@ fn random_patches_stay_finite_and_bounded() {
             eng.process(&mut l, &mut rr);
             for i in 0..n {
                 assert!(l[i].is_finite() && rr[i].is_finite(), "seed {seed} fs {fs}: ENGINE NaN/inf (arp {} vmode {:?})", eng.patch.arp.on, eng.patch.vmode);
-                assert!(l[i].abs() < 5000.0, "seed {seed}: ENGINE exploded {} at sample {} (voices {} unison {} {} filter {:?} on {} osc {:?}/{:?} {:?}/{:?} sub {} noise {:?})", l[i], done + i, eng.patch.arp.on as u8, eng.patch.osc[0].uni, eng.patch.osc[1].uni, eng.patch.fl_type, eng.patch.fl_on, eng.patch.osc[0].wmode, eng.patch.osc[0].wmode2, eng.patch.osc[1].wmode, eng.patch.osc[1].wmode2, eng.patch.sub_on, eng.patch.noise_type);
+                assert!(l[i].abs() < 5000.0, "seed {seed}: ENGINE exploded {} at sample {} (voices {} unison {} {} filter {:?} on {} osc {:?}/{:?} {:?}/{:?} sub {} noise {:?})", l[i], done + i, eng.patch.arp.on as u8, eng.patch.osc[0].uni, eng.patch.osc[1].uni, eng.patch.fl[0].ty, eng.patch.fl[0].on, eng.patch.osc[0].wmode, eng.patch.osc[0].wmode2, eng.patch.osc[1].wmode, eng.patch.osc[1].wmode2, eng.patch.sub_on, eng.patch.noise_type);
             }
             match eng.fx_mod() {
                 Some(m) => {
@@ -342,8 +361,8 @@ fn diagnose() {
         if scenario(seed, &|p| for o in p.osc.iter_mut() { o.wmode = WarpMode::Off; o.wmode2 = WarpMode::Off }) { culprits.push("warp"); }
         if scenario(seed, &|p| for o in p.osc.iter_mut() { o.uni = 1 }) { culprits.push("unison"); }
         if scenario(seed, &|p| for o in p.osc.iter_mut() { o.umode = UniMode::Linear }) { culprits.push("unimode"); }
-        if scenario(seed, &|p| p.fl_on = false) { culprits.push("filter"); }
-        if scenario(seed, &|p| p.fl_type = FilterType::Lp12) { culprits.push("filtertype"); }
+        if scenario(seed, &|p| { p.fl[0].on = false; p.fl[1].on = false; }) { culprits.push("filter"); }
+        if scenario(seed, &|p| { p.fl[0].ty = FilterType::Lp12; p.fl[1].ty = FilterType::Lp12; }) { culprits.push("filtertype"); }
         if scenario(seed, &|p| p.noise_type = NoiseType::White) { culprits.push("noise"); }
         if scenario(seed, &|p| for s in p.slots.iter_mut() { s.amount = 0.0 }) { culprits.push("matrix"); }
         if scenario(seed, &|p| p.arp.on = false) { culprits.push("arp"); }

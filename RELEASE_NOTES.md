@@ -1,3 +1,16 @@
+## NyashkSynth v2.4.0
+
+Downloads: `NyashkSynth-Linux-VST3.zip`, `NyashkSynth-Windows-VST3.zip` (unzip and copy the whole `NyashkSynth.vst3` folder into your VST3 folder). Illustrated guide: `docs/MANUAL.md`.
+
+- **MIDI learn**: MIDI LEARN button, click any knob, move a CC on your keyboard. Right-click to unbind, CLEAR removes all. Saved with the project.
+- **OCT / SEMI transpose spinners** (click, drag, mouse wheel, double-click reset) and on-screen **pitch and mod wheels**; the wheels follow hardware wheels.
+- **Third oscillator (OSC C)**, with its own filter routing and mod destinations; COPY OSC between oscillators.
+- **Two filters** (F1/F2) in series or parallel, **Custom (points)** filter type.
+- **8 LFOs** (Lorenz and Rössler chaos shapes, rate up to 1000 Hz), **4 envelopes** with INV.LEGATO, **8 macros**.
+- **Two FX buses** with series / parallel / low-high / mid-side routing, plus **Bode** frequency shifter and **Utility**.
+- Master level can be typed in dB; deleting a user preset also removes empty folders.
+- Not yet (planned): Sample / Granular / Spectral oscillator modes, clip sequencer, arp pattern bank, Convolve.
+
 ## NyashkSynth v1.1.1
 
 Downloads: `NyashkSynth-Linux-VST3.zip`, `NyashkSynth-Windows-VST3.zip` (unzip and copy the whole `NyashkSynth.vst3` folder into your VST3 folder).

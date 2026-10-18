@@ -10,6 +10,11 @@ license = "MIT"
 [patch."https://github.com/RustAudio/baseview.git"]
 baseview = { path = "vendor/baseview" }
 
+# nih-plug with ParamPtr::set_normalized_value made public (MIDI learn sets parameters from the audio thread)
+[patch."https://github.com/robbert-vdh/nih-plug.git"]
+nih_plug = { path = "vendor/nih-plug" }
+nih_plug_derive = { path = "vendor/nih-plug/nih_plug_derive" }
+
 [profile.release]
 lto = "thin"
 opt-level = 3

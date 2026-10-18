@@ -22,7 +22,7 @@ use crate::wavedit::WavEdit;
 use crate::wavetable::{self, Table, NAMES};
 use crate::Meters;
 
-pub const BASE_W: f32 = 1100.0;
+pub const BASE_W: f32 = 1458.0;
 pub const BASE_H: f32 = 870.0;
 
 #[derive(PartialEq, Clone, Copy)]
@@ -43,8 +43,15 @@ pub struct Gui {
     auto_loaded: bool,
     pub tab: usize,
     pub fx_sel: usize,
+    pub fx_bus: usize,
+    pub filt_sel: usize,
+    pub learn_on: bool,
+    pub learn_target: Option<nih_plug::params::internals::ParamPtr>,
+    pub last_cc_seen: u32,
+    pub pmap: Vec<(String, nih_plug::params::internals::ParamPtr)>,
     pub fx_drag: Option<usize>,
     pub mat_page: usize,
+    pub lfo_page: usize,
     pub overlay: Overlay,
     presets: Vec<PresetRef>,
     favs: Vec<String>,
@@ -58,6 +65,7 @@ pub struct Gui {
     noises: Vec<files::Entry>,
     nbs: BState,
     edit: Option<WavEdit>,
+    pub copy_menu: bool,
     pub status: String,
     pub status_until: f64,
     auto: Option<(usize, f64, f32, String)>,
@@ -65,13 +73,15 @@ pub struct Gui {
 
 // ---------------------------------------------------------------- data helpers
 
-fn osc(p: &SynthParams, o: usize) -> &OscParams {
-    if o == 0 {
-        &p.a
-    } else {
-        &p.b
+pub fn osc(p: &SynthParams, o: usize) -> &OscParams {
+    match o {
+        0 => &p.a,
+        1 => &p.b,
+        _ => &p.c,
     }
 }
+
+pub const OSC_NAMES: [&str; 3] = ["A", "B", "C"];
 
 fn scan_tables() -> Vec<(BItem, TblSrc)> {
     let mut v: Vec<(BItem, TblSrc)> = NAMES.iter().enumerate().map(|(i, n)| (BItem { name: n.to_string(), cat: "Factory".into(), fav: false, user: false }, TblSrc::Builtin(i))).collect();
@@ -173,8 +183,15 @@ impl Gui {
             auto_loaded: false,
             tab: std::env::var("NYASHK_TAB").ok().and_then(|s| s.parse().ok()).unwrap_or(0),
             fx_sel: 0,
+            fx_bus: 0,
+            filt_sel: 0,
+            learn_on: false,
+            learn_target: None,
+            last_cc_seen: 0,
+            pmap: Vec::new(),
             fx_drag: None,
             mat_page: 0,
+            lfo_page: 0,
             overlay: match std::env::var("NYASHK_OVERLAY").ok().as_deref() {
                 Some("presets") => Overlay::Presets,
                 Some("tables") => Overlay::Tables(0),
@@ -195,6 +212,7 @@ impl Gui {
             nbs: BState::default(),
             edit: None,
             status: String::new(),
+            copy_menu: false,
             status_until: 0.0,
             auto: if std::env::var("NYASHK_AUTOTEST").is_ok() { Some((0, -1.0, 0.0, String::new())) } else { None },
         }
@@ -252,6 +270,7 @@ pub fn create(params: Arc<SynthParams>, meters: Arc<Meters>, shared: Arc<Shared>
             let p = &*params;
             meters.gui_beat.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             begin_frame(&params2, meters.live_sources());
+            learn_begin(p, st);
             egui::CentralPanel::default().frame(egui::Frame::NONE.fill(BG)).show(ctx, |ui| {
                 let full = ui.max_rect();
                 let o = full.min;
@@ -277,11 +296,12 @@ pub fn create(params: Arc<SynthParams>, meters: Arc<Meters>, shared: Arc<Shared>
                 // ================================================= row 1: oscillators + filter
                 osc_panel(ui, setter, p, &shared, st, rect(14.0, 62.0, 350.0, 346.0), 0);
                 osc_panel(ui, setter, p, &shared, st, rect(372.0, 62.0, 350.0, 346.0), 1);
-                filter_panel(ui, setter, p, rect(730.0, 62.0, 356.0, 346.0));
+                osc_panel(ui, setter, p, &shared, st, rect(730.0, 62.0, 350.0, 346.0), 2);
+                filter_panel(ui, setter, p, st, rect(1088.0, 62.0, 356.0, 346.0));
 
                 // ================================================= row 2: sub/noise + tabs
                 sub_noise_panel(ui, setter, p, &shared, st, rect(14.0, 416.0, 350.0, 300.0), now);
-                let rp = rect(372.0, 416.0, 714.0, 300.0);
+                let rp = rect(372.0, 416.0, 1072.0, 300.0);
                 painter.rect_filled(rp, CornerRadius::same(6), PANEL);
                 painter.rect_stroke(rp, CornerRadius::same(6), Stroke::new(1.0_f32, LINE), StrokeKind::Inside);
                 for (i, name) in ["ENV", "LFO", "MATRIX", "FX", "ARP"].iter().enumerate() {
@@ -296,17 +316,19 @@ pub fn create(params: Arc<SynthParams>, meters: Arc<Meters>, shared: Arc<Shared>
                 let content = Rect::from_min_size(Pos2::new(rp.left() + 10.0, rp.top() + 40.0), Vec2::new(rp.width() - 20.0, rp.height() - 46.0));
                 match st.tab {
                     0 => env_tab(ui, setter, p, content),
-                    1 => lfo_tab(ui, setter, p, &shared, content),
+                    1 => lfo_tab(ui, setter, p, &shared, st, content),
                     2 => matrix_tab(ui, setter, p, st, content),
                     3 => fxui::fx_tab(ui, setter, p, st, content),
                     _ => arp_tab(ui, setter, p, &meters, content),
                 }
 
                 // ================================================= bottom strip: sources, macros, voice
-                strip(ui, setter, p, st, rect(14.0, 724.0, 1072.0, 76.0), now);
-                keyboard(ui, &meters, rect(14.0, 808.0, 1072.0, 50.0));
+                strip(ui, setter, p, st, rect(14.0, 724.0, 1430.0, 76.0), now);
+                wheels_panel(ui, setter, p, &meters, rect(14.0, 806.0, 118.0, 54.0));
+                keyboard(ui, &meters, rect(138.0, 808.0, 1306.0, 50.0));
 
                 // ================================================= overlays
+                learn_end(p, st, &meters, now);
                 overlays(ui, setter, p, &shared, st, o, now);
                 drop_files(ui, setter, p, &shared, st, o, now);
 
@@ -422,9 +444,45 @@ fn header(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, s
         let t = ((db + 48.0) / 48.0).clamp(0.0, 1.0);
         painter.rect_filled(Rect::from_min_size(Pos2::new(mr.left() + 2.0, mr.bottom() - 4.0), Vec2::new((mr.width() - 4.0) * t, 2.0)), CornerRadius::same(1), if db > -1.0 { WHITE } else { Color32::from_rgb(150, 150, 150) });
     }
-    painter.text(Pos2::new(o.x + 962.0, o.y + 27.0), Align2::LEFT_CENTER, "MASTER", mono(10.0), DIM);
-    h_slider(ui, setter, &p.master, rect(1022.0, 20.0, 64.0, 14.0), "master_slider", false, "Master volume");
-    painter.text(Pos2::new(o.x + 1054.0, o.y + 42.0), Align2::CENTER_CENTER, format!("{:.1} dB", p.master.value()), mono(9.0), DIM);
+    // MIDI learn
+    if pill_tip(ui, rect(968.0, 14.0, 92.0, 26.0), "MIDI LEARN", st.learn_on, "Bind a MIDI controller to any knob: switch this on, click a knob, then move a knob / fader on your keyboard.\nRight-click a bound knob to unbind it.") {
+        st.learn_on = !st.learn_on;
+        st.learn_target = None;
+    }
+    if pill_tip(ui, rect(1064.0, 14.0, 52.0, 26.0), "CLEAR", false, "Remove every MIDI binding") {
+        if let Ok(mut g) = p.cc_map.lock() {
+            g.clear();
+        }
+        crate::rebuild_cc_map(p, meters);
+    }
+    {
+        let lc = meters.last_cc.load(std::sync::atomic::Ordering::Relaxed);
+        let txt = if st.learn_on {
+            if st.learn_target.is_some() { "move a MIDI control now...".to_string() } else { "click a knob".to_string() }
+        } else if lc != 0 {
+            format!("last CC {}", lc & 255)
+        } else {
+            String::new()
+        };
+        painter.text(Pos2::new(o.x + 1124.0, o.y + 27.0), Align2::LEFT_CENTER, txt, mono(10.0), if st.learn_on { WHITE } else { DIM });
+    }
+    painter.text(Pos2::new(o.x + 1320.0, o.y + 27.0), Align2::LEFT_CENTER, "MASTER", mono(10.0), DIM);
+    h_slider(ui, setter, &p.master, rect(1380.0, 20.0, 64.0, 14.0), "master_slider", false, "Master volume");
+    {
+        // type a value: click the number (or drag it), Enter to confirm
+        let mut v = p.master.value();
+        let dv = egui::DragValue::new(&mut v).range(-60.0..=6.0).speed(0.1).fixed_decimals(1).suffix(" dB");
+        let resp = ui.put(rect(1372.0, 35.0, 80.0, 16.0), dv).on_hover_text("Master volume in dB: click and type a value");
+        if resp.drag_started() || resp.gained_focus() {
+            setter.begin_set_parameter(&p.master);
+        }
+        if resp.changed() {
+            setter.set_parameter(&p.master, v);
+        }
+        if resp.drag_stopped() || resp.lost_focus() {
+            setter.end_set_parameter(&p.master);
+        }
+    }
 }
 
 // ===================================================================== overlays
@@ -433,11 +491,12 @@ fn header(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, s
 fn drop_files(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, st: &mut Gui, o: Pos2, now: f64) {
     let area_a = Rect::from_min_size(Pos2::new(o.x + 14.0, o.y + 62.0), Vec2::new(350.0, 346.0));
     let area_b = Rect::from_min_size(Pos2::new(o.x + 372.0, o.y + 62.0), Vec2::new(350.0, 346.0));
+    let area_c = Rect::from_min_size(Pos2::new(o.x + 730.0, o.y + 62.0), Vec2::new(350.0, 346.0));
     let area_n = Rect::from_min_size(Pos2::new(o.x + 14.0, o.y + 416.0), Vec2::new(350.0, 290.0));
     if ui.input(|i| !i.raw.hovered_files.is_empty()) {
         let pos = ui.input(|i| i.pointer.hover_pos());
         let painter = ui.painter().clone();
-        for (r, label) in [(area_a, "DROP .wav: WAVETABLE A"), (area_b, "DROP .wav: WAVETABLE B"), (area_n, "DROP .wav: NOISE SAMPLE")] {
+        for (r, label) in [(area_a, "DROP .wav: WAVETABLE A"), (area_b, "DROP .wav: WAVETABLE B"), (area_c, "DROP .wav: WAVETABLE C"), (area_n, "DROP .wav: NOISE SAMPLE")] {
             let hot = pos.map_or(false, |q| r.contains(q));
             painter.rect_stroke(r, CornerRadius::same(6), Stroke::new(if hot { 2.0_f32 } else { 1.0 }, if hot { WHITE } else { MID }), StrokeKind::Inside);
             painter.text(r.center_top() + Vec2::new(0.0, 14.0), Align2::CENTER_CENTER, label, mono(10.0), if hot { WHITE } else { DIM });
@@ -495,8 +554,8 @@ fn drop_files(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Share
             } else {
                 // inside a wavetable browser the file goes to that oscillator, otherwise to the one under the cursor
                 let o_i = match st.overlay {
-                    Overlay::Tables(i) => i.min(1),
-                    _ => usize::from(area_b.contains(pos)),
+                    Overlay::Tables(i) => i.min(2),
+                    _ => if area_c.contains(pos) { 2 } else { usize::from(area_b.contains(pos)) },
                 };
                 if let Some(dir) = files::tables_dir().map(|d| d.join("Dropped")) {
                     let _ = std::fs::create_dir_all(&dir);
@@ -506,7 +565,7 @@ fn drop_files(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Share
                     }
                 }
                 match load_table(setter, p, shared, o_i, &TblSrc::File(path.clone()), st.frame_size) {
-                    Ok(n) => msgs.push(format!("wavetable {n} loaded into OSC {}", if o_i == 0 { "A" } else { "B" })),
+                    Ok(n) => msgs.push(format!("wavetable {n} loaded into OSC {}", OSC_NAMES[o_i])),
                     Err(e) => msgs.push(format!("wavetable failed: {e}")),
                 }
             }
@@ -521,7 +580,7 @@ fn drop_files(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Share
 }
 
 fn overlays(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, st: &mut Gui, o: Pos2, now: f64) {
-    let area = Rect::from_min_size(Pos2::new(o.x + 14.0, o.y + 62.0), Vec2::new(1072.0, 738.0));
+    let area = Rect::from_min_size(Pos2::new(o.x + 14.0, o.y + 62.0), Vec2::new(1430.0, 738.0));
     if st.overlay == Overlay::None {
         return;
     }
@@ -638,7 +697,7 @@ fn table_overlay(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Sh
     let items: Vec<BItem> = st.tables.iter().map(|(b, _)| BItem { name: b.name.clone(), cat: b.cat.clone(), fav: false, user: b.user }).collect();
     let cur = wave_name(p, oi);
     let sel = st.tables.iter().position(|(b, _)| b.name == cur);
-    let act = browse::browser(ui, area, &format!("WAVETABLES  -  OSC {}", if oi == 0 { "A" } else { "B" }), &items, sel, &mut st.tbs, false, "tables");
+    let act = browse::browser(ui, area, &format!("WAVETABLES  -  OSC {}", OSC_NAMES[oi.min(2)]), &items, sel, &mut st.tbs, false, "tables");
     let f = browse::footer(area);
     let y = f.top() + 4.0;
     ui.painter().text(Pos2::new(f.left(), y + 12.0), Align2::LEFT_CENTER, "IMPORT FRAME SIZE", mono(10.0), DIM);
@@ -783,8 +842,8 @@ pub fn dark_box(ui: &Ui, r: Rect) {
 
 fn osc_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, st: &mut Gui, r: Rect, o: usize) {
     let op = osc(p, o);
-    let name = if o == 0 { "A" } else { "B" };
-    panel(ui, r, if o == 0 { "01" } else { "02" }, &format!("OSC {name}"));
+    let name = OSC_NAMES[o];
+    panel(ui, r, ["01", "02", "03"][o], &format!("OSC {name}"));
     on_pill(ui, setter, &op.on, Rect::from_min_size(Pos2::new(r.right() - 56.0, r.top() + 6.0), Vec2::new(44.0, 22.0)), "Oscillator on/off");
     // wavetable display (click = editor, drag = scan)
     let disp = Rect::from_min_size(Pos2::new(r.left() + 12.0, r.top() + 34.0), Vec2::new(196.0, 100.0));
@@ -822,7 +881,7 @@ fn osc_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared
     if pill_tip(ui, Rect::from_min_size(Pos2::new(rx, ty + 84.0), Vec2::new(122.0, 20.0)), "EDIT WAVE", false, "Open the wavetable editor (also: click the wave display)") {
         st.open_edit(shared, p, o);
     }
-    let (pos_d, wrp_d, lvl_d, pan_d, bl_d, pit_d) = if o == 0 { (ModDst::APos, ModDst::AWarp, ModDst::ALevel, ModDst::APan, ModDst::ABlend, ModDst::APitch) } else { (ModDst::BPos, ModDst::BWarp, ModDst::BLevel, ModDst::BPan, ModDst::BBlend, ModDst::BPitch) };
+    let (pos_d, wrp_d, lvl_d, pan_d, bl_d, pit_d) = match o { 0 => (ModDst::APos, ModDst::AWarp, ModDst::ALevel, ModDst::APan, ModDst::ABlend, ModDst::APitch), 1 => (ModDst::BPos, ModDst::BWarp, ModDst::BLevel, ModDst::BPan, ModDst::BBlend, ModDst::BPitch), _ => (ModDst::CPos, ModDst::CWarp, ModDst::CLevel, ModDst::CPan, ModDst::CBlend, ModDst::CPitch) };
     let w = 62.0;
     let x0 = r.left() + 12.0;
     let y0 = r.top() + 142.0;
@@ -831,7 +890,7 @@ fn osc_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared
     knob_s(ui, setter, &op.pos, "POS", cell(x0, y0, w), "Wavetable position (also drag on the display)", false);
     mdst(wrp_d);
     knob_s(ui, setter, &op.warp, "WARP", cell(x0 + w, y0, w), "Warp 1 amount", false);
-    mdst(if o == 0 { ModDst::AWarp2 } else { ModDst::BWarp2 });
+    mdst([ModDst::AWarp2, ModDst::BWarp2, ModDst::CWarp2][o]);
     knob_s(ui, setter, &op.warp2, "WARP 2", cell(x0 + w * 2.0, y0, w), "Warp 2 amount (applied after warp 1)", false);
     mdst(lvl_d);
     knob_s(ui, setter, &op.level, "LEVEL", cell(x0 + w * 3.0, y0, w), "Oscillator level", false);
@@ -940,11 +999,11 @@ impl Cx {
 }
 
 /// Magnitude of the custom (point) filter at `f`.
-pub fn custom_response(p: &SynthParams, f: f32) -> f32 {
+pub fn custom_response(f: &FilterParams, fr: f32) -> f32 {
     let mut m = 1.0;
-    for b in p.cb.iter().filter(|b| b.on.value()) {
+    for b in f.cb.iter().filter(|b| b.on.value()) {
         let cp = crate::engine::CbP { on: true, kind: b.kind.value(), freq: b.freq.value(), gain: b.gain.value(), q: b.q.value() };
-        m *= crate::engine::cband_coef(&cp, 1.0, 48000.0).mag(f, 48000.0);
+        m *= crate::engine::cband_coef(&cp, 1.0, 48000.0).mag(fr, 48000.0);
     }
     m
 }
@@ -1023,30 +1082,30 @@ pub fn filter_response(ty: FilterType, res: f32, fc: f32, f: f32) -> f32 {
 }
 
 /// Draw and edit the points of the custom filter on the graph.
-fn custom_points(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, d: Rect, xf: &dyn Fn(f32) -> f32, yd: &dyn Fn(f32) -> f32, db: (f32, f32)) {
-    let sel_id = egui::Id::new("cb_sel");
-    let drag_id = egui::Id::new("cb_drag");
+fn custom_points(ui: &mut Ui, setter: &ParamSetter, fp: &FilterParams, fi: usize, d: Rect, xf: &dyn Fn(f32) -> f32, yd: &dyn Fn(f32) -> f32, db: (f32, f32)) {
+    let sel_id = egui::Id::new(("cb_sel", fi));
+    let drag_id = egui::Id::new(("cb_drag", fi));
     let mut sel = ui.data(|dd| dd.get_temp::<usize>(sel_id)).unwrap_or(0).min(CBANDS - 1);
     let has_gain = |k: BandKind| matches!(k, BandKind::Bell | BandKind::LowShelf | BandKind::HighShelf);
     let dot = |i: usize| -> Pos2 {
-        let b = &p.cb[i];
+        let b = &fp.cb[i];
         let f = b.freq.value();
-        let y = if has_gain(b.kind.value()) { yd(b.gain.value()) } else { yd(20.0 * custom_response(p, f).max(1e-6).log10()) };
+        let y = if has_gain(b.kind.value()) { yd(b.gain.value()) } else { yd(20.0 * custom_response(fp, f).max(1e-6).log10()) };
         Pos2::new(xf(f), y)
     };
     let hit = |pt: Pos2| -> Option<usize> {
-        (0..CBANDS).filter(|&i| p.cb[i].on.value()).map(|i| (i, dot(i).distance(pt))).filter(|&(_, dist)| dist < 12.0).min_by(|a, b| a.1.total_cmp(&b.1)).map(|x| x.0)
+        (0..CBANDS).filter(|&i| fp.cb[i].on.value()).map(|i| (i, dot(i).distance(pt))).filter(|&(_, dist)| dist < 12.0).min_by(|a, b| a.1.total_cmp(&b.1)).map(|x| x.0)
     };
-    let gr = ui.interact(d, egui::Id::new("filter_graph_c"), Sense::click_and_drag()).on_hover_text("Click: add a point | drag: frequency + gain | wheel: width | double-click / right-click: remove");
+    let gr = ui.interact(d, egui::Id::new(("filter_graph_c", fi)), Sense::click_and_drag()).on_hover_text("Click: add a point | drag: frequency + gain | wheel: width | double-click / right-click: remove");
     let hover = gr.hover_pos();
     // wheel over a point = width
     if let Some(i) = hover.and_then(&hit) {
         let sc = ui.input(|i| i.smooth_scroll_delta.y);
         if sc != 0.0 {
-            let q = (p.cb[i].q.value() * (sc * 0.004).exp()).clamp(0.15, 16.0);
-            setter.begin_set_parameter(&p.cb[i].q);
-            setter.set_parameter(&p.cb[i].q, q);
-            setter.end_set_parameter(&p.cb[i].q);
+            let q = (fp.cb[i].q.value() * (sc * 0.004).exp()).clamp(0.15, 16.0);
+            setter.begin_set_parameter(&fp.cb[i].q);
+            setter.set_parameter(&fp.cb[i].q, q);
+            setter.end_set_parameter(&fp.cb[i].q);
             sel = i;
         }
     }
@@ -1055,7 +1114,7 @@ fn custom_points(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, d: Rect, xf
         if let Some(i) = origin.and_then(&hit) {
             sel = i;
             ui.data_mut(|dd| dd.insert_temp(drag_id, Some(i)));
-            let b = &p.cb[i];
+            let b = &fp.cb[i];
             setter.begin_set_parameter(&b.freq);
             setter.begin_set_parameter(&b.gain);
             setter.begin_set_parameter(&b.q);
@@ -1065,7 +1124,7 @@ fn custom_points(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, d: Rect, xf
     }
     if gr.dragged() {
         if let (Some(Some(i)), Some(pt)) = (ui.data(|dd| dd.get_temp::<Option<usize>>(drag_id)), gr.interact_pointer_pos()) {
-            let b = &p.cb[i];
+            let b = &fp.cb[i];
             let fx = ((pt.x - d.left()) / d.width()).clamp(0.0, 1.0);
             setter.set_parameter(&b.freq, 20.0 * (1000.0f32).powf(fx));
             if has_gain(b.kind.value()) {
@@ -1079,7 +1138,7 @@ fn custom_points(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, d: Rect, xf
     }
     if gr.drag_stopped() {
         if let Some(Some(i)) = ui.data(|dd| dd.get_temp::<Option<usize>>(drag_id)) {
-            let b = &p.cb[i];
+            let b = &fp.cb[i];
             setter.end_set_parameter(&b.freq);
             setter.end_set_parameter(&b.gain);
             setter.end_set_parameter(&b.q);
@@ -1089,14 +1148,14 @@ fn custom_points(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, d: Rect, xf
     let remove = gr.double_clicked() || gr.secondary_clicked();
     if remove {
         if let Some(i) = gr.interact_pointer_pos().and_then(&hit) {
-            set_b(setter, &p.cb[i].on, false);
+            set_b(setter, &fp.cb[i].on, false);
         }
     } else if gr.clicked() {
         if let Some(pt) = gr.interact_pointer_pos() {
             if let Some(i) = hit(pt) {
                 sel = i;
-            } else if let Some(i) = (0..CBANDS).find(|&i| !p.cb[i].on.value()) {
-                let b = &p.cb[i];
+            } else if let Some(i) = (0..CBANDS).find(|&i| !fp.cb[i].on.value()) {
+                let b = &fp.cb[i];
                 let fx = ((pt.x - d.left()) / d.width()).clamp(0.0, 1.0);
                 let g = db.0 + (db.1 - db.0) * ((d.bottom() - pt.y) / d.height()).clamp(0.0, 1.0);
                 setter.begin_set_parameter(&b.freq);
@@ -1121,7 +1180,7 @@ fn custom_points(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, d: Rect, xf
     let painter = ui.painter().with_clip_rect(d.expand(6.0));
     let mut any = false;
     for i in 0..CBANDS {
-        if !p.cb[i].on.value() {
+        if !fp.cb[i].on.value() {
             continue;
         }
         any = true;
@@ -1140,9 +1199,9 @@ fn custom_points(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, d: Rect, xf
         painter.text(d.center(), Align2::CENTER_CENTER, "CLICK HERE TO ADD POINTS", mono(10.0), DIM);
     } else {
         // type of the selected point
-        let b = &p.cb[sel];
+        let b = &fp.cb[sel];
         if b.on.value() {
-            enum_combo(ui, setter, &b.kind, "cb_kind", Rect::from_min_size(Pos2::new(d.right() - 98.0, d.top() + 4.0), Vec2::new(94.0, 20.0)));
+            enum_combo(ui, setter, &b.kind, &format!("cb_kind{fi}"), Rect::from_min_size(Pos2::new(d.right() - 98.0, d.top() + 4.0), Vec2::new(94.0, 20.0)));
             if pill_tip(ui, Rect::from_min_size(Pos2::new(d.right() - 98.0, d.top() + 26.0), Vec2::new(94.0, 18.0)), "REMOVE", false, "Remove the selected point") {
                 set_b(setter, &b.on, false);
             }
@@ -1150,30 +1209,42 @@ fn custom_points(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, d: Rect, xf
     }
 }
 
-fn filter_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, r: Rect) {
-    panel(ui, r, "03", "FILTER");
-    on_pill(ui, setter, &p.fl_on, Rect::from_min_size(Pos2::new(r.right() - 56.0, r.top() + 6.0), Vec2::new(44.0, 22.0)), "Filter on/off");
-    enum_combo(ui, setter, &p.fl_type, "filter_type", Rect::from_min_size(Pos2::new(r.left() + 100.0, r.top() + 5.0), Vec2::new(140.0, 24.0)));
+fn filter_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, r: Rect) {
+    let fi = st.filt_sel.min(1);
+    let fl = if fi == 0 { &p.f1 } else { &p.f2 };
+    panel(ui, r, "04", "FILTER");
+    for k in 0..2 {
+        let on = if k == 0 { p.f1.fl_on.value() } else { p.f2.fl_on.value() };
+        let lbl = format!("{}{}", k + 1, if on { "" } else { "-" });
+        if pill_tip(ui, Rect::from_min_size(Pos2::new(r.left() + 84.0 + 28.0 * k as f32, r.top() + 5.0), Vec2::new(26.0, 24.0)), &lbl, fi == k, "Edit filter 1 / filter 2") {
+            st.filt_sel = k;
+        }
+    }
+    on_pill(ui, setter, &fl.fl_on, Rect::from_min_size(Pos2::new(r.right() - 56.0, r.top() + 6.0), Vec2::new(44.0, 22.0)), "Filter on/off");
+    if pill_tip(ui, Rect::from_min_size(Pos2::new(r.right() - 108.0, r.top() + 6.0), Vec2::new(48.0, 22.0)), "SER", p.fl_serial.value(), "Series: filter 1 feeds filter 2 (off = two parallel filters, sources are routed with the ROUTE buttons)") {
+        set_b(setter, &p.fl_serial, !p.fl_serial.value());
+    }
+    enum_combo(ui, setter, &fl.fl_type, &format!("filter_type{fi}"), Rect::from_min_size(Pos2::new(r.left() + 144.0, r.top() + 5.0), Vec2::new(r.width() - 260.0, 24.0)));
     let d = Rect::from_min_size(Pos2::new(r.left() + 12.0, r.top() + 36.0), Vec2::new(r.width() - 24.0, 150.0));
-    let is_custom = p.fl_type.value() == FilterType::Custom;
+    let is_custom = fl.fl_type.value() == FilterType::Custom;
     // drag in the graph: left / right = cutoff, up / down = resonance
     if !is_custom {
-        let gr = ui.interact(d, egui::Id::new("filter_graph"), Sense::click_and_drag()).on_hover_text("Drag: left / right = cutoff, up / down = resonance");
+        let gr = ui.interact(d, egui::Id::new(("filter_graph", fi)), Sense::click_and_drag()).on_hover_text("Drag: left / right = cutoff, up / down = resonance");
         if gr.drag_started() {
-            setter.begin_set_parameter(&p.cutoff);
-            setter.begin_set_parameter(&p.res);
+            setter.begin_set_parameter(&fl.cutoff);
+            setter.begin_set_parameter(&fl.res);
         }
         if gr.dragged() {
             if let Some(pt) = gr.interact_pointer_pos() {
                 let fx = ((pt.x - d.left()) / d.width()).clamp(0.0, 1.0);
                 let hz = 20.0 * (20000.0f32 / 20.0).powf(fx);
-                setter.set_parameter(&p.cutoff, hz);
-                setter.set_parameter_normalized(&p.res, ((d.bottom() - pt.y) / d.height()).clamp(0.0, 1.0));
+                setter.set_parameter(&fl.cutoff, hz);
+                setter.set_parameter_normalized(&fl.res, ((d.bottom() - pt.y) / d.height()).clamp(0.0, 1.0));
             }
         }
         if gr.drag_stopped() {
-            setter.end_set_parameter(&p.cutoff);
-            setter.end_set_parameter(&p.res);
+            setter.end_set_parameter(&fl.cutoff);
+            setter.end_set_parameter(&fl.res);
         }
     }
     dark_box(ui, d);
@@ -1186,21 +1257,21 @@ fn filter_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, r: Rect) {
     let (dbmin, dbmax) = if is_custom { (-36.0f32, 36.0f32) } else { (-48.0f32, 30.0f32) };
     let yd = |db: f32| d.bottom() - d.height() * ((db.clamp(dbmin, dbmax) - dbmin) / (dbmax - dbmin));
     painter.line_segment([Pos2::new(d.left(), yd(0.0)), Pos2::new(d.right(), yd(0.0))], Stroke::new(1.0_f32, Color32::from_rgb(30, 30, 30)));
-    let cut = p.cutoff.value();
-    let res = p.res.value();
-    let ty = p.fl_type.value();
-    let on = p.fl_on.value();
+    let cut = fl.cutoff.value();
+    let res = fl.res.value();
+    let ty = fl.fl_type.value();
+    let on = fl.fl_on.value();
     let n = 200;
     let mut pts = Vec::with_capacity(n + 1);
     for i in 0..=n {
         let f = lo * (hi / lo).powf(i as f32 / n as f32);
-        let mag = if !on { 1.0 } else if is_custom { custom_response(p, f) } else { filter_response(ty, res, cut, f) };
+        let mag = if !on { 1.0 } else if is_custom { custom_response(fl, f) } else { filter_response(ty, res, cut, f) };
         pts.push(Pos2::new(xf(f), yd(20.0 * mag.max(1e-6).log10())));
     }
     fill_under(&painter, &pts, d.bottom(), Color32::from_rgb(30, 30, 30));
     painter.add(egui::Shape::line(pts, PathStroke::new(1.8_f32, if on { WHITE } else { DIM })));
     if is_custom {
-        custom_points(ui, setter, p, d, &xf, &yd, (dbmin, dbmax));
+        custom_points(ui, setter, fl, fi, d, &xf, &yd, (dbmin, dbmax));
     } else {
         painter.line_segment([Pos2::new(xf(cut), d.top()), Pos2::new(xf(cut), d.bottom())], Stroke::new(1.0_f32, Color32::from_rgb(70, 70, 70)));
     }
@@ -1211,39 +1282,40 @@ fn filter_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, r: Rect) {
     let w = 66.0;
     let x0 = r.left() + 10.0;
     if is_custom {
-        let sel = ui.data(|dd| dd.get_temp::<usize>(egui::Id::new("cb_sel"))).unwrap_or(0).min(CBANDS - 1);
-        let b = &p.cb[sel];
+        let sel = ui.data(|dd| dd.get_temp::<usize>(egui::Id::new(("cb_sel", fi)))).unwrap_or(0).min(CBANDS - 1);
+        let b = &fl.cb[sel];
         let w = 59.0;
-        mdst(ModDst::Cutoff);
+        mdst(if fi == 0 { ModDst::Cutoff } else { ModDst::Cutoff2 });
         knob_s(ui, setter, &b.freq, "FREQ", cell(x0 - 2.0, y, w), "Frequency of the selected point. Drop an LFO / envelope here to move ALL points together", false);
         knob_s(ui, setter, &b.gain, "GAIN", cell(x0 - 2.0 + w, y, w), "Gain of the selected point (bell / shelves)", true);
         knob_s(ui, setter, &b.q, "WIDTH", cell(x0 - 2.0 + w * 2.0, y, w), "Q / width of the selected point (also mouse wheel over a point)", false);
-        mdst(ModDst::Drive);
-        knob_s(ui, setter, &p.drive, "DRIVE", cell(x0 - 2.0 + w * 3.0, y, w), "Pre-filter saturation", false);
-        knob_s(ui, setter, &p.keytrack, "KEY", cell(x0 - 2.0 + w * 4.0, y, w), "Key tracking: all points move with the played note", false);
-        mdst(ModDst::FilterMix);
-        knob_s(ui, setter, &p.fl_mix, "MIX", cell(x0 - 2.0 + w * 5.0, y, w), "Dry / filtered mix", false);
+        mdst(if fi == 0 { ModDst::Drive } else { ModDst::Drive2 });
+        knob_s(ui, setter, &fl.drive, "DRIVE", cell(x0 - 2.0 + w * 3.0, y, w), "Pre-filter saturation", false);
+        knob_s(ui, setter, &fl.keytrack, "KEY", cell(x0 - 2.0 + w * 4.0, y, w), "Key tracking: all points move with the played note", false);
+        mdst(if fi == 0 { ModDst::FilterMix } else { ModDst::FilterMix2 });
+        knob_s(ui, setter, &fl.fl_mix, "MIX", cell(x0 - 2.0 + w * 5.0, y, w), "Dry / filtered mix", false);
     } else {
-        mdst(ModDst::Cutoff);
-        knob_s(ui, setter, &p.cutoff, "CUTOFF", cell(x0, y, w), "Filter cutoff frequency", false);
-        mdst(ModDst::Res);
-        knob_s(ui, setter, &p.res, "RES", cell(x0 + w, y, w), "Resonance (for Peak / shelves: boost in dB, comb: feedback)", false);
-        mdst(ModDst::Drive);
-        knob_s(ui, setter, &p.drive, "DRIVE", cell(x0 + w * 2.0, y, w), "Pre-filter saturation", false);
-        knob_s(ui, setter, &p.keytrack, "KEY", cell(x0 + w * 3.0, y, w), "Key tracking: cutoff follows the played note", false);
-        mdst(ModDst::FilterMix);
-        knob_s(ui, setter, &p.fl_mix, "MIX", cell(x0 + w * 4.0, y, w), "Dry / filtered mix", false);
+        mdst(if fi == 0 { ModDst::Cutoff } else { ModDst::Cutoff2 });
+        knob_s(ui, setter, &fl.cutoff, "CUTOFF", cell(x0, y, w), "Filter cutoff frequency", false);
+        mdst(if fi == 0 { ModDst::Res } else { ModDst::Res2 });
+        knob_s(ui, setter, &fl.res, "RES", cell(x0 + w, y, w), "Resonance (for Peak / shelves: boost in dB, comb: feedback)", false);
+        mdst(if fi == 0 { ModDst::Drive } else { ModDst::Drive2 });
+        knob_s(ui, setter, &fl.drive, "DRIVE", cell(x0 + w * 2.0, y, w), "Pre-filter saturation", false);
+        knob_s(ui, setter, &fl.keytrack, "KEY", cell(x0 + w * 3.0, y, w), "Key tracking: cutoff follows the played note", false);
+        mdst(if fi == 0 { ModDst::FilterMix } else { ModDst::FilterMix2 });
+        knob_s(ui, setter, &fl.fl_mix, "MIX", cell(x0 + w * 4.0, y, w), "Dry / filtered mix", false);
     }
     let ry = r.top() + 274.0;
     ui.painter().text(Pos2::new(r.left() + 14.0, ry + 11.0), Align2::LEFT_CENTER, "ROUTE", mono(10.0), DIM);
-    let items: [(&str, &BoolParam, &str); 4] = [
-        ("OSC A", &p.fl_a, "Send oscillator A through the filter"),
-        ("OSC B", &p.fl_b, "Send oscillator B through the filter"),
-        ("SUB", &p.fl_sub, "Send the sub oscillator through the filter"),
-        ("NOISE", &p.fl_noise, "Send the noise through the filter"),
+    let items: [(&str, &BoolParam, &str); 5] = [
+        ("A", &fl.fl_a, "Send oscillator A through this filter"),
+        ("B", &fl.fl_b, "Send oscillator B through this filter"),
+        ("C", &fl.fl_c, "Send oscillator C through this filter"),
+        ("SUB", &fl.fl_sub, "Send the sub oscillator through this filter"),
+        ("NOISE", &fl.fl_noise, "Send the noise through this filter"),
     ];
     for (i, (nm, bp, tip)) in items.iter().enumerate() {
-        if pill_tip(ui, Rect::from_min_size(Pos2::new(r.left() + 62.0 + 72.0 * i as f32, ry), Vec2::new(66.0, 22.0)), nm, bp.value(), tip) {
+        if pill_tip(ui, Rect::from_min_size(Pos2::new(r.left() + 62.0 + 58.0 * i as f32, ry), Vec2::new(54.0, 22.0)), nm, bp.value(), tip) {
             set_b(setter, bp, !bp.value());
         }
     }
@@ -1253,7 +1325,7 @@ fn filter_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, r: Rect) {
 // ===================================================================== sub + noise
 
 fn sub_noise_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, _shared: &Shared, st: &mut Gui, r: Rect, now: f64) {
-    panel(ui, r, "04", "SUB / NOISE");
+    panel(ui, r, "05", "SUB / NOISE");
     let x = r.left();
     let y = r.top();
     ui.painter().text(Pos2::new(x + 14.0, y + 44.0), Align2::LEFT_CENTER, "SUB", mono(10.5), WHITE);
@@ -1311,13 +1383,19 @@ fn sub_noise_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, _shared: 
         randomize(setter, p, _shared, seed);
         st.say(now, "random sound".to_string());
     }
-    if pill_tip(ui, Rect::from_min_size(Pos2::new(x + 216.0, by), Vec2::new(60.0, 22.0)), "A>B", false, "Copy oscillator A (with its wavetable) to oscillator B") {
-        copy_osc(setter, p, _shared, 0, 1);
-        st.say(now, "A copied to B".to_string());
+    if pill_tip(ui, Rect::from_min_size(Pos2::new(x + 216.0, by), Vec2::new(124.0, 22.0)), "COPY OSC", st.copy_menu, "Copy one oscillator (with its wavetable) to another") {
+        st.copy_menu = !st.copy_menu;
     }
-    if pill_tip(ui, Rect::from_min_size(Pos2::new(x + 280.0, by), Vec2::new(60.0, 22.0)), "B>A", false, "Copy oscillator B (with its wavetable) to oscillator A") {
-        copy_osc(setter, p, _shared, 1, 0);
-        st.say(now, "B copied to A".to_string());
+    if st.copy_menu {
+        let pairs = [(0usize, 1usize), (0, 2), (1, 0), (1, 2), (2, 0), (2, 1)];
+        for (k, (f, t)) in pairs.iter().enumerate() {
+            let rr = Rect::from_min_size(Pos2::new(x + 216.0 + 42.0 * (k % 3) as f32, by - 52.0 + 24.0 * (k / 3) as f32), Vec2::new(40.0, 22.0));
+            if pill_tip(ui, rr, &format!("{}>{}", OSC_NAMES[*f], OSC_NAMES[*t]), false, "Copy the first oscillator onto the second one") {
+                copy_osc(setter, p, _shared, *f, *t);
+                st.say(now, format!("{} copied to {}", OSC_NAMES[*f], OSC_NAMES[*t]));
+                st.copy_menu = false;
+            }
+        }
     }
 }
 
@@ -1437,12 +1515,14 @@ fn env_curve(ui: &mut Ui, setter: &ParamSetter, e: &EnvParams, r: Rect, id: &str
 }
 
 fn env_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, c: Rect) {
-    let w = (c.width() - 20.0) / 3.0;
-    let envs: [(&str, &EnvParams); 3] = [("ENV 1  (AMP)", &p.e1), ("ENV 2", &p.e2), ("ENV 3", &p.e3)];
+    let w = (c.width() - 30.0) / 4.0;
+    let envs: [(&str, &EnvParams); 4] = [("ENV 1  (AMP)", &p.e1), ("ENV 2", &p.e2), ("ENV 3", &p.e3), ("ENV 4", &p.e4)];
     for (i, (name, e)) in envs.iter().enumerate() {
         let x = c.left() + (w + 10.0) * i as f32;
         ui.painter().text(Pos2::new(x + 2.0, c.top() + 6.0), Align2::LEFT_CENTER, *name, mono(10.5), WHITE);
-        ui.painter().text(Pos2::new(x + w - 2.0, c.top() + 6.0), Align2::RIGHT_CENTER, "drag curve to bend", mono(8.5), DIM);
+        if pill_tip(ui, Rect::from_min_size(Pos2::new(x + w - 74.0, c.top() - 3.0), Vec2::new(74.0, 18.0)), "INV.LEGATO", e.relegato.value(), "Restart this envelope on every note even in Legato mode (Serum: Invert Legato)") {
+            set_b(setter, &e.relegato, !e.relegato.value());
+        }
         env_curve(ui, setter, e, Rect::from_min_size(Pos2::new(x, c.top() + 16.0), Vec2::new(w, 86.0)), &format!("envcurve{i}"));
         let kw = w / 3.0;
         let ky = c.top() + 108.0;
@@ -1457,11 +1537,16 @@ fn env_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, c: Rect) {
 
 // ===================================================================== LFO tab
 
-fn lfo_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, c: Rect) {
+fn lfo_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, st: &mut Gui, c: Rect) {
     let w = (c.width() - 30.0) / 4.0;
-    for i in 0..4 {
+    for (k, t) in ["LFO 1-4", "LFO 5-8"].iter().enumerate() {
+        if pill(ui, Rect::from_min_size(Pos2::new(c.right() - 148.0 + 74.0 * k as f32, c.top() - 29.0), Vec2::new(70.0, 20.0)), t, st.lfo_page == k) {
+            st.lfo_page = k;
+        }
+    }
+    for i in st.lfo_page * 4..st.lfo_page * 4 + 4 {
         let l = &p.lfo[i];
-        let x = c.left() + (w + 10.0) * i as f32;
+        let x = c.left() + (w + 10.0) * (i % 4) as f32;
         ui.painter().text(Pos2::new(x + 2.0, c.top() + 8.0), Align2::LEFT_CENTER, format!("LFO {}", i + 1), mono(10.5), WHITE);
         enum_combo(ui, setter, &l.shape, &format!("lfoshape{i}"), Rect::from_min_size(Pos2::new(x + 52.0, c.top() - 1.0), Vec2::new(w - 52.0, 24.0)));
         let d = Rect::from_min_size(Pos2::new(x, c.top() + 28.0), Vec2::new(w, 66.0));
@@ -1654,40 +1739,49 @@ fn strip(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, r: Re
     ui.painter().rect_filled(r, CornerRadius::same(6), PANEL);
     ui.painter().rect_stroke(r, CornerRadius::same(6), Stroke::new(1.0_f32, LINE), StrokeKind::Inside);
     ui.painter().text(Pos2::new(r.left() + 12.0, r.top() + 10.0), Align2::LEFT_CENTER, "MOD SOURCES  (drag onto any knob)", mono(9.5), DIM);
-    let chips: [(&str, ModSrc, &str); 17] = [
+    let chips: [(&str, ModSrc, &str); 26] = [
         ("ENV 1", ModSrc::Env1, "Amp envelope"),
         ("ENV 2", ModSrc::Env2, "Envelope 2"),
         ("ENV 3", ModSrc::Env3, "Envelope 3"),
+        ("ENV 4", ModSrc::Env4, "Envelope 4"),
         ("LFO 1", ModSrc::Lfo1, "LFO 1"),
         ("LFO 2", ModSrc::Lfo2, "LFO 2"),
         ("LFO 3", ModSrc::Lfo3, "LFO 3"),
         ("LFO 4", ModSrc::Lfo4, "LFO 4"),
+        ("LFO 5", ModSrc::Lfo5, "LFO 5"),
+        ("LFO 6", ModSrc::Lfo6, "LFO 6"),
+        ("LFO 7", ModSrc::Lfo7, "LFO 7"),
+        ("LFO 8", ModSrc::Lfo8, "LFO 8"),
         ("BEND", ModSrc::Bend, "Pitch wheel"),
-        ("WHEEL", ModSrc::ModWheel, "Mod wheel (CC1)"),
         ("MACRO1", ModSrc::Macro1, "Macro knob 1"),
         ("MACRO2", ModSrc::Macro2, "Macro knob 2"),
         ("MACRO3", ModSrc::Macro3, "Macro knob 3"),
         ("MACRO4", ModSrc::Macro4, "Macro knob 4"),
+        ("MACRO5", ModSrc::Macro5, "Macro knob 5"),
+        ("MACRO6", ModSrc::Macro6, "Macro knob 6"),
+        ("MACRO7", ModSrc::Macro7, "Macro knob 7"),
+        ("MACRO8", ModSrc::Macro8, "Macro knob 8"),
         ("VEL", ModSrc::Vel, "Note velocity"),
         ("KEY", ModSrc::Key, "Note pitch"),
         ("AFTER", ModSrc::Aftertouch, "Channel aftertouch"),
+        ("WHEEL", ModSrc::ModWheel, "Mod wheel (CC1)"),
         ("RANDOM", ModSrc::Random, "Random value per note"),
     ];
-    let cw = 58.0;
+    let cw = 54.0;
     for (n, (label, src, tip)) in chips.iter().enumerate() {
-        let (row, col) = (n / 9, n % 9);
-        let rr = Rect::from_min_size(Pos2::new(r.left() + 12.0 + (cw + 4.0) * col as f32, r.top() + 22.0 + 26.0 * row as f32), Vec2::new(cw, 22.0));
+        let (row, col) = (n / 13, n % 13);
+        let rr = Rect::from_min_size(Pos2::new(r.left() + 12.0 + (cw + 3.0) * col as f32, r.top() + 22.0 + 26.0 * row as f32), Vec2::new(cw, 22.0));
         source_chip(ui, setter, p, st, rr, label, *src, tip, now);
     }
     // macros
-    let mx = r.left() + 12.0 + (cw + 4.0) * 9.0 + 8.0;
+    let mx = r.left() + 12.0 + (cw + 3.0) * 13.0 + 8.0;
     ui.painter().vline(mx - 4.0, r.top() + 8.0..=r.bottom() - 8.0, Stroke::new(1.0_f32, LINE));
     ui.painter().text(Pos2::new(mx + 4.0, r.top() + 10.0), Align2::LEFT_CENTER, "MACROS", mono(9.5), DIM);
     for (i, m) in p.macros().iter().enumerate() {
-        knob_s(ui, setter, *m, &format!("M{}", i + 1), cell(mx + 48.0 * i as f32, r.top() + 14.0, 48.0), "Macro: assign it with the MACRO chips, then use this knob to move everything at once", false);
+        knob_s(ui, setter, *m, &format!("M{}", i + 1), cell(mx + 44.0 * i as f32, r.top() + 14.0, 44.0), "Macro: assign it with the MACRO chips, then use this knob to move everything at once", false);
     }
     // voice
-    let vx = mx + 48.0 * 4.0 + 10.0;
+    let vx = mx + 44.0 * 8.0 + 10.0;
     ui.painter().vline(vx - 4.0, r.top() + 8.0..=r.bottom() - 8.0, Stroke::new(1.0_f32, LINE));
     ui.painter().text(Pos2::new(vx + 4.0, r.top() + 10.0), Align2::LEFT_CENTER, "VOICE", mono(9.5), DIM);
     enum_combo(ui, setter, &p.vmode, "vmode", Rect::from_min_size(Pos2::new(vx + 4.0, r.top() + 22.0), Vec2::new(84.0, 24.0)));
@@ -1739,6 +1833,158 @@ fn source_chip(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui,
 
 
 // ===================================================================== on-screen keyboard
+
+// ===================================================================== MIDI learn
+
+fn learn_begin(p: &SynthParams, st: &mut Gui) {
+    if st.pmap.is_empty() {
+        st.pmap = p.param_map().into_iter().map(|(id, ptr, _)| (id, ptr)).collect();
+    }
+    let txt = p.cc_map.lock().map(|g| g.clone()).unwrap_or_default();
+    let mut bound = Vec::new();
+    for part in txt.split(';') {
+        if let Some((c, id)) = part.split_once('=') {
+            if let (Ok(c), Some((_, ptr))) = (c.trim().parse::<u8>(), st.pmap.iter().find(|(pid, _)| pid == id.trim())) {
+                bound.push((*ptr, c));
+            }
+        }
+    }
+    crate::ui::set_learn(st.learn_on, st.learn_target, bound);
+}
+
+fn learn_end(p: &SynthParams, st: &mut Gui, meters: &Meters, now: f64) {
+    let (click, unbind) = crate::ui::take_learn_events();
+    let id_of = |st: &Gui, ptr| st.pmap.iter().find(|(_, q)| *q == ptr).map(|(id, _)| id.clone());
+    let write = |entries: Vec<(u8, String)>| {
+        if let Ok(mut g) = p.cc_map.lock() {
+            *g = entries.iter().map(|(c, id)| format!("{c}={id}")).collect::<Vec<_>>().join(";");
+        }
+        crate::rebuild_cc_map(p, meters);
+    };
+    let entries = |p: &SynthParams| -> Vec<(u8, String)> {
+        let txt = p.cc_map.lock().map(|g| g.clone()).unwrap_or_default();
+        txt.split(';').filter_map(|s| s.split_once('=').and_then(|(c, id)| c.trim().parse::<u8>().ok().map(|c| (c, id.trim().to_string())))).collect()
+    };
+    if let Some(ptr) = click {
+        st.learn_target = Some(ptr);
+    }
+    if let Some(ptr) = unbind {
+        if let Some(id) = id_of(st, ptr) {
+            let mut e = entries(p);
+            e.retain(|(_, i)| *i != id);
+            write(e);
+            st.say(now, "MIDI binding removed".to_string());
+        }
+    }
+    let lc = meters.last_cc.load(std::sync::atomic::Ordering::Relaxed);
+    if lc != st.last_cc_seen {
+        st.last_cc_seen = lc;
+        let cc = (lc & 255) as u8;
+        if st.learn_on && cc != 64 && cc < 120 {
+            if let Some(ptr) = st.learn_target.take() {
+                if let Some(id) = id_of(st, ptr) {
+                    let mut e = entries(p);
+                    e.retain(|(_, i)| *i != id);
+                    e.push((cc, id));
+                    write(e);
+                    st.say(now, format!("CC {cc} bound"));
+                }
+            }
+        }
+    }
+}
+
+// ===================================================================== transpose + wheels
+
+/// Small number spinner: click the upper / lower half, drag, mouse wheel, double-click = reset.
+fn spinner(ui: &mut Ui, setter: &ParamSetter, prm: &IntParam, r: Rect, id: &str, tip: &str) {
+    let resp = ui.interact(r, egui::Id::new(id), Sense::click_and_drag()).on_hover_text(tip);
+    let v = prm.value();
+    let mut nv = v;
+    if resp.clicked() {
+        if let Some(pt) = resp.interact_pointer_pos() {
+            nv = if pt.y < r.center().y { v + 1 } else { v - 1 };
+        }
+    }
+    if resp.dragged() {
+        let key = egui::Id::new(("spin_acc", id));
+        let acc = ui.data(|d| d.get_temp::<f32>(key)).unwrap_or(0.0) - resp.drag_delta().y / 9.0;
+        let whole = acc.trunc();
+        ui.data_mut(|d| d.insert_temp(key, acc - whole));
+        nv = v + whole as i32;
+    }
+    if resp.drag_stopped() {
+        ui.data_mut(|d| d.remove::<f32>(egui::Id::new(("spin_acc", id))));
+    }
+    if resp.hovered() {
+        let sc = ui.input(|i| i.smooth_scroll_delta.y);
+        if sc != 0.0 {
+            let key = egui::Id::new(("spin_wh", id));
+            let acc = ui.data(|d| d.get_temp::<f32>(key)).unwrap_or(0.0) + sc / 30.0;
+            let whole = acc.trunc();
+            ui.data_mut(|d| d.insert_temp(key, acc - whole));
+            nv = v + whole as i32;
+        }
+    }
+    if resp.double_clicked() {
+        nv = 0;
+    }
+    if nv != v {
+        setter.begin_set_parameter(prm);
+        setter.set_parameter(prm, nv);
+        setter.end_set_parameter(prm);
+    }
+    let pn = ui.painter();
+    pn.rect_filled(r, CornerRadius::same(4), Color32::from_rgb(8, 8, 8));
+    pn.rect_stroke(r, CornerRadius::same(4), Stroke::new(1.0_f32, if resp.hovered() { WHITE } else { LINE }), StrokeKind::Inside);
+    pn.text(Pos2::new(r.left() + 16.0, r.center().y), Align2::CENTER_CENTER, format!("{:+}", prm.value()).replace("+0", "0"), mono(11.0), WHITE);
+    let ax = r.right() - 8.0;
+    pn.add(egui::Shape::convex_polygon(vec![Pos2::new(ax - 3.5, r.center().y - 2.0), Pos2::new(ax + 3.5, r.center().y - 2.0), Pos2::new(ax, r.center().y - 6.0)], DIM, Stroke::NONE));
+    pn.add(egui::Shape::convex_polygon(vec![Pos2::new(ax - 3.5, r.center().y + 2.0), Pos2::new(ax + 3.5, r.center().y + 2.0), Pos2::new(ax, r.center().y + 6.0)], DIM, Stroke::NONE));
+}
+
+/// One vertical wheel. `pos` is the displayed position 0..1 (bottom..top); dragging writes 0..1 into `out`.
+fn wheel(ui: &mut Ui, r: Rect, id: &str, pos: f32, out: &std::sync::atomic::AtomicU32, spring: Option<f32>, tip: &str) {
+    let resp = ui.interact(r, egui::Id::new(id), Sense::click_and_drag()).on_hover_text(tip);
+    if resp.dragged() || resp.drag_started() {
+        if let Some(pt) = resp.interact_pointer_pos() {
+            let v = ((r.bottom() - 4.0 - pt.y) / (r.height() - 8.0)).clamp(0.0, 1.0);
+            out.store(v.to_bits(), std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+    if resp.drag_stopped() {
+        if let Some(c) = spring {
+            out.store(c.to_bits(), std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+    if resp.double_clicked() {
+        out.store(spring.unwrap_or(0.0).to_bits(), std::sync::atomic::Ordering::Relaxed);
+    }
+    let pn = ui.painter();
+    pn.rect_filled(r, CornerRadius::same(4), Color32::from_rgb(8, 8, 8));
+    pn.rect_stroke(r, CornerRadius::same(4), Stroke::new(1.0_f32, if resp.hovered() || resp.dragged() { WHITE } else { LINE }), StrokeKind::Inside);
+    // ribs
+    for k in 0..9 {
+        let y = r.top() + 6.0 + (r.height() - 12.0) * k as f32 / 8.0;
+        pn.line_segment([Pos2::new(r.left() + 3.0, y), Pos2::new(r.right() - 3.0, y)], Stroke::new(1.0_f32, Color32::from_rgb(26, 26, 26)));
+    }
+    let y = r.bottom() - 4.0 - (r.height() - 8.0) * pos.clamp(0.0, 1.0);
+    pn.rect_filled(Rect::from_center_size(Pos2::new(r.center().x, y), Vec2::new(r.width() - 4.0, 6.0)), CornerRadius::same(2), WHITE);
+}
+
+fn wheels_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, meters: &Meters, r: Rect) {
+    let lab = |ui: &mut Ui, x: f32, y: f32, t: &str| {
+        ui.painter().text(Pos2::new(x, y), Align2::LEFT_CENTER, t, mono(8.5), DIM);
+    };
+    lab(ui, r.left(), r.top() + 11.0, "OCT");
+    spinner(ui, setter, &p.kb_octave, Rect::from_min_size(Pos2::new(r.left() + 28.0, r.top() + 1.0), Vec2::new(44.0, 22.0)), "kb_oct", "Keyboard octave shift (click, drag or use the mouse wheel; double-click = 0)");
+    lab(ui, r.left(), r.top() + 39.0, "SEMI");
+    spinner(ui, setter, &p.kb_transpose, Rect::from_min_size(Pos2::new(r.left() + 28.0, r.top() + 29.0), Vec2::new(44.0, 22.0)), "kb_semi", "Transpose in semitones (affects MIDI input and the on-screen keys)");
+    let bend = f32::from_bits(meters.bend_val.load(std::sync::atomic::Ordering::Relaxed));
+    let modw = f32::from_bits(meters.mod_val.load(std::sync::atomic::Ordering::Relaxed));
+    wheel(ui, Rect::from_min_size(Pos2::new(r.left() + 78.0, r.top()), Vec2::new(18.0, r.height())), "wheel_bend", bend * 0.5 + 0.5, &meters.gui_bend, Some(0.5), "Pitch wheel (springs back)");
+    wheel(ui, Rect::from_min_size(Pos2::new(r.left() + 100.0, r.top()), Vec2::new(18.0, r.height())), "wheel_mod", modw, &meters.gui_mod, None, "Mod wheel (stays where you leave it)");
+}
 
 fn keyboard(ui: &mut Ui, meters: &Meters, r: Rect) {
     const FIRST: u8 = 36; // C2
@@ -1834,9 +2080,9 @@ fn randomize(setter: &ParamSetter, p: &SynthParams, shared: &Shared, seed: u64) 
     let master = p.master.value();
     presets::apply_values(setter, p, &[]);
     set_f(setter, &p.master, master);
-    for o in 0..2 {
+    for o in 0..3 {
         let op = osc(p, o);
-        let on = o == 0 || r.chance(0.55);
+        let on = o == 0 || r.chance(if o == 1 { 0.55 } else { 0.3 });
         set_b(setter, &op.on, on);
         use_builtin(setter, p, shared, o, r.idx(TABLE_COUNT_UI));
         set_norm(setter, &op.pos, r.next());
@@ -1851,27 +2097,27 @@ fn randomize(setter: &ParamSetter, p: &SynthParams, shared: &Shared, seed: u64) 
         setter.end_set_parameter(&op.uni);
         set_norm(setter, &op.detune, r.range(0.1, 0.5));
         setter.begin_set_parameter(&op.oct);
-        setter.set_parameter(&op.oct, if o == 1 && r.chance(0.4) { -1 } else { 0 });
+        setter.set_parameter(&op.oct, if o >= 1 && r.chance(0.4) { -1 } else { 0 });
         setter.end_set_parameter(&op.oct);
         let semis = [0, 0, 0, 0, 7, 12, 5, 3, -5];
         setter.begin_set_parameter(&op.semi);
-        setter.set_parameter(&op.semi, if o == 1 && r.chance(0.35) { semis[r.idx(semis.len())] } else { 0 });
+        setter.set_parameter(&op.semi, if o >= 1 && r.chance(0.35) { semis[r.idx(semis.len())] } else { 0 });
         setter.end_set_parameter(&op.semi);
         set_norm(setter, &op.fine, r.range(0.45, 0.55));
         rnd_enum(setter, &op.uni_mode, r.idx(4));
         set_norm(setter, &op.spread, r.range(0.3, 1.0));
-        set_norm(setter, &op.pan, if o == 1 { r.range(0.4, 0.6) } else { 0.5 });
+        set_norm(setter, &op.pan, if o >= 1 { r.range(0.4, 0.6) } else { 0.5 });
         if r.chance(0.3) {
             rnd_enum(setter, &op.warp2_mode, 1 + r.idx(6));
             set_norm(setter, &op.warp2, r.range(0.05, 0.6));
         }
     }
     set_b(setter, &p.sub_on, r.chance(0.3));
-    set_b(setter, &p.fl_on, true);
-    rnd_enum(setter, &p.fl_type, r.idx(6));
-    set_norm(setter, &p.cutoff, r.range(0.35, 0.9));
-    set_norm(setter, &p.res, r.range(0.05, 0.45));
-    set_norm(setter, &p.drive, r.range(0.0, 0.3));
+    set_b(setter, &p.f1.fl_on, true);
+    rnd_enum(setter, &p.f1.fl_type, r.idx(6));
+    set_norm(setter, &p.f1.cutoff, r.range(0.35, 0.9));
+    set_norm(setter, &p.f1.res, r.range(0.05, 0.45));
+    set_norm(setter, &p.f1.drive, r.range(0.0, 0.3));
     for e in [&p.e1, &p.e2] {
         set_norm(setter, &e.attack, r.range(0.0, 0.45) * r.range(0.3, 1.0));
         set_norm(setter, &e.decay, r.range(0.35, 0.8));
@@ -1880,17 +2126,16 @@ fn randomize(setter: &ParamSetter, p: &SynthParams, shared: &Shared, seed: u64) 
     }
     set_norm(setter, &p.e2.sustain, r.range(0.0, 0.5));
     // ---- envelope 3, macros, sub and noise get a say as well
-    {
-        let e = &p.e3;
+    for e in [&p.e3, &p.e4] {
         set_norm(setter, &e.attack, r.range(0.0, 0.5) * r.range(0.2, 1.0));
         set_norm(setter, &e.decay, r.range(0.3, 0.85));
         set_norm(setter, &e.sustain, r.range(0.0, 0.9));
         set_norm(setter, &e.release, r.range(0.3, 0.8));
     }
-    for m in [&p.macro1, &p.macro2, &p.macro3, &p.macro4] {
+    for m in p.macros() {
         set_norm(setter, m, r.range(0.0, 1.0));
     }
-    set_norm(setter, &p.keytrack, r.range(0.0, 0.8));
+    set_norm(setter, &p.f1.keytrack, r.range(0.0, 0.8));
     rnd_enum(setter, &p.sub_wave, r.idx(4));
     set_norm(setter, &p.sub_level, r.range(0.2, 0.6));
     setter.begin_set_parameter(&p.sub_oct);
@@ -1923,10 +2168,10 @@ fn randomize(setter: &ParamSetter, p: &SynthParams, shared: &Shared, seed: u64) 
     }
     use ModDst as D;
     use ModSrc as S;
-    let srcs = [S::Env1, S::Env2, S::Env3, S::Lfo1, S::Lfo2, S::Lfo3, S::Lfo4, S::Vel, S::Key, S::ModWheel, S::Random, S::Macro1, S::Macro2, S::Macro3, S::Macro4];
+    let srcs = [S::Env1, S::Env2, S::Env3, S::Env4, S::Lfo1, S::Lfo2, S::Lfo3, S::Lfo4, S::Lfo5, S::Lfo6, S::Vel, S::Key, S::ModWheel, S::Random, S::Macro1, S::Macro2, S::Macro3, S::Macro4, S::Macro5, S::Macro6];
     let dsts = [
         D::APos, D::BPos, D::AWarp, D::BWarp, D::AWarp2, D::BWarp2, D::Cutoff, D::Cutoff, D::Res, D::Drive, D::Detune, D::APan, D::BPan, D::ABlend, D::BBlend, D::FilterMix, D::FxHyperMix, D::FxDistDrive,
-        D::FxChorusMix, D::FxFlangerDepth, D::FxPhaserFreq, D::FxDelayMix, D::FxReverbMix, D::FxFilterCut, D::APitch, D::BPitch,
+        D::FxChorusMix, D::FxFlangerDepth, D::FxPhaserFreq, D::FxDelayMix, D::FxReverbMix, D::FxFilterCut, D::APitch, D::BPitch, D::CPos, D::CWarp,
     ];
     let routes = 3 + r.idx(8); // 3..10
     let mut used: Vec<(usize, usize)> = Vec::new();
@@ -1953,24 +2198,24 @@ fn randomize(setter: &ParamSetter, p: &SynthParams, shared: &Shared, seed: u64) 
     set_norm(setter, &p.glide, 0.0);
 
     // ---- effects: reset, then switch a random handful on with random amounts
-    for b in [&p.hy_on, &p.ds_on, &p.fg_on, &p.ph_on, &p.ch_on, &p.dl_on, &p.cp_on, &p.rv_on] {
+    for b in [&p.fx.hy_on, &p.fx.ds_on, &p.fx.fg_on, &p.fx.ph_on, &p.fx.ch_on, &p.fx.dl_on, &p.fx.cp_on, &p.fx.rv_on] {
         set_b(setter, b, false);
     }
-    set_b(setter, &p.rv_on, r.chance(0.7));
-    set_norm(setter, &p.rv_mix, r.range(0.1, 0.45));
-    set_b(setter, &p.dl_on, r.chance(0.5));
-    set_norm(setter, &p.dl_mix, r.range(0.1, 0.4));
-    set_b(setter, &p.ch_on, r.chance(0.4));
-    set_norm(setter, &p.ch_mix, r.range(0.15, 0.5));
-    set_b(setter, &p.hy_on, r.chance(0.25));
-    set_norm(setter, &p.hy_mix, r.range(0.1, 0.5));
-    set_b(setter, &p.ds_on, r.chance(0.2));
-    set_norm(setter, &p.ds_mix, r.range(0.15, 0.5));
-    set_b(setter, &p.fg_on, r.chance(0.15));
-    set_norm(setter, &p.fg_mix, r.range(0.15, 0.5));
-    set_b(setter, &p.ph_on, r.chance(0.18));
-    set_norm(setter, &p.ph_mix, r.range(0.15, 0.5));
-    set_b(setter, &p.cp_on, r.chance(0.3));
+    set_b(setter, &p.fx.rv_on, r.chance(0.7));
+    set_norm(setter, &p.fx.rv_mix, r.range(0.1, 0.45));
+    set_b(setter, &p.fx.dl_on, r.chance(0.5));
+    set_norm(setter, &p.fx.dl_mix, r.range(0.1, 0.4));
+    set_b(setter, &p.fx.ch_on, r.chance(0.4));
+    set_norm(setter, &p.fx.ch_mix, r.range(0.15, 0.5));
+    set_b(setter, &p.fx.hy_on, r.chance(0.25));
+    set_norm(setter, &p.fx.hy_mix, r.range(0.1, 0.5));
+    set_b(setter, &p.fx.ds_on, r.chance(0.2));
+    set_norm(setter, &p.fx.ds_mix, r.range(0.15, 0.5));
+    set_b(setter, &p.fx.fg_on, r.chance(0.15));
+    set_norm(setter, &p.fx.fg_mix, r.range(0.15, 0.5));
+    set_b(setter, &p.fx.ph_on, r.chance(0.18));
+    set_norm(setter, &p.fx.ph_mix, r.range(0.15, 0.5));
+    set_b(setter, &p.fx.cp_on, r.chance(0.3));
     if let Ok(mut g) = p.preset_name.lock() {
         *g = "Random".to_string();
     }

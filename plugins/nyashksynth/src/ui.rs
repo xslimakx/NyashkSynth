@@ -1,7 +1,8 @@
 //! Shared NyashkTune widgets: palette, knob (drag / shift-fine / wheel / double-click reset / click-to-type),
 //! pill buttons, section titles.
 #![allow(dead_code)]
-use crate::params::{ModDst, ModSrc, SynthParams};
+use crate::params::{ModDst, ModSrc, SynthParams, N_SRC};
+use nih_plug::params::internals::ParamPtr;
 use nih_plug::prelude::*;
 use std::cell::{Cell, RefCell};
 use std::sync::Arc;
@@ -27,22 +28,46 @@ pub struct ModCtx {
     /// Source (ModSrc index) currently being dragged from the source strip.
     pub drag: Option<usize>,
     /// live value of every modulation source (for the animated dots on the knobs)
-    pub live: [f32; 18],
+    pub live: [f32; N_SRC],
+    /// MIDI learn state (set once per frame by the editor)
+    pub learn_on: bool,
+    pub learn_target: Option<ParamPtr>,
+    pub learn_click: Option<ParamPtr>,
+    pub learn_unbind: Option<ParamPtr>,
+    pub bound: Vec<(ParamPtr, u8)>,
 }
 
 thread_local! {
-    static MC: RefCell<ModCtx> = RefCell::new(ModCtx { params: None, rects: Vec::new(), drag: None, live: [0.0; 18] });
+    static MC: RefCell<ModCtx> = RefCell::new(ModCtx { params: None, rects: Vec::new(), drag: None, live: [0.0; N_SRC], learn_on: false, learn_target: None, learn_click: None, learn_unbind: None, bound: Vec::new() });
     static NEXT_DST: Cell<usize> = Cell::new(0);
     static FLASH: Cell<(usize, f64)> = Cell::new((0, 0.0));
 }
 
-pub fn begin_frame(p: &Arc<SynthParams>, live: [f32; 18]) {
+pub fn begin_frame(p: &Arc<SynthParams>, live: [f32; N_SRC]) {
     MC.with(|m| {
         let mut m = m.borrow_mut();
         m.live = live;
         m.params = Some(p.clone());
         m.rects.clear();
     });
+}
+
+/// Tell the knobs whether MIDI learn is active, which one is waiting for a controller and which are bound.
+pub fn set_learn(on: bool, target: Option<ParamPtr>, bound: Vec<(ParamPtr, u8)>) {
+    MC.with(|m| {
+        let mut m = m.borrow_mut();
+        m.learn_on = on;
+        m.learn_target = target;
+        m.bound = bound;
+    });
+}
+
+/// (knob clicked in learn mode, knob right-clicked in learn mode = unbind)
+pub fn take_learn_events() -> (Option<ParamPtr>, Option<ParamPtr>) {
+    MC.with(|m| {
+        let mut m = m.borrow_mut();
+        (m.learn_click.take(), m.learn_unbind.take())
+    })
 }
 
 /// Announce the modulation destination of the next knob.
@@ -68,9 +93,9 @@ pub fn drop_targets() -> Vec<(Rect, usize)> {
 /// How far a modulation amount of 1.0 moves the knob (in knob-travel units).
 pub fn dst_scale(d: usize) -> f32 {
     match ModDst::from_index(d.min(ModDst::variants().len() - 1)) {
-        ModDst::Cutoff => 0.6,
-        ModDst::Pan | ModDst::APan | ModDst::BPan => 0.5,
-        ModDst::APitch | ModDst::BPitch => 1.0,
+        ModDst::Cutoff | ModDst::Cutoff2 => 0.6,
+        ModDst::Pan | ModDst::APan | ModDst::BPan | ModDst::CPan => 0.5,
+        ModDst::APitch | ModDst::BPitch | ModDst::CPitch => 1.0,
         ModDst::NoisePitch => 0.25,
         _ => 1.0,
     }
@@ -174,6 +199,19 @@ fn knob_impl<P: Param>(ui: &mut Ui, setter: &ParamSetter, p: &P, label: &str, ce
         MC.with(|m| m.borrow_mut().rects.push((hit, dst)));
     }
     let resp = ui.allocate_rect(hit, Sense::click_and_drag());
+    let ptr = p.as_ptr();
+    let (learn_on, is_target, bound_cc) = MC.with(|m| {
+        let m = m.borrow();
+        (m.learn_on, m.learn_target == Some(ptr), m.bound.iter().find(|(q, _)| *q == ptr).map(|(_, c)| *c))
+    });
+    if learn_on {
+        if resp.clicked() {
+            MC.with(|m| m.borrow_mut().learn_click = Some(ptr));
+        }
+        if resp.secondary_clicked() {
+            MC.with(|m| m.borrow_mut().learn_unbind = Some(ptr));
+        }
+    }
     let tip_full = if mods.is_empty() {
         tooltip.to_string()
     } else {
@@ -193,7 +231,7 @@ fn knob_impl<P: Param>(ui: &mut Ui, setter: &ParamSetter, p: &P, label: &str, ce
     let raw_id = egui::Id::new(("knob_raw", resp.id));
     // ---- modulation: right-click removes, ring / Ctrl drag edits the amount
     let medit_id = egui::Id::new(("knob_medit", resp.id));
-    if dst != 0 && resp.secondary_clicked() && !mods.is_empty() {
+    if dst != 0 && !learn_on && resp.secondary_clicked() && !mods.is_empty() {
         if let Some(pp) = MC.with(|m| m.borrow().params.clone()) {
             for (i, _, _) in &mods {
                 set_e(setter, &pp.slot[*i].dst, ModDst::None);
@@ -331,6 +369,22 @@ fn knob_impl<P: Param>(ui: &mut Ui, setter: &ParamSetter, p: &P, label: &str, ce
     if dst != 0 && drag_src().is_some() {
         let over = ui.input(|i| i.pointer.hover_pos()).map(|pp| hit.contains(pp)).unwrap_or(false);
         painter.circle_stroke(c, r + 3.0, Stroke::new(if over { 2.0_f32 } else { 1.0 }, if over { WHITE } else { MID }));
+    }
+    // MIDI learn: hint ring on every knob, bright ring on the one waiting, tag on the bound ones
+    if learn_on {
+        let now = ui.input(|i| i.time);
+        if is_target {
+            let ph = ((now * 5.0).sin() * 0.5 + 0.5) as f32;
+            painter.circle_stroke(c, r + 3.0 + ph * 2.0, Stroke::new(2.5_f32, WHITE));
+            ui.ctx().request_repaint();
+        } else {
+            painter.circle_stroke(c, r + 3.0, Stroke::new(1.0_f32, Color32::from_rgb(90, 90, 90)));
+        }
+    }
+    if let Some(cc) = bound_cc {
+        let tag = Rect::from_center_size(Pos2::new(c.x, cell.top() + 2.0), Vec2::new(34.0, 11.0));
+        painter.rect_filled(tag, CornerRadius::same(3), WHITE);
+        painter.text(tag.center(), Align2::CENTER_CENTER, format!("CC{cc}"), mono(8.0), Color32::BLACK);
     }
     // round knob body
     let body = r * 0.72;
