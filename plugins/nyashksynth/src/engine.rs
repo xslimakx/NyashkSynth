@@ -141,9 +141,9 @@ fn osc_read(o: &OscParams, tbl: Arc<Table>) -> OscP {
 
 fn env_read(e: &EnvParams, fs: f32) -> EnvP {
     let ms = |v: f32| if v <= 0.6 { 0.0 } else { v * 0.001 * fs };
-    let a = (e.attack.value() * 0.001 * fs).max(1.0);
+    let a = (e.attack.value() * 0.001 * fs).max(0.0015 * fs); // >= 1.5 ms: no click on note start
     let d = (e.decay.value() * 0.001 / 4.6 * fs).max(1.0);
-    let r = (e.release.value() * 0.001 / 4.6 * fs).max(1.0);
+    let r = (e.release.value() * 0.001 / 4.6 * fs).max(0.006 / 4.6 * fs); // >= 6 ms: no click on note end
     let k = |c: f32| 2f32.powf(c * 2.0);
     EnvP { delay_n: ms(e.delay.value()), a_inc: 1.0 / a, hold_n: ms(e.hold.value()), d_coef: (-1.0 / d).exp(), s: e.sustain.value(), r_coef: (-1.0 / r).exp(), ka: k(e.atk_curve.value()), kd: k(e.dec_curve.value()), kr: k(e.rel_curve.value()) }
 }
@@ -570,6 +570,10 @@ struct Voice {
     lfo_s: [f32; 4],
     last_lfo: [f32; 4],
     fl: Fst,
+    /// de-click on retrigger: the old output level decays away while the new note fades in
+    dc: [f32; 2],
+    last: [f32; 2],
+    fade: f32,
 }
 
 impl Voice {
@@ -589,6 +593,9 @@ impl Voice {
             rnd: 1,
             rnd_val: 0.0,
             prev: [0.0; 2],
+            dc: [0.0; 2],
+            last: [0.0; 2],
+            fade: 1.0,
             nz: [0.0; 10],
             nph: 0.0,
             nplaying: false,
@@ -873,6 +880,8 @@ pub fn slot_value(sl: &SlotP, src: impl Fn(ModSrc) -> f32) -> f32 {
 fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mut [f32]) {
     let m = out_l.len();
     let fs = c.fs;
+    let dc_coef = (-1.0 / (0.004 * fs)).exp();
+    let fade_inc = 1.0 / (0.003 * fs);
     // glide
     v.freq += (v.tfreq - v.freq) * c.glide_coef;
     v.t += m as f32 / fs;
@@ -1218,8 +1227,17 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
         v.env[1].tick(&p.env[1]);
         v.env[2].tick(&p.env[2]);
         let ga = amp * vg;
-        out_l[s] += (f[0] + dr[0]) * ga;
-        out_r[s] += (f[1] + dr[1]) * ga;
+        if v.fade < 1.0 {
+            v.fade = (v.fade + fade_inc).min(1.0);
+        }
+        let fg = v.fade * v.fade * (3.0 - 2.0 * v.fade);
+        let ol = (f[0] + dr[0]) * ga * fg + v.dc[0];
+        let or = (f[1] + dr[1]) * ga * fg + v.dc[1];
+        v.dc[0] *= dc_coef;
+        v.dc[1] *= dc_coef;
+        v.last = [ol, or];
+        out_l[s] += ol;
+        out_r[s] += or;
     }
     if v.env[0].stage == 0 {
         v.active = false;
@@ -1368,6 +1386,14 @@ impl Engine {
         };
         let patch = &self.patch;
         let v = &mut self.voices[idx];
+        let was_sounding = v.active;
+        if was_sounding {
+            v.dc = v.last;
+            v.fade = 0.0;
+        } else {
+            v.dc = [0.0; 2];
+            v.fade = 1.0;
+        }
         v.active = true;
         v.key_down = true;
         v.note = note;
@@ -1387,7 +1413,9 @@ impl Engine {
         for (i, e) in v.env.iter_mut().enumerate() {
             e.start(&patch.env[i]);
         }
-        v.fl.clear();
+        if !was_sounding {
+            v.fl.clear();
+        }
         v.nz = [0.0; 10];
         v.lfo_s = [0.0; 4];
         if let Some(sm) = patch.sample.as_ref() {

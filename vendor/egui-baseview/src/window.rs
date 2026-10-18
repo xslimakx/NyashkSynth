@@ -527,6 +527,34 @@ where
                         modifiers: self.egui_input.modifiers,
                     });
                 }
+                baseview::MouseEvent::DragEntered { position, .. } | baseview::MouseEvent::DragMoved { position, .. } => {
+                    let sc = self.ui_scale;
+                    let pos = pos2(position.x as f32 / sc, position.y as f32 / sc);
+                    self.pointer_pos_in_points = Some(pos);
+                    self.egui_input.events.push(egui::Event::PointerMoved(pos));
+                    if self.egui_input.hovered_files.is_empty() {
+                        self.egui_input.hovered_files.push(egui::HoveredFile::default());
+                    }
+                }
+                baseview::MouseEvent::DragLeft => {
+                    self.egui_input.hovered_files.clear();
+                }
+                baseview::MouseEvent::DragDropped { position, data, .. } => {
+                    let sc = self.ui_scale;
+                    let pos = pos2(position.x as f32 / sc, position.y as f32 / sc);
+                    self.pointer_pos_in_points = Some(pos);
+                    self.egui_input.events.push(egui::Event::PointerMoved(pos));
+                    self.egui_input.hovered_files.clear();
+                    if let baseview::DropData::Files(files) = data {
+                        for f in files {
+                            self.egui_input.dropped_files.push(egui::DroppedFile {
+                                path: Some(f.clone()),
+                                name: f.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+                                ..Default::default()
+                            });
+                        }
+                    }
+                }
                 baseview::MouseEvent::CursorLeft => {
                     self.pointer_pos_in_points = None;
                     self.egui_input.events.push(egui::Event::PointerGone);

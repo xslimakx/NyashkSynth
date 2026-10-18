@@ -745,6 +745,11 @@ impl WavEdit {
             }
         }
 
+        bx += 104.0;
+        if pill_tip(ui, btn(bx, 112.0), "SINGLE WAVE", false, "Make the table one single wave: the current frame is kept and the other frames become copies of it, so POS has no effect (like a one-frame table in Serum)") {
+            op_clicked = Some("SINGLE");
+        }
+
         // ---------------- row: formula
         y += 30.0;
         yc.set(y);
@@ -829,6 +834,19 @@ impl WavEdit {
                     } else {
                         *status = "a table needs at least 2 frames".to_string();
                     }
+                }
+                "SINGLE" => {
+                    self.push_undo();
+                    let t = self.time.clone();
+                    self.tbl = Table::from_frames(&[t.clone(), t]);
+                    self.sel = None;
+                    self.scope = Scope::Frame;
+                    self.frame = 0;
+                    self.anchor = 0;
+                    self.reload();
+                    self.touch(now);
+                    set_f(setter, &op.pos, 0.0);
+                    *status = "single wave: all frames are identical now".to_string();
                 }
                 "COPY" => self.clip = Some(self.time.clone()),
                 "PASTE" => {
@@ -991,6 +1009,15 @@ impl WavEdit {
         dark_box(ui, r);
         let painter = ui.painter().with_clip_rect(r.shrink(1.0));
         let n = 120usize;
+        if nfr == 2 && self.tbl.frame_time(0) == self.tbl.frame_time(1) {
+            // one single wave: no stack to show
+            let gp = self.time.iter().fold(1.0f32, |a, b| a.max(b.abs()));
+            let pts: Vec<Pos2> = (0..=n).map(|k| Pos2::new(r.left() + 14.0 + (r.width() - 28.0) * k as f32 / n as f32, r.center().y - self.time[(k * (N - 1) / n).min(N - 1)] / gp * r.height() * 0.32)).collect();
+            painter.add(egui::Shape::line(pts, PathStroke::new(2.2_f32, WHITE)));
+            painter.text(Pos2::new(r.left() + 8.0, r.top() + 10.0), Align2::LEFT_CENTER, "SINGLE WAVE", mono(9.5), DIM);
+            painter.text(Pos2::new(r.center().x, r.bottom() - 12.0), Align2::CENTER_CENTER, "all frames are the same, POS does nothing", mono(9.0), DIM);
+            return;
+        }
         // scale so that the loudest frame still fits: a wave that overshoots never gets clipped
         let gpk = self.peaks.iter().fold(1.0f32, |a, b| a.max(*b));
         let amp = 26.0 / gpk;
@@ -1382,5 +1409,17 @@ mod more_tests {
         w.formula = "garbage((".into();
         w.run_formula(2.0);
         assert!(!w.formula_err.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod single_tests {
+    use super::*;
+    #[test]
+    fn single_wave_table_is_identical_frames() {
+        let t: Vec<f32> = (0..N).map(|k| (k as f32 / N as f32 * std::f32::consts::TAU).sin()).collect();
+        let tb = Table::from_frames(&[t.clone(), t]);
+        assert_eq!(tb.frames(), 2);
+        assert_eq!(tb.frame_time(0), tb.frame_time(1));
     }
 }

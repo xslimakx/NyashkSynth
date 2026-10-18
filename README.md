@@ -34,6 +34,8 @@ A Serum-style wavetable synthesizer in the same black-and-white Nyashk design.
 | **Performance** | Poly / Mono / Legato, glide, sustain pedal, mod wheel, pitch bend, aftertouch, on-screen keyboard, oscilloscope |
 | **Presets** | 68 factory presets in categories, user presets / tables / noises as plain files you can drop into folders. The RANDOM button builds a full new patch (matrix routes, all 4 LFOs, 3 envelopes, macros, FX, arp reset) |
 
+**Drag and drop:** drop a `.wav` onto OSC A / OSC B to load it as a wavetable, onto the SUB/NOISE panel to use it as a noise sample, or drop a `.nyp` file anywhere to load a preset. Dropped files are also copied into your library folders (works on Linux/X11, Windows and macOS hosts that pass file drops to plugins).
+
 User data: `~/.config/NyashkSynth/{Presets,Tables,Noises}` (Windows: `%APPDATA%\NyashkSynth\…`).
 
 ### Wavetable editor in short

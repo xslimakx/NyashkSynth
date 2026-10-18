@@ -165,3 +165,41 @@ fn no_stuck_notes_when_patch_changes_while_held() {
     }
     assert!(bad.is_empty(), "stuck after patch changes, seeds {bad:?}");
 }
+
+fn render_vec(e: &mut Engine, n: usize) -> Vec<f32> {
+    let mut out = Vec::with_capacity(n);
+    let mut l = vec![0.0f32; 64];
+    let mut r = vec![0.0f32; 64];
+    for _ in 0..n / 64 {
+        l.iter_mut().for_each(|x| *x = 0.0);
+        r.iter_mut().for_each(|x| *x = 0.0);
+        e.process(&mut l, &mut r);
+        out.extend_from_slice(&l);
+    }
+    out
+}
+
+fn max_step(x: &[f32]) -> f32 {
+    x.windows(2).fold(0.0f32, |m, w| m.max((w[0] - w[1]).abs()))
+}
+
+#[test]
+fn stolen_voice_and_fast_release_do_not_click() {
+    let mut e = engine();
+    e.patch.poly = 1; // every new note steals the only voice
+    e.patch.sub_on = false;
+    e.note_on(48, 1.0);
+    let a = render_vec(&mut e, 48000 / 4);
+    let steady = max_step(&a[a.len() / 2..]);
+    e.note_on(67, 1.0);
+    let b = render_vec(&mut e, 48000 / 10);
+    let step = max_step(&b[..400]);
+    assert!(step < steady * 2.5 + 0.02, "retrigger step {step} vs steady {steady}");
+
+    // the shortest allowed release (6 ms) must ramp down instead of cutting
+    e.patch.env[0].r_coef = (-1.0f32 / (0.006 * 48000.0 / 4.6)).exp();
+    e.note_off(67);
+    let c = render_vec(&mut e, 48000 / 10);
+    let tail = max_step(&c);
+    assert!(tail < steady * 2.5 + 0.02, "release step {tail} vs steady {steady}");
+}

@@ -20,6 +20,11 @@ pub(super) struct EventLoop {
     event_loop_running: bool,
     /// bit n = X button n+1 is currently held (as far as we saw)
     buttons_down: u8,
+    /// XDND: the window the current drag comes from, and whether it offers files
+    dnd_source: Option<u32>,
+    dnd_ok: bool,
+    dnd_entered: bool,
+    dnd_pos: crate::Point,
 }
 
 impl EventLoop {
@@ -35,6 +40,10 @@ impl EventLoop {
             event_loop_running: false,
             new_physical_size: None,
             buttons_down: 0,
+            dnd_source: None,
+            dnd_ok: false,
+            dnd_entered: false,
+            dnd_pos: crate::Point::new(0.0, 0.0),
         }
     }
 
@@ -188,12 +197,19 @@ impl EventLoop {
             // window
             ////
             XEvent::ClientMessage(event) => {
+                if event.format == 32 && self.handle_dnd_message(&event) {
+                    return;
+                }
                 if event.format == 32
                     && event.data.as_data32()[0]
                         == self.window.xcb_connection.atoms.WM_DELETE_WINDOW
                 {
                     self.handle_close_requested();
                 }
+            }
+
+            XEvent::SelectionNotify(event) => {
+                self.handle_dnd_selection(&event);
             }
 
             XEvent::ConfigureNotify(event) => {
@@ -315,6 +331,113 @@ impl EventLoop {
         }
     }
 
+    fn dnd_send(&self, to: u32, ty: u32, data: [u32; 5]) {
+        use x11rb::protocol::xproto::{ClientMessageEvent, ConnectionExt, EventMask};
+        let ev = ClientMessageEvent::new(32, to, ty, data);
+        let conn = &self.window.xcb_connection.conn;
+        let _ = conn.send_event(false, to, EventMask::NO_EVENT, ev);
+        let _ = conn.flush();
+    }
+
+    fn dnd_emit(&mut self, ev: crate::MouseEvent) {
+        self.handler.on_event(&mut crate::Window::new(Window { inner: &self.window }), Event::Mouse(ev));
+    }
+
+    /// XDND (drag and drop from file managers). Returns true when the message was ours.
+    fn handle_dnd_message(&mut self, event: &x11rb::protocol::xproto::ClientMessageEvent) -> bool {
+        use x11rb::protocol::xproto::{AtomEnum, ConnectionExt};
+        let a = self.window.xcb_connection.atoms;
+        let d = event.data.as_data32();
+        let win = self.window.window_id;
+        let mods = key_mods(0u16.into());
+        if event.type_ == a.XdndEnter {
+            let src = d[0];
+            let has_list = d[1] & 1 != 0;
+            let mut types: Vec<u32> = d[2..5].iter().copied().filter(|t| *t != 0).collect();
+            if has_list {
+                if let Ok(c) = self.window.xcb_connection.conn.get_property(false, src, a.XdndTypeList, AtomEnum::ATOM, 0, 1024) {
+                    if let Ok(r) = c.reply() {
+                        if let Some(v) = r.value32() {
+                            types = v.collect();
+                        }
+                    }
+                }
+            }
+            self.dnd_source = Some(src);
+            self.dnd_ok = types.contains(&a.TEXT_URI_LIST);
+            self.dnd_entered = false;
+            true
+        } else if event.type_ == a.XdndPosition {
+            if self.dnd_source != Some(d[0]) {
+                return true;
+            }
+            let (rx, ry) = ((d[2] >> 16) as i16, (d[2] & 0xFFFF) as i16);
+            let root = self.window.xcb_connection.conn.setup().roots[self.window.xcb_connection.screen].root;
+            if let Ok(c) = self.window.xcb_connection.conn.translate_coordinates(root, win, rx, ry) {
+                if let Ok(r) = c.reply() {
+                    let p = PhyPoint::new(r.dst_x as i32, r.dst_y as i32).to_logical(&self.window.window_info);
+                    self.dnd_pos = crate::Point::new(p.x, p.y);
+                }
+            }
+            if self.dnd_ok {
+                let ev = if self.dnd_entered {
+                    MouseEvent::DragMoved { position: self.dnd_pos, modifiers: mods, data: crate::DropData::None }
+                } else {
+                    MouseEvent::DragEntered { position: self.dnd_pos, modifiers: mods, data: crate::DropData::None }
+                };
+                self.dnd_entered = true;
+                self.dnd_emit(ev);
+            }
+            let (flag, act) = if self.dnd_ok { (1, a.XdndActionCopy) } else { (0, 0) };
+            self.dnd_send(d[0], a.XdndStatus, [win, flag, 0, 0, act]);
+            true
+        } else if event.type_ == a.XdndLeave {
+            if self.dnd_entered {
+                self.dnd_emit(MouseEvent::DragLeft);
+            }
+            self.dnd_source = None;
+            self.dnd_entered = false;
+            true
+        } else if event.type_ == a.XdndDrop {
+            if self.dnd_source == Some(d[0]) && self.dnd_ok {
+                let _ = self.window.xcb_connection.conn.convert_selection(win, a.XdndSelection, a.TEXT_URI_LIST, a.NYASHK_DROP, d[2]);
+                let _ = self.window.xcb_connection.conn.flush();
+            } else {
+                self.dnd_send(d[0], a.XdndFinished, [win, 0, 0, 0, 0]);
+                if self.dnd_entered {
+                    self.dnd_emit(MouseEvent::DragLeft);
+                }
+                self.dnd_source = None;
+                self.dnd_entered = false;
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    fn handle_dnd_selection(&mut self, event: &x11rb::protocol::xproto::SelectionNotifyEvent) {
+        use x11rb::protocol::xproto::{AtomEnum, ConnectionExt};
+        let a = self.window.xcb_connection.atoms;
+        let win = self.window.window_id;
+        if event.property != a.NYASHK_DROP {
+            return;
+        }
+        let mut files = Vec::new();
+        if let Ok(c) = self.window.xcb_connection.conn.get_property(true, win, a.NYASHK_DROP, AtomEnum::ANY, 0, 65536) {
+            if let Ok(r) = c.reply() {
+                files = parse_uri_list(&String::from_utf8_lossy(&r.value));
+            }
+        }
+        if let Some(src) = self.dnd_source.take() {
+            self.dnd_send(src, a.XdndFinished, [win, 1, a.XdndActionCopy, 0, 0]);
+        }
+        self.dnd_entered = false;
+        if !files.is_empty() {
+            self.dnd_emit(MouseEvent::DragDropped { position: self.dnd_pos, modifiers: key_mods(0u16.into()), data: crate::DropData::Files(files) });
+        }
+    }
+
     fn handle_close_requested(&mut self) {
         // FIXME: handler should decide whether window stays open or not
         self.handle_must_close();
@@ -339,4 +462,30 @@ fn mouse_id(id: u8) -> MouseButton {
         9 => MouseButton::Forward,
         id => MouseButton::Other(id),
     }
+}
+
+/// "file:///home/me/a%20b.wav\r\n..." -> paths
+fn parse_uri_list(s: &str) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    for line in s.lines() {
+        let line = line.trim();
+        let Some(rest) = line.strip_prefix("file://") else { continue };
+        let rest = rest.strip_prefix("localhost").unwrap_or(rest);
+        let b = rest.as_bytes();
+        let mut v = Vec::with_capacity(b.len());
+        let mut i = 0;
+        while i < b.len() {
+            if b[i] == b'%' && i + 2 < b.len() + 0 && i + 2 <= b.len() - 1 {
+                if let Ok(x) = u8::from_str_radix(&rest[i + 1..i + 3], 16) {
+                    v.push(x);
+                    i += 3;
+                    continue;
+                }
+            }
+            v.push(b[i]);
+            i += 1;
+        }
+        out.push(std::path::PathBuf::from(String::from_utf8_lossy(&v).into_owned()));
+    }
+    out
 }

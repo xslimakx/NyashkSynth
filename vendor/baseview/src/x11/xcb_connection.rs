@@ -18,6 +18,18 @@ x11rb::atom_manager! {
     pub Atoms: AtomsCookie {
         WM_PROTOCOLS,
         WM_DELETE_WINDOW,
+        XdndAware: b"XdndAware",
+        XdndEnter: b"XdndEnter",
+        XdndPosition: b"XdndPosition",
+        XdndStatus: b"XdndStatus",
+        XdndLeave: b"XdndLeave",
+        XdndDrop: b"XdndDrop",
+        XdndFinished: b"XdndFinished",
+        XdndSelection: b"XdndSelection",
+        XdndActionCopy: b"XdndActionCopy",
+        XdndTypeList: b"XdndTypeList",
+        TEXT_URI_LIST: b"text/uri-list",
+        NYASHK_DROP: b"NYASHK_DROP",
     }
 }
 

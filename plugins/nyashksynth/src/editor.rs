@@ -308,6 +308,7 @@ pub fn create(params: Arc<SynthParams>, meters: Arc<Meters>, shared: Arc<Shared>
 
                 // ================================================= overlays
                 overlays(ui, setter, p, &shared, st, o, now);
+                drop_files(ui, setter, p, &shared, st, o, now);
 
                 // resize grip (keeps proportions)
                 let grip = Rect::from_min_size(full.max - Vec2::splat(22.0), Vec2::splat(22.0));
@@ -427,6 +428,91 @@ fn header(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, s
 }
 
 // ===================================================================== overlays
+
+/// Drag and drop from a file manager: .wav -> wavetable (or noise over the SUB/NOISE panel), .nyp -> preset.
+fn drop_files(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, st: &mut Gui, o: Pos2, now: f64) {
+    let area_a = Rect::from_min_size(Pos2::new(o.x + 14.0, o.y + 62.0), Vec2::new(350.0, 346.0));
+    let area_b = Rect::from_min_size(Pos2::new(o.x + 372.0, o.y + 62.0), Vec2::new(350.0, 346.0));
+    let area_n = Rect::from_min_size(Pos2::new(o.x + 14.0, o.y + 416.0), Vec2::new(350.0, 290.0));
+    if ui.input(|i| !i.raw.hovered_files.is_empty()) {
+        let pos = ui.input(|i| i.pointer.hover_pos());
+        let painter = ui.painter().clone();
+        for (r, label) in [(area_a, "DROP .wav: WAVETABLE A"), (area_b, "DROP .wav: WAVETABLE B"), (area_n, "DROP .wav: NOISE SAMPLE")] {
+            let hot = pos.map_or(false, |q| r.contains(q));
+            painter.rect_stroke(r, CornerRadius::same(6), Stroke::new(if hot { 2.0_f32 } else { 1.0 }, if hot { WHITE } else { MID }), StrokeKind::Inside);
+            painter.text(r.center_top() + Vec2::new(0.0, 14.0), Align2::CENTER_CENTER, label, mono(10.0), if hot { WHITE } else { DIM });
+        }
+        painter.text(Pos2::new(o.x + 560.0, o.y + 560.0), Align2::CENTER_CENTER, "Drop a .nyp preset anywhere", mono(11.0), DIM);
+    }
+    let dropped: Vec<PathBuf> = ui.input(|i| i.raw.dropped_files.iter().filter_map(|f| f.path.clone()).collect());
+    if dropped.is_empty() {
+        return;
+    }
+    let pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or(area_a.center());
+    let mut msgs: Vec<String> = Vec::new();
+    for path in dropped {
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+        let stem = path.file_stem().and_then(|x| x.to_str()).unwrap_or("file").to_string();
+        if ext == "nyp" {
+            // keep a copy in the preset folder, then load it
+            let mut dest = path.clone();
+            if let Some(dir) = files::presets_dir() {
+                let _ = std::fs::create_dir_all(&dir);
+                let mut d = dir.join(format!("{}.nyp", files::clean_name(&stem)));
+                let mut n = 2;
+                while d.exists() && d != path {
+                    d = dir.join(format!("{} {n}.nyp", files::clean_name(&stem)));
+                    n += 1;
+                }
+                if d == path || std::fs::copy(&path, &d).is_ok() {
+                    dest = d;
+                }
+            }
+            st.rescan();
+            let rf = PresetRef { name: stem.clone(), cat: "User".into(), factory: None, path: Some(dest) };
+            match presets::load(setter, p, shared, &rf) {
+                Ok(()) => {
+                    st.rescan();
+                    msgs.push(format!("preset {stem} loaded and added to your presets"));
+                }
+                Err(e) => msgs.push(format!("preset failed: {e}")),
+            }
+        } else if ext == "wav" {
+            if area_n.contains(pos) {
+                if let Some(dir) = files::noises_dir() {
+                    let _ = std::fs::create_dir_all(&dir);
+                    let d = dir.join(path.file_name().unwrap_or_default());
+                    if !d.exists() {
+                        let _ = std::fs::copy(&path, &d);
+                    }
+                }
+                match load_noise(setter, p, shared, &path) {
+                    Ok(n) => msgs.push(format!("noise sample {n} loaded")),
+                    Err(e) => msgs.push(format!("noise failed: {e}")),
+                }
+            } else {
+                let o_i = if area_b.contains(pos) { 1 } else { 0 };
+                if let Some(dir) = files::tables_dir().map(|d| d.join("Dropped")) {
+                    let _ = std::fs::create_dir_all(&dir);
+                    let d = dir.join(path.file_name().unwrap_or_default());
+                    if !d.exists() {
+                        let _ = std::fs::copy(&path, &d);
+                    }
+                }
+                match load_table(setter, p, shared, o_i, &TblSrc::File(path.clone()), st.frame_size) {
+                    Ok(n) => msgs.push(format!("wavetable {n} loaded into OSC {}", if o_i == 0 { "A" } else { "B" })),
+                    Err(e) => msgs.push(format!("wavetable failed: {e}")),
+                }
+            }
+            st.rescan();
+        } else {
+            msgs.push(format!("{stem}: only .wav and .nyp files can be dropped"));
+        }
+    }
+    if let Some(m) = msgs.last() {
+        st.say(now, m.clone());
+    }
+}
 
 fn overlays(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, st: &mut Gui, o: Pos2, now: f64) {
     let area = Rect::from_min_size(Pos2::new(o.x + 14.0, o.y + 62.0), Vec2::new(1072.0, 738.0));
