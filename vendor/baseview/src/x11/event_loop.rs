@@ -25,6 +25,8 @@ pub(super) struct EventLoop {
     dnd_ok: bool,
     dnd_entered: bool,
     dnd_pos: crate::Point,
+    dnd_action: u32,
+    dnd_entered_logged: bool,
 }
 
 impl EventLoop {
@@ -44,6 +46,8 @@ impl EventLoop {
             dnd_ok: false,
             dnd_entered: false,
             dnd_pos: crate::Point::new(0.0, 0.0),
+            dnd_action: 0,
+            dnd_entered_logged: false,
         }
     }
 
@@ -367,6 +371,7 @@ impl EventLoop {
             self.dnd_ok = types.contains(&a.TEXT_URI_LIST);
             dnd_log(&format!("enter from {src}, offers uri-list: {} ({} types)", self.dnd_ok, types.len()));
             self.dnd_entered = false;
+            self.dnd_entered_logged = false;
             true
         } else if event.type_ == a.XdndPosition {
             if self.dnd_source != Some(d[0]) {
@@ -389,7 +394,14 @@ impl EventLoop {
                 self.dnd_entered = true;
                 self.dnd_emit(ev);
             }
-            let (flag, act) = if self.dnd_ok { (1, a.XdndActionCopy) } else { (0, 0) };
+            // accept whatever action the source proposes (copy / move / link), a refusal would cancel the drop
+            let proposed = if d[4] != 0 { d[4] } else { a.XdndActionCopy };
+            self.dnd_action = proposed;
+            let (flag, act) = if self.dnd_ok { (1, proposed) } else { (0, 0) };
+            if !self.dnd_entered_logged {
+                self.dnd_entered_logged = true;
+                dnd_log(&format!("position ({},{}) accepted={} action={}", rx, ry, self.dnd_ok, proposed));
+            }
             self.dnd_send(d[0], a.XdndStatus, [win, flag, 0, 0, act]);
             true
         } else if event.type_ == a.XdndLeave {
@@ -422,7 +434,11 @@ impl EventLoop {
         use x11rb::protocol::xproto::{AtomEnum, ConnectionExt};
         let a = self.window.xcb_connection.atoms;
         let win = self.window.window_id;
+        dnd_log(&format!("selection notify: property={} (expected {})", event.property, a.NYASHK_DROP));
         if event.property != a.NYASHK_DROP {
+            if let Some(src) = self.dnd_source.take() {
+                self.dnd_send(src, a.XdndFinished, [win, 0, 0, 0, 0]);
+            }
             return;
         }
         let mut files = Vec::new();
@@ -433,7 +449,8 @@ impl EventLoop {
         }
         dnd_log(&format!("received {} file(s)", files.len()));
         if let Some(src) = self.dnd_source.take() {
-            self.dnd_send(src, a.XdndFinished, [win, 1, a.XdndActionCopy, 0, 0]);
+            let act = if self.dnd_action != 0 { self.dnd_action } else { a.XdndActionCopy };
+            self.dnd_send(src, a.XdndFinished, [win, 1, act, 0, 0]);
         }
         self.dnd_entered = false;
         if !files.is_empty() {
