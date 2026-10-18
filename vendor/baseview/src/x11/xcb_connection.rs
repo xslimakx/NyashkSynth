@@ -28,6 +28,8 @@ x11rb::atom_manager! {
         XdndSelection: b"XdndSelection",
         XdndActionCopy: b"XdndActionCopy",
         XdndTypeList: b"XdndTypeList",
+        XdndProxy: b"XdndProxy",
+        WM_STATE: b"WM_STATE",
         TEXT_URI_LIST: b"text/uri-list",
         NYASHK_DROP: b"NYASHK_DROP",
     }

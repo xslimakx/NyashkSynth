@@ -277,6 +277,38 @@ impl<'a> Window<'a> {
         // accept files dragged from a file manager (XDND version 5)
         xcb_connection.conn.change_property32(PropMode::REPLACE, window_id, xcb_connection.atoms.XdndAware, AtomEnum::ATOM, &[5])?;
 
+        // Plugin in a host: file managers talk to the top-level window, not to us. When that window does
+        // not take file drops itself, offer to receive them for it (XDND proxy). Best effort, errors ignored.
+        if parent.is_some() {
+            let _ = (|| -> Result<(), Box<dyn std::error::Error>> {
+                use x11rb::protocol::xproto::ConnectionExt;
+                let a = &xcb_connection.atoms;
+                let conn = &xcb_connection.conn;
+                let mut cur = parent_id;
+                let mut top = parent_id;
+                for _ in 0..32 {
+                    let has_state = conn.get_property(false, cur, a.WM_STATE, AtomEnum::ANY, 0, 1)?.reply()?.type_ != 0;
+                    top = cur;
+                    if has_state {
+                        break;
+                    }
+                    let tree = conn.query_tree(cur)?.reply()?;
+                    if tree.parent == 0 || tree.parent == tree.root {
+                        break;
+                    }
+                    cur = tree.parent;
+                }
+                let aware = conn.get_property(false, top, a.XdndAware, AtomEnum::ANY, 0, 1)?.reply()?.type_ != 0;
+                crate::nylog(&format!("dnd: top-level window {top}, host takes drops itself: {aware}"));
+                if !aware && top != window_id {
+                    conn.change_property32(PropMode::REPLACE, top, a.XdndAware, AtomEnum::ATOM, &[5])?;
+                    conn.change_property32(PropMode::REPLACE, top, a.XdndProxy, AtomEnum::WINDOW, &[window_id])?;
+                    conn.change_property32(PropMode::REPLACE, window_id, a.XdndProxy, AtomEnum::WINDOW, &[window_id])?;
+                }
+                Ok(())
+            })();
+        }
+
         xcb_connection.conn.flush()?;
 
         // TODO: These APIs could use a couple tweaks now that everything is internal and there is

@@ -479,7 +479,8 @@ fn drop_files(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Share
                 Err(e) => msgs.push(format!("preset failed: {e}")),
             }
         } else if ext == "wav" {
-            if area_n.contains(pos) {
+            let to_noise = area_n.contains(pos) && !matches!(st.overlay, Overlay::Tables(_)) || matches!(st.overlay, Overlay::Noises);
+            if to_noise {
                 if let Some(dir) = files::noises_dir() {
                     let _ = std::fs::create_dir_all(&dir);
                     let d = dir.join(path.file_name().unwrap_or_default());
@@ -492,7 +493,11 @@ fn drop_files(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Share
                     Err(e) => msgs.push(format!("noise failed: {e}")),
                 }
             } else {
-                let o_i = if area_b.contains(pos) { 1 } else { 0 };
+                // inside a wavetable browser the file goes to that oscillator, otherwise to the one under the cursor
+                let o_i = match st.overlay {
+                    Overlay::Tables(i) => i.min(1),
+                    _ => usize::from(area_b.contains(pos)),
+                };
                 if let Some(dir) = files::tables_dir().map(|d| d.join("Dropped")) {
                     let _ = std::fs::create_dir_all(&dir);
                     let d = dir.join(path.file_name().unwrap_or_default());

@@ -454,6 +454,11 @@ where
     }
 
     fn on_event(&mut self, _window: &mut Window, event: Event) -> EventStatus {
+        // Windows / macOS only deliver the drop if the handler accepts it
+        let is_drag = matches!(
+            &event,
+            baseview::Event::Mouse(baseview::MouseEvent::DragEntered { .. } | baseview::MouseEvent::DragMoved { .. } | baseview::MouseEvent::DragDropped { .. })
+        );
         match &event {
             baseview::Event::Mouse(event) => match event {
                 baseview::MouseEvent::CursorMoved {
@@ -677,7 +682,11 @@ where
             },
         }
 
-        EventStatus::Captured
+        if is_drag {
+            EventStatus::AcceptDrop(baseview::DropEffect::Copy)
+        } else {
+            EventStatus::Captured
+        }
     }
 }
 
