@@ -265,8 +265,8 @@ pub fn create(params: Arc<SynthParams>, meters: Arc<Meters>, shared: Arc<Shared>
                 if let Ok(name) = std::env::var("NYASHK_PRESET") {
                     // developer aid for screenshots: load a preset once, by name
                     if !st.auto_loaded {
-                        st.auto_loaded = true;
                         if let Some(rf) = st.presets.iter().find(|q| q.name == name).cloned() {
+                            st.auto_loaded = true;
                             let _ = presets::load(setter, p, &shared, &rf);
                         }
                     }
@@ -939,6 +939,16 @@ impl Cx {
     }
 }
 
+/// Magnitude of the custom (point) filter at `f`.
+pub fn custom_response(p: &SynthParams, f: f32) -> f32 {
+    let mut m = 1.0;
+    for b in p.cb.iter().filter(|b| b.on.value()) {
+        let cp = crate::engine::CbP { on: true, kind: b.kind.value(), freq: b.freq.value(), gain: b.gain.value(), q: b.q.value() };
+        m *= crate::engine::cband_coef(&cp, 1.0, 48000.0).mag(f, 48000.0);
+    }
+    m
+}
+
 pub fn filter_response(ty: FilterType, res: f32, fc: f32, f: f32) -> f32 {
     let fs = 48000.0f32;
     let f_norm = f / fc;
@@ -956,6 +966,7 @@ pub fn filter_response(ty: FilterType, res: f32, fc: f32, f: f32) -> f32 {
     };
     use crate::fx::BqCoef;
     match ty {
+        FilterType::Custom => 1.0,
         FilterType::Lp12 => stage(k1, 0),
         FilterType::Lp24 => stage(k1, 0) * stage(k2, 0),
         FilterType::Hp12 => stage(k1, 1),
@@ -1011,13 +1022,142 @@ pub fn filter_response(ty: FilterType, res: f32, fc: f32, f: f32) -> f32 {
     }
 }
 
+/// Draw and edit the points of the custom filter on the graph.
+fn custom_points(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, d: Rect, xf: &dyn Fn(f32) -> f32, yd: &dyn Fn(f32) -> f32, db: (f32, f32)) {
+    let sel_id = egui::Id::new("cb_sel");
+    let drag_id = egui::Id::new("cb_drag");
+    let mut sel = ui.data(|dd| dd.get_temp::<usize>(sel_id)).unwrap_or(0).min(CBANDS - 1);
+    let has_gain = |k: BandKind| matches!(k, BandKind::Bell | BandKind::LowShelf | BandKind::HighShelf);
+    let dot = |i: usize| -> Pos2 {
+        let b = &p.cb[i];
+        let f = b.freq.value();
+        let y = if has_gain(b.kind.value()) { yd(b.gain.value()) } else { yd(20.0 * custom_response(p, f).max(1e-6).log10()) };
+        Pos2::new(xf(f), y)
+    };
+    let hit = |pt: Pos2| -> Option<usize> {
+        (0..CBANDS).filter(|&i| p.cb[i].on.value()).map(|i| (i, dot(i).distance(pt))).filter(|&(_, dist)| dist < 12.0).min_by(|a, b| a.1.total_cmp(&b.1)).map(|x| x.0)
+    };
+    let gr = ui.interact(d, egui::Id::new("filter_graph_c"), Sense::click_and_drag()).on_hover_text("Click: add a point | drag: frequency + gain | wheel: width | double-click / right-click: remove");
+    let hover = gr.hover_pos();
+    // wheel over a point = width
+    if let Some(i) = hover.and_then(&hit) {
+        let sc = ui.input(|i| i.smooth_scroll_delta.y);
+        if sc != 0.0 {
+            let q = (p.cb[i].q.value() * (sc * 0.004).exp()).clamp(0.15, 16.0);
+            setter.begin_set_parameter(&p.cb[i].q);
+            setter.set_parameter(&p.cb[i].q, q);
+            setter.end_set_parameter(&p.cb[i].q);
+            sel = i;
+        }
+    }
+    if gr.drag_started() {
+        let origin = ui.input(|i| i.pointer.press_origin());
+        if let Some(i) = origin.and_then(&hit) {
+            sel = i;
+            ui.data_mut(|dd| dd.insert_temp(drag_id, Some(i)));
+            let b = &p.cb[i];
+            setter.begin_set_parameter(&b.freq);
+            setter.begin_set_parameter(&b.gain);
+            setter.begin_set_parameter(&b.q);
+        } else {
+            ui.data_mut(|dd| dd.insert_temp(drag_id, None::<usize>));
+        }
+    }
+    if gr.dragged() {
+        if let (Some(Some(i)), Some(pt)) = (ui.data(|dd| dd.get_temp::<Option<usize>>(drag_id)), gr.interact_pointer_pos()) {
+            let b = &p.cb[i];
+            let fx = ((pt.x - d.left()) / d.width()).clamp(0.0, 1.0);
+            setter.set_parameter(&b.freq, 20.0 * (1000.0f32).powf(fx));
+            if has_gain(b.kind.value()) {
+                let g = db.0 + (db.1 - db.0) * ((d.bottom() - pt.y) / d.height()).clamp(0.0, 1.0);
+                setter.set_parameter(&b.gain, g.clamp(-36.0, 36.0));
+            } else {
+                let dy = gr.drag_delta().y;
+                setter.set_parameter(&b.q, (b.q.value() * (-dy * 0.02).exp()).clamp(0.15, 16.0));
+            }
+        }
+    }
+    if gr.drag_stopped() {
+        if let Some(Some(i)) = ui.data(|dd| dd.get_temp::<Option<usize>>(drag_id)) {
+            let b = &p.cb[i];
+            setter.end_set_parameter(&b.freq);
+            setter.end_set_parameter(&b.gain);
+            setter.end_set_parameter(&b.q);
+        }
+        ui.data_mut(|dd| dd.insert_temp(drag_id, None::<usize>));
+    }
+    let remove = gr.double_clicked() || gr.secondary_clicked();
+    if remove {
+        if let Some(i) = gr.interact_pointer_pos().and_then(&hit) {
+            set_b(setter, &p.cb[i].on, false);
+        }
+    } else if gr.clicked() {
+        if let Some(pt) = gr.interact_pointer_pos() {
+            if let Some(i) = hit(pt) {
+                sel = i;
+            } else if let Some(i) = (0..CBANDS).find(|&i| !p.cb[i].on.value()) {
+                let b = &p.cb[i];
+                let fx = ((pt.x - d.left()) / d.width()).clamp(0.0, 1.0);
+                let g = db.0 + (db.1 - db.0) * ((d.bottom() - pt.y) / d.height()).clamp(0.0, 1.0);
+                setter.begin_set_parameter(&b.freq);
+                setter.set_parameter(&b.freq, 20.0 * (1000.0f32).powf(fx));
+                setter.end_set_parameter(&b.freq);
+                setter.begin_set_parameter(&b.gain);
+                setter.set_parameter(&b.gain, g.clamp(-36.0, 36.0));
+                setter.end_set_parameter(&b.gain);
+                setter.begin_set_parameter(&b.q);
+                setter.set_parameter(&b.q, 1.0);
+                setter.end_set_parameter(&b.q);
+                setter.begin_set_parameter(&b.kind);
+                setter.set_parameter(&b.kind, BandKind::Bell);
+                setter.end_set_parameter(&b.kind);
+                set_b(setter, &b.on, true);
+                sel = i;
+            }
+        }
+    }
+    ui.data_mut(|dd| dd.insert_temp(sel_id, sel));
+    // drawing
+    let painter = ui.painter().with_clip_rect(d.expand(6.0));
+    let mut any = false;
+    for i in 0..CBANDS {
+        if !p.cb[i].on.value() {
+            continue;
+        }
+        any = true;
+        let c = dot(i);
+        let is_sel = i == sel;
+        painter.line_segment([Pos2::new(c.x, d.top()), Pos2::new(c.x, d.bottom())], Stroke::new(1.0_f32, if is_sel { Color32::from_rgb(60, 60, 60) } else { Color32::from_rgb(30, 30, 30) }));
+        if is_sel {
+            painter.circle_filled(c, 6.0, WHITE);
+        } else {
+            painter.circle_filled(c, 5.0, Color32::BLACK);
+            painter.circle_stroke(c, 5.0, Stroke::new(1.5_f32, WHITE));
+        }
+        painter.text(c + Vec2::new(0.0, -11.0), Align2::CENTER_CENTER, format!("{}", i + 1), mono(8.5), if is_sel { WHITE } else { DIM });
+    }
+    if !any {
+        painter.text(d.center(), Align2::CENTER_CENTER, "CLICK HERE TO ADD POINTS", mono(10.0), DIM);
+    } else {
+        // type of the selected point
+        let b = &p.cb[sel];
+        if b.on.value() {
+            enum_combo(ui, setter, &b.kind, "cb_kind", Rect::from_min_size(Pos2::new(d.right() - 98.0, d.top() + 4.0), Vec2::new(94.0, 20.0)));
+            if pill_tip(ui, Rect::from_min_size(Pos2::new(d.right() - 98.0, d.top() + 26.0), Vec2::new(94.0, 18.0)), "REMOVE", false, "Remove the selected point") {
+                set_b(setter, &b.on, false);
+            }
+        }
+    }
+}
+
 fn filter_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, r: Rect) {
     panel(ui, r, "03", "FILTER");
     on_pill(ui, setter, &p.fl_on, Rect::from_min_size(Pos2::new(r.right() - 56.0, r.top() + 6.0), Vec2::new(44.0, 22.0)), "Filter on/off");
     enum_combo(ui, setter, &p.fl_type, "filter_type", Rect::from_min_size(Pos2::new(r.left() + 100.0, r.top() + 5.0), Vec2::new(140.0, 24.0)));
     let d = Rect::from_min_size(Pos2::new(r.left() + 12.0, r.top() + 36.0), Vec2::new(r.width() - 24.0, 150.0));
+    let is_custom = p.fl_type.value() == FilterType::Custom;
     // drag in the graph: left / right = cutoff, up / down = resonance
-    {
+    if !is_custom {
         let gr = ui.interact(d, egui::Id::new("filter_graph"), Sense::click_and_drag()).on_hover_text("Drag: left / right = cutoff, up / down = resonance");
         if gr.drag_started() {
             setter.begin_set_parameter(&p.cutoff);
@@ -1043,7 +1183,7 @@ fn filter_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, r: Rect) {
     for f in [100.0f32, 1000.0, 10000.0] {
         painter.line_segment([Pos2::new(xf(f), d.top()), Pos2::new(xf(f), d.bottom())], Stroke::new(1.0_f32, Color32::from_rgb(24, 24, 24)));
     }
-    let (dbmin, dbmax) = (-48.0f32, 30.0f32);
+    let (dbmin, dbmax) = if is_custom { (-36.0f32, 36.0f32) } else { (-48.0f32, 30.0f32) };
     let yd = |db: f32| d.bottom() - d.height() * ((db.clamp(dbmin, dbmax) - dbmin) / (dbmax - dbmin));
     painter.line_segment([Pos2::new(d.left(), yd(0.0)), Pos2::new(d.right(), yd(0.0))], Stroke::new(1.0_f32, Color32::from_rgb(30, 30, 30)));
     let cut = p.cutoff.value();
@@ -1054,27 +1194,46 @@ fn filter_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, r: Rect) {
     let mut pts = Vec::with_capacity(n + 1);
     for i in 0..=n {
         let f = lo * (hi / lo).powf(i as f32 / n as f32);
-        let mag = if on { filter_response(ty, res, cut, f) } else { 1.0 };
+        let mag = if !on { 1.0 } else if is_custom { custom_response(p, f) } else { filter_response(ty, res, cut, f) };
         pts.push(Pos2::new(xf(f), yd(20.0 * mag.max(1e-6).log10())));
     }
     fill_under(&painter, &pts, d.bottom(), Color32::from_rgb(30, 30, 30));
     painter.add(egui::Shape::line(pts, PathStroke::new(1.8_f32, if on { WHITE } else { DIM })));
-    painter.line_segment([Pos2::new(xf(cut), d.top()), Pos2::new(xf(cut), d.bottom())], Stroke::new(1.0_f32, Color32::from_rgb(70, 70, 70)));
+    if is_custom {
+        custom_points(ui, setter, p, d, &xf, &yd, (dbmin, dbmax));
+    } else {
+        painter.line_segment([Pos2::new(xf(cut), d.top()), Pos2::new(xf(cut), d.bottom())], Stroke::new(1.0_f32, Color32::from_rgb(70, 70, 70)));
+    }
     for (f, t) in [(100.0, "100"), (1000.0, "1k"), (10000.0, "10k")] {
         painter.text(Pos2::new(xf(f) + 2.0, d.bottom() - 7.0), Align2::LEFT_CENTER, t, mono(8.5), Color32::from_rgb(90, 90, 90));
     }
     let y = r.top() + 194.0;
     let w = 66.0;
     let x0 = r.left() + 10.0;
-    mdst(ModDst::Cutoff);
-    knob_s(ui, setter, &p.cutoff, "CUTOFF", cell(x0, y, w), "Filter cutoff frequency", false);
-    mdst(ModDst::Res);
-    knob_s(ui, setter, &p.res, "RES", cell(x0 + w, y, w), "Resonance (for Peak / shelves: boost in dB, comb: feedback)", false);
-    mdst(ModDst::Drive);
-    knob_s(ui, setter, &p.drive, "DRIVE", cell(x0 + w * 2.0, y, w), "Pre-filter saturation", false);
-    knob_s(ui, setter, &p.keytrack, "KEY", cell(x0 + w * 3.0, y, w), "Key tracking: cutoff follows the played note", false);
-    mdst(ModDst::FilterMix);
-    knob_s(ui, setter, &p.fl_mix, "MIX", cell(x0 + w * 4.0, y, w), "Dry / filtered mix", false);
+    if is_custom {
+        let sel = ui.data(|dd| dd.get_temp::<usize>(egui::Id::new("cb_sel"))).unwrap_or(0).min(CBANDS - 1);
+        let b = &p.cb[sel];
+        let w = 59.0;
+        mdst(ModDst::Cutoff);
+        knob_s(ui, setter, &b.freq, "FREQ", cell(x0 - 2.0, y, w), "Frequency of the selected point. Drop an LFO / envelope here to move ALL points together", false);
+        knob_s(ui, setter, &b.gain, "GAIN", cell(x0 - 2.0 + w, y, w), "Gain of the selected point (bell / shelves)", true);
+        knob_s(ui, setter, &b.q, "WIDTH", cell(x0 - 2.0 + w * 2.0, y, w), "Q / width of the selected point (also mouse wheel over a point)", false);
+        mdst(ModDst::Drive);
+        knob_s(ui, setter, &p.drive, "DRIVE", cell(x0 - 2.0 + w * 3.0, y, w), "Pre-filter saturation", false);
+        knob_s(ui, setter, &p.keytrack, "KEY", cell(x0 - 2.0 + w * 4.0, y, w), "Key tracking: all points move with the played note", false);
+        mdst(ModDst::FilterMix);
+        knob_s(ui, setter, &p.fl_mix, "MIX", cell(x0 - 2.0 + w * 5.0, y, w), "Dry / filtered mix", false);
+    } else {
+        mdst(ModDst::Cutoff);
+        knob_s(ui, setter, &p.cutoff, "CUTOFF", cell(x0, y, w), "Filter cutoff frequency", false);
+        mdst(ModDst::Res);
+        knob_s(ui, setter, &p.res, "RES", cell(x0 + w, y, w), "Resonance (for Peak / shelves: boost in dB, comb: feedback)", false);
+        mdst(ModDst::Drive);
+        knob_s(ui, setter, &p.drive, "DRIVE", cell(x0 + w * 2.0, y, w), "Pre-filter saturation", false);
+        knob_s(ui, setter, &p.keytrack, "KEY", cell(x0 + w * 3.0, y, w), "Key tracking: cutoff follows the played note", false);
+        mdst(ModDst::FilterMix);
+        knob_s(ui, setter, &p.fl_mix, "MIX", cell(x0 + w * 4.0, y, w), "Dry / filtered mix", false);
+    }
     let ry = r.top() + 274.0;
     ui.painter().text(Pos2::new(r.left() + 14.0, ry + 11.0), Align2::LEFT_CENTER, "ROUTE", mono(10.0), DIM);
     let items: [(&str, &BoolParam, &str); 4] = [
@@ -1088,7 +1247,7 @@ fn filter_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, r: Rect) {
             set_b(setter, bp, !bp.value());
         }
     }
-    ui.painter().text(Pos2::new(r.left() + 14.0, r.top() + 322.0), Align2::LEFT_CENTER, "Drag LFOs / envelopes onto CUTOFF to make it move", mono(9.5), DIM);
+    ui.painter().text(Pos2::new(r.left() + 14.0, r.top() + 322.0), Align2::LEFT_CENTER, if is_custom { "Click=add | drag | wheel=width | 2x click=del" } else { "Drag LFOs / envelopes onto CUTOFF to make it move" }, mono(9.5), DIM);
 }
 
 // ===================================================================== sub + noise

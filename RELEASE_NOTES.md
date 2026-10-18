@@ -4,6 +4,7 @@ Downloads: `NyashkSynth-Linux-VST3.zip`, `NyashkSynth-Windows-VST3.zip` (unzip a
 
 **Known limits:** drag and drop depends on the host passing file drops to the plugin window (works in the standalone app; some DAWs on Linux do not forward it, use BROWSE / FILES... there). The Windows build is tested under Wine only; macOS builds come from CI.
 
+- **Custom point filter**: choose "Custom (points)" as the filter type, click the graph to add up to 8 points, drag them (frequency + gain), mouse wheel = width, double-click = remove. Point types: Bell, Low/High Shelf, High/Low Pass, Notch, Band Pass. KEY and the CUTOFF modulation destination move all points together. 3 example presets.
 - Wavetable editor rewritten: frame strip with range selection, APPLY TO (frame / selection / all), strength, fade, soft edges, vary and drift, drawing on many frames at once, MORPH, redo, auto-fit wave view (no more clipped waves), SAVE TO LIBRARY.
 - RANDOM builds fuller patches (3-10 matrix routes with varied sources/targets, all LFOs, envelope 3, macros, FX) and resets arp/FX first.
 - Master level shows its value in dB.

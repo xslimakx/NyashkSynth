@@ -171,11 +171,11 @@ fn op_coef(f: f32, fs: f32) -> f32 {
 
 #[derive(Clone, Copy)]
 pub struct BqCoef {
-    b0: f32,
-    b1: f32,
-    b2: f32,
-    a1: f32,
-    a2: f32,
+    pub b0: f32,
+    pub b1: f32,
+    pub b2: f32,
+    pub a1: f32,
+    pub a2: f32,
 }
 
 impl BqCoef {

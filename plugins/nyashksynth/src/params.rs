@@ -148,6 +148,59 @@ pub enum FilterType {
     PhaserF,
     #[name = "Formant"]
     Formant,
+    #[name = "Custom (points)"]
+    Custom,
+}
+
+/// Kind of one point of the custom filter.
+#[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
+pub enum BandKind {
+    #[name = "Bell"]
+    Bell,
+    #[name = "Low Shelf"]
+    LowShelf,
+    #[name = "High Shelf"]
+    HighShelf,
+    #[name = "High Pass"]
+    HighPass,
+    #[name = "Low Pass"]
+    LowPass,
+    #[name = "Notch"]
+    Notch,
+    #[name = "Band Pass"]
+    BandPass,
+}
+
+/// One draggable point of the custom filter.
+#[derive(Params)]
+pub struct CBand {
+    #[id = "cbon"]
+    pub on: BoolParam,
+    #[id = "cbty"]
+    pub kind: EnumParam<BandKind>,
+    #[id = "cbfr"]
+    pub freq: FloatParam,
+    #[id = "cbgn"]
+    pub gain: FloatParam,
+    #[id = "cbq"]
+    pub q: FloatParam,
+}
+
+pub const CBANDS: usize = 8;
+
+impl CBand {
+    fn new(i: usize) -> Self {
+        let defaults = [60.0f32, 150.0, 400.0, 1000.0, 2500.0, 6000.0, 12000.0, 18000.0];
+        Self {
+            on: BoolParam::new("Point On", false),
+            kind: EnumParam::new("Point Type", BandKind::Bell),
+            freq: FloatParam::new("Point Freq", defaults[i % 8], FloatRange::Skewed { min: 20.0, max: 20000.0, factor: FloatRange::skew_factor(-2.2) })
+                .with_unit(" Hz")
+                .with_value_to_string(formatters::v2s_f32_rounded(0)),
+            gain: db_param("Point Gain", 0.0, -36.0, 36.0),
+            q: FloatParam::new("Point Q", 1.0, FloatRange::Skewed { min: 0.15, max: 16.0, factor: FloatRange::skew_factor(-1.0) }).with_value_to_string(formatters::v2s_f32_rounded(2)),
+        }
+    }
 }
 
 #[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
@@ -790,6 +843,8 @@ pub struct SynthParams {
     pub lfo: [LfoParams; 4],
     #[nested(array, group = "Mod")]
     pub slot: [ModSlot; MOD_SLOTS],
+    #[nested(array, group = "Filter Points")]
+    pub cb: [CBand; CBANDS],
 
     #[id = "mc1"]
     pub macro1: FloatParam,
@@ -1094,6 +1149,7 @@ impl Default for SynthParams {
             e3: EnvParams::new(1.0, 300.0, 0.0, 200.0),
             lfo: [LfoParams::new(), LfoParams::new(), LfoParams::new(), LfoParams::new()],
             slot: std::array::from_fn(|_| ModSlot::new()),
+            cb: std::array::from_fn(CBand::new),
             macro1: unit_param("Macro 1", 0.0),
             macro2: unit_param("Macro 2", 0.0),
             macro3: unit_param("Macro 3", 0.0),

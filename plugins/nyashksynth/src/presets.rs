@@ -143,6 +143,42 @@ pub const PRESETS: &[Preset] = &[
         ],
     },
     Preset {
+        name: "Point Filter: Vowel",
+        cat: "Pad",
+        values: &[
+            ("a_pos", 0.3), ("a_un", 3.0), ("a_dt", 0.15), ("e1_a", 30.0), ("e1_r", 500.0),
+            ("fl_ty", 16.0), ("fl_res", 0.0),
+            ("cbon_1", 1.0), ("cbty_1", 3.0), ("cbfr_1", 120.0), ("cbq_1", 0.8),
+            ("cbon_2", 1.0), ("cbty_2", 0.0), ("cbfr_2", 700.0), ("cbgn_2", 14.0), ("cbq_2", 4.0),
+            ("cbon_3", 1.0), ("cbty_3", 0.0), ("cbfr_3", 1200.0), ("cbgn_3", 10.0), ("cbq_3", 5.0),
+            ("cbon_4", 1.0), ("cbty_4", 0.0), ("cbfr_4", 2600.0), ("cbgn_4", 8.0), ("cbq_4", 6.0),
+            ("cbon_5", 1.0), ("cbty_5", 4.0), ("cbfr_5", 7000.0), ("cbq_5", 0.8),
+        ],
+    },
+    Preset {
+        name: "Point Filter: Telephone",
+        cat: "Lead",
+        values: &[
+            ("a_pos", 0.6), ("a_wm", 0.0), ("e1_a", 3.0), ("e1_r", 200.0),
+            ("fl_ty", 16.0), ("fl_res", 0.0),
+            ("cbon_1", 1.0), ("cbty_1", 3.0), ("cbfr_1", 450.0), ("cbq_1", 1.6),
+            ("cbon_2", 1.0), ("cbty_2", 4.0), ("cbfr_2", 3200.0), ("cbq_2", 1.6),
+            ("cbon_3", 1.0), ("cbty_3", 0.0), ("cbfr_3", 1500.0), ("cbgn_3", 9.0), ("cbq_3", 2.0),
+        ],
+    },
+    Preset {
+        name: "Point Filter: Scooped Pad",
+        cat: "Pad",
+        values: &[
+            ("a_pos", 0.2), ("a_un", 5.0), ("a_dt", 0.25), ("e1_a", 400.0), ("e1_r", 1200.0),
+            ("fl_ty", 16.0), ("fl_res", 0.0),
+            ("cbon_1", 1.0), ("cbty_1", 1.0), ("cbfr_1", 180.0), ("cbgn_1", 7.0),
+            ("cbon_2", 1.0), ("cbty_2", 0.0), ("cbfr_2", 900.0), ("cbgn_2", -14.0), ("cbq_2", 0.7),
+            ("cbon_3", 1.0), ("cbty_3", 2.0), ("cbfr_3", 6500.0), ("cbgn_3", 8.0),
+            ("cbon_4", 1.0), ("cbty_4", 5.0), ("cbfr_4", 3000.0), ("cbq_4", 3.0),
+        ],
+    },
+    Preset {
         name: "Dream Keys",
         cat: "Keys",
         values: &[

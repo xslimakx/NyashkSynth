@@ -203,3 +203,37 @@ fn stolen_voice_and_fast_release_do_not_click() {
     let tail = max_step(&c);
     assert!(tail < steady * 2.5 + 0.02, "release step {tail} vs steady {steady}");
 }
+
+fn rms(x: &[f32]) -> f32 {
+    (x.iter().map(|v| v * v).sum::<f32>() / x.len() as f32).sqrt()
+}
+
+#[test]
+fn custom_point_filter_shapes_the_sound() {
+    use nyashksynth::engine::CbP;
+    use nyashksynth::params::{BandKind, FilterType};
+    let off = CbP { on: false, kind: BandKind::Bell, freq: 1000.0, gain: 0.0, q: 1.0 };
+    let play = |bands: [CbP; 8], note: u8| {
+        let mut e = engine();
+        e.patch.sub_on = false;
+        e.patch.fl_on = true;
+        e.patch.fl_type = FilterType::Custom;
+        e.patch.cb = bands;
+        e.note_on(note, 1.0);
+        let v = render_vec(&mut e, 48000 / 2);
+        assert!(v.iter().all(|x| x.is_finite() && x.abs() < 20.0));
+        rms(&v[v.len() / 2..])
+    };
+    let flat = play([off; 8], 60);
+    // a low-pass point at 300 Hz must darken a bright note (C5)
+    let mut b = [off; 8];
+    b[0] = CbP { on: true, kind: BandKind::LowPass, freq: 300.0, gain: 0.0, q: 1.0 };
+    let dark = play(b, 84);
+    let bright = play([off; 8], 84);
+    assert!(dark < bright * 0.5, "low-pass point: {dark} vs {bright}");
+    // a +12 dB bell at the note frequency raises the level
+    let mut b = [off; 8];
+    b[2] = CbP { on: true, kind: BandKind::Bell, freq: 261.6, gain: 12.0, q: 1.0 };
+    let boosted = play(b, 60);
+    assert!(boosted > flat * 1.5, "bell boost: {boosted} vs {flat}");
+}

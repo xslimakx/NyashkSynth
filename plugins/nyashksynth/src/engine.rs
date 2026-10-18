@@ -2,6 +2,7 @@
 //! LFOs and a modulation matrix.
 
 use crate::arp::{Arp, ArpP};
+use crate::fx::BqCoef;
 use crate::params::*;
 use crate::sample::{LfoCurve, NSample};
 use crate::shared::Shared;
@@ -77,6 +78,29 @@ pub struct LfoP {
     pub phase0: f32,
 }
 
+#[derive(Clone, Copy)]
+pub struct CbP {
+    pub on: bool,
+    pub kind: BandKind,
+    pub freq: f32,
+    pub gain: f32,
+    pub q: f32,
+}
+
+/// Biquad of one custom-filter point (`shift` = frequency ratio from modulation / key tracking).
+pub fn cband_coef(b: &CbP, shift: f32, fs: f32) -> BqCoef {
+    let f = (b.freq * shift).clamp(20.0, 0.45 * fs);
+    match b.kind {
+        BandKind::Bell => BqCoef::peaking(f, b.q, b.gain, fs),
+        BandKind::LowShelf => BqCoef::low_shelf(f, b.gain, fs),
+        BandKind::HighShelf => BqCoef::high_shelf(f, b.gain, fs),
+        BandKind::HighPass => BqCoef::highpass(f, b.q.max(0.3) * 0.7071, fs),
+        BandKind::LowPass => BqCoef::lowpass(f, b.q.max(0.3) * 0.7071, fs),
+        BandKind::Notch => BqCoef::notch(f, b.q, fs),
+        BandKind::BandPass => BqCoef::bandpass(f, b.q, fs),
+    }
+}
+
 #[derive(Clone)]
 pub struct Patch {
     pub osc: [OscP; 2],
@@ -96,6 +120,7 @@ pub struct Patch {
     pub sample: Option<Arc<NSample>>,
     pub fl_on: bool,
     pub fl_type: FilterType,
+    pub cb: [CbP; CBANDS],
     pub cutoff: f32,
     pub res: f32,
     pub drive: f32,
@@ -197,6 +222,7 @@ impl Patch {
             sample,
             fl_on: p.fl_on.value(),
             fl_type: p.fl_type.value(),
+            cb: std::array::from_fn(|i| CbP { on: p.cb[i].on.value(), kind: p.cb[i].kind.value(), freq: p.cb[i].freq.value(), gain: p.cb[i].gain.value(), q: p.cb[i].q.value() }),
             cutoff: p.cutoff.value(),
             res: p.res.value(),
             drive: p.drive.value(),
@@ -527,13 +553,14 @@ struct Fst {
     pha: [[f32; 12]; 2],     // phaser all-pass states
     phy: [f32; 2],           // phaser feedback
     frm: [[[f32; 2]; 3]; 2], // formant bandpasses
+    cus: [[[f32; 2]; CBANDS]; 2], // custom points (TDF2)
     comb: [Vec<f32>; 2],
     cw: usize,
 }
 
 impl Fst {
     fn new(comb_len: usize) -> Self {
-        Self { svf: [[[0.0; 2]; 2]; 2], op: [0.0; 2], lad: [[0.0; 4]; 2], pha: [[0.0; 12]; 2], phy: [0.0; 2], frm: [[[0.0; 2]; 3]; 2], comb: [vec![0.0; comb_len], vec![0.0; comb_len]], cw: 0 }
+        Self { svf: [[[0.0; 2]; 2]; 2], op: [0.0; 2], lad: [[0.0; 4]; 2], pha: [[0.0; 12]; 2], phy: [0.0; 2], frm: [[[0.0; 2]; 3]; 2], cus: [[[0.0; 2]; CBANDS]; 2], comb: [vec![0.0; comb_len], vec![0.0; comb_len]], cw: 0 }
     }
     fn clear(&mut self) {
         self.svf = [[[0.0; 2]; 2]; 2];
@@ -542,6 +569,7 @@ impl Fst {
         self.pha = [[0.0; 12]; 2];
         self.phy = [0.0; 2];
         self.frm = [[[0.0; 2]; 3]; 2];
+        self.cus = [[[0.0; 2]; CBANDS]; 2];
         for c in self.comb.iter_mut() {
             c.iter_mut().for_each(|v| *v = 0.0);
         }
@@ -679,6 +707,8 @@ struct Fc {
     pn: usize,
     pfb: f32,
     form: [([f32; 3], f32, f32); 3], // (a1,a2,a3), k, weight
+    cn: usize,
+    cc: [BqCoef; CBANDS],
 }
 
 fn svf_coefs(g: f32, k: f32) -> [f32; 3] {
@@ -708,6 +738,8 @@ fn filter_coefs(ty: FilterType, fc: f32, res: f32, fs: f32, comb_len: usize) -> 
         pn: 6,
         pfb: 0.0,
         form: [([0.0; 3], 0.0, 0.0); 3],
+        cn: 0,
+        cc: [BqCoef::FLAT; CBANDS],
     };
     match ty {
         FilterType::Ladder => {
@@ -738,6 +770,7 @@ fn filter_coefs(ty: FilterType, fc: f32, res: f32, fs: f32, comb_len: usize) -> 
             }
             f.pfb = res * 0.9;
         }
+        FilterType::Custom => {}
         FilterType::Formant => {
             const V: [[f32; 3]; 5] = [[800.0, 1200.0, 2500.0], [400.0, 2000.0, 2600.0], [300.0, 2300.0, 3000.0], [500.0, 900.0, 2500.0], [350.0, 600.0, 2400.0]];
             let t = ((fc / 20.0).ln() / 1000f32.ln()).clamp(0.0, 0.9999) * 4.0;
@@ -841,6 +874,18 @@ fn run_filter(f: &Fc, st: &mut Fst, ch: usize, x: f32) -> f32 {
             }
             st.phy[ch] = s;
             (x + s) * 0.5
+        }
+        FilterType::Custom => {
+            let mut y = x;
+            for i in 0..f.cn {
+                let c = &f.cc[i];
+                let s = &mut st.cus[ch][i];
+                let o = c.b0 * y + s[0];
+                s[0] = c.b1 * y - c.a1 * o + s[1];
+                s[1] = c.b2 * y - c.a2 * o;
+                y = o;
+            }
+            y.clamp(-16.0, 16.0)
         }
         FilterType::Formant => {
             let mut y = 0.0;
@@ -1017,7 +1062,14 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
     let fl_mix = (p.fl_mix + md[22]).clamp(0.0, 1.0);
     let fc = (p.cutoff * 2f32.powf(md[9] * 6.0 + p.keytrack * (v.note as f32 - 60.0) / 12.0)).clamp(20.0, (0.45 * fs).min(20000.0));
     let comb_len = v.fl.comb[0].len();
-    let fco = filter_coefs(p.fl_type, fc, res, fs, comb_len);
+    let mut fco = filter_coefs(p.fl_type, fc, res, fs, comb_len);
+    if p.fl_type == FilterType::Custom {
+        let shift = 2f32.powf(md[9] * 6.0 + p.keytrack * (v.note as f32 - 60.0) / 12.0);
+        for b in p.cb.iter().filter(|b| b.on) {
+            fco.cc[fco.cn] = cband_coef(b, shift, fs);
+            fco.cn += 1;
+        }
+    }
     let vol = (1.0 + md[14]).clamp(0.0, 2.0);
     let vg = (0.25 + 0.75 * v.vel) * vol;
     let gain_drive = 1.0 + drive * 8.0;
