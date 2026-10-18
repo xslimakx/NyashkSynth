@@ -199,7 +199,7 @@ pub fn fx_patch_from(p: &SynthParams, bpm: f32) -> FxPatch {
 impl Plugin for NyashkSynth {
     const NAME: &'static str = "NyashkSynth";
     const VENDOR: &'static str = "Nyashk";
-    const URL: &'static str = "https://github.com/xslimakx/nyashk-plugins";
+    const URL: &'static str = "https://nyashk.com";
     const EMAIL: &'static str = "";
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 

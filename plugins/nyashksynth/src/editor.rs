@@ -412,6 +412,7 @@ fn header(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, s
     }
     painter.text(Pos2::new(o.x + 962.0, o.y + 27.0), Align2::LEFT_CENTER, "MASTER", mono(10.0), DIM);
     h_slider(ui, setter, &p.master, rect(1022.0, 20.0, 64.0, 14.0), "master_slider", false, "Master volume");
+    painter.text(Pos2::new(o.x + 1054.0, o.y + 42.0), Align2::CENTER_CENTER, format!("{:.1} dB", p.master.value()), mono(9.0), DIM);
 }
 
 // ===================================================================== overlays
@@ -436,6 +437,9 @@ fn overlays(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared,
                 close = true;
             }
             if !status.is_empty() {
+                if status.starts_with("saved wavetable") {
+                    st.rescan();
+                }
                 st.say(now, status);
             }
             if close {
@@ -1564,6 +1568,10 @@ fn randomize(setter: &ParamSetter, p: &SynthParams, shared: &Shared, seed: u64) 
     for _ in 0..4 {
         r.next();
     }
+    // start from a clean Init so nothing from the previous sound (arp, effects, mod routes...) lingers
+    let master = p.master.value();
+    presets::apply_values(setter, p, &[]);
+    set_f(setter, &p.master, master);
     for o in 0..2 {
         let op = osc(p, o);
         let on = o == 0 || r.chance(0.55);
@@ -1583,6 +1591,18 @@ fn randomize(setter: &ParamSetter, p: &SynthParams, shared: &Shared, seed: u64) 
         setter.begin_set_parameter(&op.oct);
         setter.set_parameter(&op.oct, if o == 1 && r.chance(0.4) { -1 } else { 0 });
         setter.end_set_parameter(&op.oct);
+        let semis = [0, 0, 0, 0, 7, 12, 5, 3, -5];
+        setter.begin_set_parameter(&op.semi);
+        setter.set_parameter(&op.semi, if o == 1 && r.chance(0.35) { semis[r.idx(semis.len())] } else { 0 });
+        setter.end_set_parameter(&op.semi);
+        set_norm(setter, &op.fine, r.range(0.45, 0.55));
+        rnd_enum(setter, &op.uni_mode, r.idx(4));
+        set_norm(setter, &op.spread, r.range(0.3, 1.0));
+        set_norm(setter, &op.pan, if o == 1 { r.range(0.4, 0.6) } else { 0.5 });
+        if r.chance(0.3) {
+            rnd_enum(setter, &op.warp2_mode, 1 + r.idx(6));
+            set_norm(setter, &op.warp2, r.range(0.05, 0.6));
+        }
     }
     set_b(setter, &p.sub_on, r.chance(0.3));
     set_b(setter, &p.fl_on, true);
@@ -1597,27 +1617,98 @@ fn randomize(setter: &ParamSetter, p: &SynthParams, shared: &Shared, seed: u64) 
         set_norm(setter, &e.release, r.range(0.3, 0.75));
     }
     set_norm(setter, &p.e2.sustain, r.range(0.0, 0.5));
+    // ---- envelope 3, macros, sub and noise get a say as well
+    {
+        let e = &p.e3;
+        set_norm(setter, &e.attack, r.range(0.0, 0.5) * r.range(0.2, 1.0));
+        set_norm(setter, &e.decay, r.range(0.3, 0.85));
+        set_norm(setter, &e.sustain, r.range(0.0, 0.9));
+        set_norm(setter, &e.release, r.range(0.3, 0.8));
+    }
+    for m in [&p.macro1, &p.macro2, &p.macro3, &p.macro4] {
+        set_norm(setter, m, r.range(0.0, 1.0));
+    }
+    set_norm(setter, &p.keytrack, r.range(0.0, 0.8));
+    rnd_enum(setter, &p.sub_wave, r.idx(4));
+    set_norm(setter, &p.sub_level, r.range(0.2, 0.6));
+    setter.begin_set_parameter(&p.sub_oct);
+    setter.set_parameter(&p.sub_oct, if r.chance(0.7) { -1 } else { -2 });
+    setter.end_set_parameter(&p.sub_oct);
+    let noise = r.chance(0.2);
+    set_norm(setter, &p.noise_level, if noise { r.range(0.05, 0.3) } else { 0.0 });
+    rnd_enum(setter, &p.noise_type, r.idx(5));
+
+    // ---- four LFOs: every shape (except the drawn one), speed, delay, fade-in and sync
+    let shapes = [0usize, 1, 2, 3, 4, 5, 6, 8, 9];
+    for l in p.lfo.iter() {
+        rnd_enum(setter, &l.shape, shapes[r.idx(shapes.len())]);
+        set_norm(setter, &l.rate, r.range(0.1, 0.85));
+        let sync = r.chance(0.35);
+        set_b(setter, &l.sync, sync);
+        rnd_enum(setter, &l.div, r.idx(10));
+        set_b(setter, &l.trig, r.chance(0.3));
+        set_norm(setter, &l.rise, if r.chance(0.35) { r.range(0.1, 0.6) } else { 0.0 });
+        set_norm(setter, &l.smooth, if r.chance(0.3) { r.range(0.1, 0.5) } else { 0.0 });
+        set_norm(setter, &l.delay, if r.chance(0.2) { r.range(0.1, 0.4) } else { 0.0 });
+        set_norm(setter, &l.phase, r.next());
+    }
+
+    // ---- modulation matrix: a random number of routes with random sources and targets
     for sl in p.slot.iter() {
         set_e(setter, &sl.src, ModSrc::None);
         set_e(setter, &sl.dst, ModDst::None);
         set_f(setter, &sl.amount, 0.0);
     }
-    set_e(setter, &p.slot[0].src, ModSrc::Env2);
-    set_e(setter, &p.slot[0].dst, ModDst::Cutoff);
-    set_f(setter, &p.slot[0].amount, r.range(0.2, 0.7));
-    let dsts = [ModDst::APos, ModDst::Cutoff, ModDst::AWarp, ModDst::Detune];
-    set_e(setter, &p.lfo[0].shape, <LfoShape as Enum>::from_index(r.idx(4)));
-    set_norm(setter, &p.lfo[0].rate, r.range(0.2, 0.6));
-    set_e(setter, &p.slot[1].src, ModSrc::Lfo1);
-    set_e(setter, &p.slot[1].dst, dsts[r.idx(dsts.len())]);
-    set_f(setter, &p.slot[1].amount, r.range(0.15, 0.5));
+    use ModDst as D;
+    use ModSrc as S;
+    let srcs = [S::Env1, S::Env2, S::Env3, S::Lfo1, S::Lfo2, S::Lfo3, S::Lfo4, S::Vel, S::Key, S::ModWheel, S::Random, S::Macro1, S::Macro2, S::Macro3, S::Macro4];
+    let dsts = [
+        D::APos, D::BPos, D::AWarp, D::BWarp, D::AWarp2, D::BWarp2, D::Cutoff, D::Cutoff, D::Res, D::Drive, D::Detune, D::APan, D::BPan, D::ABlend, D::BBlend, D::FilterMix, D::FxHyperMix, D::FxDistDrive,
+        D::FxChorusMix, D::FxFlangerDepth, D::FxPhaserFreq, D::FxDelayMix, D::FxReverbMix, D::FxFilterCut, D::APitch, D::BPitch,
+    ];
+    let routes = 3 + r.idx(8); // 3..10
+    let mut used: Vec<(usize, usize)> = Vec::new();
+    for k in 0..routes.min(p.slot.len()) {
+        let (mut si, mut di) = (r.idx(srcs.len()), r.idx(dsts.len()));
+        if k == 0 && r.chance(0.7) {
+            si = if r.chance(0.5) { 1 } else { r.idx(3) }; // usually an envelope on the filter
+            di = 6;
+        }
+        let pitch = matches!(dsts[di], D::APitch | D::BPitch);
+        if used.contains(&(si, di)) {
+            continue;
+        }
+        used.push((si, di));
+        let sign = if r.chance(0.3) { -1.0 } else { 1.0 };
+        let amt = if pitch { r.range(0.02, 0.12) } else { r.range(0.12, 0.65) };
+        set_e(setter, &p.slot[k].src, srcs[si]);
+        set_e(setter, &p.slot[k].dst, dsts[di]);
+        set_f(setter, &p.slot[k].amount, sign * amt);
+    }
+
+    // the arpeggiator is part of the sound too: a dice roll must not inherit the previous one
+    set_b(setter, &p.arp_on, r.chance(0.12));
+    set_norm(setter, &p.glide, 0.0);
+
+    // ---- effects: reset, then switch a random handful on with random amounts
+    for b in [&p.hy_on, &p.ds_on, &p.fg_on, &p.ph_on, &p.ch_on, &p.dl_on, &p.cp_on, &p.rv_on] {
+        set_b(setter, b, false);
+    }
     set_b(setter, &p.rv_on, r.chance(0.7));
-    set_norm(setter, &p.rv_mix, r.range(0.1, 0.4));
+    set_norm(setter, &p.rv_mix, r.range(0.1, 0.45));
     set_b(setter, &p.dl_on, r.chance(0.5));
-    set_norm(setter, &p.dl_mix, r.range(0.1, 0.35));
+    set_norm(setter, &p.dl_mix, r.range(0.1, 0.4));
     set_b(setter, &p.ch_on, r.chance(0.4));
+    set_norm(setter, &p.ch_mix, r.range(0.15, 0.5));
     set_b(setter, &p.hy_on, r.chance(0.25));
+    set_norm(setter, &p.hy_mix, r.range(0.1, 0.5));
     set_b(setter, &p.ds_on, r.chance(0.2));
+    set_norm(setter, &p.ds_mix, r.range(0.15, 0.5));
+    set_b(setter, &p.fg_on, r.chance(0.15));
+    set_norm(setter, &p.fg_mix, r.range(0.15, 0.5));
+    set_b(setter, &p.ph_on, r.chance(0.18));
+    set_norm(setter, &p.ph_mix, r.range(0.15, 0.5));
+    set_b(setter, &p.cp_on, r.chance(0.3));
     if let Ok(mut g) = p.preset_name.lock() {
         *g = "Random".to_string();
     }
