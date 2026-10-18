@@ -69,6 +69,11 @@ pub struct WavEdit {
     peaks_dirty: bool,
     fit_hold: Option<f32>,
     saved: String,
+    vary: f32,
+    drift: f32,
+    drag_orig: Option<(usize, usize, Vec<Vec<f32>>, Vec<f32>)>,
+    multi_pending: bool,
+    last_multi: f64,
 }
 
 fn fill_under(painter: &egui::Painter, pts: &[Pos2], bottom: f32, color: Color32) {
@@ -123,6 +128,11 @@ impl WavEdit {
             peaks_dirty: true,
             fit_hold: None,
             saved: String::new(),
+            vary: 0.0,
+            drift: 0.0,
+            drag_orig: None,
+            multi_pending: false,
+            last_multi: 0.0,
         };
         w.anchor = w.frame;
         w.reload();
@@ -257,6 +267,56 @@ impl WavEdit {
         true
     }
 
+    /// Called when a drag in the wave view starts: remembers the frames the drawing will spread to.
+    fn begin_multi(&mut self) {
+        let (lo, hi) = self.scope_range();
+        self.multi_pending = false;
+        self.drag_orig = if hi > lo { Some((lo, hi, (lo..=hi).map(|i| self.tbl.frame_time(i)).collect(), self.time.clone())) } else { None };
+    }
+
+    /// The current frame takes the drawn wave exactly; the other frames in scope receive the same
+    /// change, scaled by strength x fade x variation and optionally slid along the wave (drift).
+    fn commit_draw(&mut self, t: Vec<f32>, now: f64) {
+        self.set_time(t, now);
+        if self.drag_orig.is_some() {
+            self.multi_pending = true;
+            if now - self.last_multi > 0.1 {
+                self.apply_multi(now);
+            }
+        }
+    }
+
+    fn apply_multi(&mut self, now: f64) {
+        if !self.multi_pending {
+            return;
+        }
+        self.multi_pending = false;
+        let Some((lo, hi, orig, cur0)) = self.drag_orig.take() else { return };
+        let delta: Vec<f32> = self.time.iter().zip(&cur0).map(|(a, b)| a - b).collect();
+        for i in lo..=hi {
+            if i == self.frame {
+                continue;
+            }
+            let mut a = self.weight(i, lo, hi);
+            if self.vary > 0.0 {
+                let h = (i as u32).wrapping_mul(2654435761) ^ 0x9E37_79B9;
+                let h = (h ^ (h >> 15)).wrapping_mul(2246822519);
+                a *= 1.0 - self.vary * ((h >> 8) & 0xFFFF) as f32 / 65535.0;
+            }
+            if a <= 0.0005 {
+                continue;
+            }
+            let shift = (((i as i64 - self.frame as i64) as f32) * self.drift * 12.0).round() as i64;
+            let o = &orig[i - lo];
+            let new: Vec<f32> = (0..N).map(|k| o[k] + delta[(k as i64 - shift).rem_euclid(N as i64) as usize] * a).collect();
+            self.tbl.set_frame(i, &new);
+        }
+        self.drag_orig = Some((lo, hi, orig, cur0));
+        self.peaks_dirty = true;
+        self.touch(now);
+        self.last_multi = now;
+    }
+
     fn run_formula(&mut self, now: f64) {
         match crate::formula::parse(&self.formula) {
             Err(e) => self.formula_err = e,
@@ -370,6 +430,11 @@ impl WavEdit {
         } else {
             self.anchor = f;
             self.sel = None;
+        }
+        if extend && self.sel.is_some() && self.scope == Scope::Frame {
+            self.scope = Scope::Sel;
+        } else if !extend && self.scope == Scope::Sel {
+            self.scope = Scope::Frame;
         }
         if f != self.frame {
             self.goto(setter, op, f);
@@ -585,7 +650,16 @@ impl WavEdit {
         let txt = if self.soft <= 0.001 { "HARD".to_string() } else { format!("{}%", (self.soft * 100.0).round() as i32) };
         Self::slider(ui, btn(bx, 170.0), "wed_soft", &mut self.soft, &txt, "FLAT only: how wide the smooth fade is at both ends of the range. HARD = the change starts abruptly.");
         bx += 190.0;
-        ui.painter().text(Pos2::new(bx, y + 12.0), Align2::LEFT_CENTER, "FADE shapes how the change spreads over the selected frames", mono(9.5), DIM);
+        bx += 4.0;
+        cap_at(ui, bx, y, "VARY");
+        bx += 38.0;
+        let txt = format!("{}%", (self.vary * 100.0).round() as i32);
+        Self::slider(ui, btn(bx, 80.0), "wed_vary", &mut self.vary, &txt, "Every frame gets a different amount of the change (random per frame) instead of the same");
+        bx += 92.0;
+        cap_at(ui, bx, y, "DRIFT");
+        bx += 44.0;
+        let txt = format!("{}%", (self.drift * 100.0).round() as i32);
+        Self::slider(ui, btn(bx, 80.0), "wed_drift", &mut self.drift, &txt, "Drawing on several frames: the drawn spot slides sideways a little more on each next frame, so the change travels through the table");
 
         // ---------------- row: processing
         y += 30.0;
@@ -934,6 +1008,7 @@ impl WavEdit {
         if resp.drag_started() {
             self.fit_hold = Some(fit);
             self.push_undo();
+            self.begin_multi();
             self.last_pt = None;
             if let Some(pt) = resp.interact_pointer_pos() {
                 self.line_start = Some((to_idx(pt.x), to_val(pt.y), self.time.clone()));
@@ -954,7 +1029,7 @@ impl WavEdit {
                             t[i] = vl + (vh - vl) * f;
                         }
                         self.last_pt = Some((ix, v));
-                        self.set_time(t, now);
+                        self.commit_draw(t, now);
                     }
                     Tool::Line => {
                         if let Some((sx, sv, orig)) = self.line_start.clone() {
@@ -964,7 +1039,7 @@ impl WavEdit {
                             for i in (lo as usize)..=(hi as usize).min(N - 1) {
                                 t[i] = vl + (vh - vl) * ((i as f32 - lo) / span).clamp(0.0, 1.0);
                             }
-                            self.set_time(t, now);
+                            self.commit_draw(t, now);
                         }
                     }
                     Tool::Smooth => {
@@ -982,12 +1057,14 @@ impl WavEdit {
                             let fall = 1.0 - ((i - c).abs() as f32 / rad as f32);
                             t[i as usize] = self.time[i as usize] * (1.0 - 0.6 * fall) + acc / cnt * 0.6 * fall;
                         }
-                        self.set_time(t, now);
+                        self.commit_draw(t, now);
                     }
                 }
             }
         }
         if resp.drag_stopped() {
+            self.apply_multi(now);
+            self.drag_orig = None;
             self.line_start = None;
             self.last_pt = None;
             self.fit_hold = None;
@@ -1010,7 +1087,7 @@ impl WavEdit {
             })
             .collect();
         painter.add(egui::Shape::line(pts, PathStroke::new(1.8_f32, WHITE)));
-        painter.text(Pos2::new(r.left() + 8.0, r.top() + 10.0), Align2::LEFT_CENTER, "WAVE   (lines = +1 / -1)", mono(9.5), DIM);
+        painter.text(Pos2::new(r.left() + 8.0, r.top() + 10.0), Align2::LEFT_CENTER, &{ let (a, b) = self.scope_range(); if b > a { format!("WAVE   (lines = +1 / -1)   drawing changes frames {}-{}", a + 1, b + 1) } else { "WAVE   (lines = +1 / -1)".to_string() } }, mono(9.5), DIM);
         if pk > 1.002 {
             painter.text(Pos2::new(r.right() - 8.0, r.top() + 10.0), Align2::RIGHT_CENTER, format!("PEAK {pk:.2} is over 1.0: use NORM"), mono(9.5), WHITE);
         }
@@ -1126,4 +1203,49 @@ fn cap_at(ui: &Ui, x: f32, y: f32, t: &str) {
 fn dark_box(ui: &Ui, r: Rect) {
     ui.painter().rect_filled(r, CornerRadius::same(4), Color32::from_rgb(5, 5, 5));
     ui.painter().rect_stroke(r, CornerRadius::same(4), Stroke::new(1.0_f32, LINE), StrokeKind::Inside);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sine(n: usize) -> Vec<f32> {
+        (0..n).map(|i| (i as f32 / n as f32 * std::f32::consts::TAU).sin() * 0.5).collect()
+    }
+
+    #[test]
+    fn drawing_spreads_over_selected_frames() {
+        let frames: Vec<Vec<f32>> = (0..8).map(|_| sine(N)).collect();
+        let mut w = WavEdit::new(0, Table::from_frames(&frames), "t".into(), 0.0);
+        w.scope = Scope::Sel;
+        w.sel = Some((2, 6));
+        w.frame = 4;
+        w.reload();
+        w.ramp = Ramp::Flat;
+        w.begin_multi();
+        let mut t = w.time.clone();
+        for v in t[100..200].iter_mut() {
+            *v += 0.3;
+        }
+        w.commit_draw(t, 1.0);
+        w.apply_multi(2.0);
+        let f2 = w.tbl.frame_time(2);
+        let f0 = w.tbl.frame_time(0);
+        let base = sine(N);
+        assert!((f2[150] - base[150] - 0.3).abs() < 0.03, "frame 2 got the bump");
+        assert!((f0[150] - base[150]).abs() < 0.02, "frame 0 untouched");
+        assert!((f2[1000] - base[1000]).abs() < 0.02, "outside the drawn piece unchanged");
+    }
+
+    #[test]
+    fn strength_and_ramp_weights() {
+        let frames: Vec<Vec<f32>> = (0..8).map(|_| sine(N)).collect();
+        let mut w = WavEdit::new(0, Table::from_frames(&frames), "t".into(), 0.0);
+        w.strength = 0.5;
+        w.ramp = Ramp::In;
+        assert!((w.weight(0, 0, 4)).abs() < 1e-6);
+        assert!((w.weight(4, 0, 4) - 0.5).abs() < 1e-6);
+        w.ramp = Ramp::Out;
+        assert!((w.weight(0, 0, 4) - 0.5).abs() < 1e-6);
+    }
 }
