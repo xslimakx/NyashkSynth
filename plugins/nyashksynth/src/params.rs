@@ -485,6 +485,8 @@ pub enum ArpMode {
     AsPlayed,
     #[name = "Chord"]
     Chord,
+    #[name = "Pattern"]
+    Pattern,
 }
 
 #[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
@@ -515,6 +517,24 @@ pub enum DistType {
     SineShaper,
     #[name = "Downsample"]
     Downsample,
+}
+
+#[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
+pub enum OscMode {
+    #[name = "Wavetable"]
+    Wavetable,
+    #[name = "Sample"]
+    Sample,
+}
+
+#[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
+pub enum SampleLoop {
+    #[name = "One-shot"]
+    Off,
+    #[name = "Loop"]
+    Loop,
+    #[name = "Ping-pong"]
+    PingPong,
 }
 
 #[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
@@ -1123,6 +1143,20 @@ pub struct OscParams {
     pub phase: FloatParam,
     #[id = "rn"]
     pub rand: FloatParam,
+    #[persist = "smp"]
+    pub smp: Arc<std::sync::Mutex<String>>,
+    #[id = "om"]
+    pub mode: EnumParam<OscMode>,
+    #[id = "ss"]
+    pub s_start: FloatParam,
+    #[id = "se"]
+    pub s_end: FloatParam,
+    #[id = "sl"]
+    pub s_loop: EnumParam<SampleLoop>,
+    #[id = "sx"]
+    pub s_xfade: FloatParam,
+    #[id = "sr"]
+    pub s_root: IntParam,
 }
 
 impl OscParams {
@@ -1150,6 +1184,13 @@ impl OscParams {
                 .with_value_to_string(Arc::new(|v| format!("{:.0}", v * 360.0)))
                 .with_unit(" deg"),
             rand: unit_param("Random", 1.0),
+            smp: Arc::new(std::sync::Mutex::new(String::new())),
+            mode: EnumParam::new("Mode", OscMode::Wavetable),
+            s_start: unit_param("Sample Start", 0.0),
+            s_end: unit_param("Sample End", 1.0),
+            s_loop: EnumParam::new("Sample Loop", SampleLoop::Loop),
+            s_xfade: unit_param("Loop Crossfade", 0.0),
+            s_root: IntParam::new("Sample Root", 0, IntRange::Linear { min: -36, max: 36 }),
         }
     }
 }
@@ -1403,6 +1444,8 @@ pub struct SynthParams {
     pub arp_swing: FloatParam,
     #[id = "ar_hd"]
     pub arp_hold: BoolParam,
+    #[persist = "arp-pat"]
+    pub arp_pat: Arc<std::sync::Mutex<String>>,
 }
 
 impl SynthParams {
@@ -1489,6 +1532,7 @@ impl Default for SynthParams {
             arp_gate: FloatParam::new("Arp Gate", 0.6, FloatRange::Linear { min: 0.05, max: 1.0 }).with_step_size(0.01).with_value_to_string(Arc::new(|v| format!("{:.0}%", v * 100.0))),
             arp_swing: unit_param("Arp Swing", 0.0),
             arp_hold: BoolParam::new("Arp Hold", false),
+            arp_pat: Arc::new(std::sync::Mutex::new(String::new())),
         }
     }
 }

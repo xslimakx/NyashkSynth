@@ -24,13 +24,14 @@ A Serum-style wavetable synthesizer in the same black-and-white Nyashk design.
 
 | | |
 |---|---|
-| **Oscillators** | 3 wavetable oscillators (A/B/C) with a built-in table library, **warp ×2 per oscillator (22 modes)**, unison (up to 16 voices, 4 modes), sub oscillator and noise (with sample loading) |
+| **Oscillators** | 3 oscillators (A/B/C), each wavetable or **sample** (start / end / loop / ping-pong) with a built-in table library, **warp ×2 per oscillator (22 modes)**, unison (up to 16 voices, 4 modes), sub oscillator and noise (with sample loading) |
 | **Wavetable editor** | Draw, edit harmonics (amp/phase), formula generator (`sin(x*tau)*…`), spectral and time ops, **multi-frame editing** (select a range of frames and draw/process them together, with strength, fade, soft edges, vary and drift), frame morphing, undo/redo, import and export of `.wav` tables |
 | **Filter** | **two filters** (series or parallel) with 16 classic types (LP/HP/Band/Notch, Ladder, shelves, combs, phaser, formant) plus **Custom (points)**: up to 8 draggable EQ-style points (bell, shelves, HP/LP, notch, band) placed right on the response graph; routing per source |
 | **Envelopes / LFOs** | 4 envelopes with bendable slopes and invert-legato, 8 LFOs (12 shapes incl. Lorenz/Rössler chaos, drawable curve, delay, one-shot, tempo sync) |
 | **Mod matrix** | 16 slots, drag any source onto any knob, per-slot curve / uni / aux source, live modulation dots on the knobs, **FX parameters are modulatable** |
 | **Effects** | Hyper/Dimension, Distortion, Flanger, Phaser, Chorus, Delay, Compressor, Reverb, EQ, Filter, **Bode** frequency shifter, **Utility**: reorderable chain, **two FX buses** with series / parallel / low-high / mid-side routing |
-| **Arpeggiator** | 7 patterns, 18 rates incl. triplets/dotted, gate, swing, octaves, hold |
+| **Arpeggiator** | 7 patterns + **16-step Pattern editor**, 18 rates incl. triplets/dotted, gate, swing, octaves, hold |
+| **Workflow** | Undo / redo (Ctrl+Z / Ctrl+Y) |
 | **MIDI** | **MIDI learn** on every knob, OCT/SEMI transpose spinners, pitch and mod wheels |
 | **Performance** | Poly / Mono / Legato, glide, sustain pedal, mod wheel, pitch bend, aftertouch, on-screen keyboard, oscilloscope |
 | **Presets** | 68 factory presets in categories, user presets / tables / noises as plain files you can drop into folders. The RANDOM button builds a full new patch (matrix routes, all 4 LFOs, 3 envelopes, macros, FX, arp reset) |

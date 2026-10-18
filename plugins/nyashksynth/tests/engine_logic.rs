@@ -361,3 +361,37 @@ fn second_filter_adds_in_series_and_parallel() {
     let par = run(true, false, true);
     assert!(par > one * 0.5 && par < one * 1.3, "parallel level {par} vs {one}");
 }
+
+#[test]
+fn sample_oscillator_plays_at_pitch_and_loops() {
+    use nyashksynth::params::{OscMode, SampleLoop};
+    use nyashksynth::sample::NSample;
+    use std::sync::Arc;
+    // one second of 261.6256 Hz at 44.1 kHz = original pitch on middle C (note 60)
+    let f0 = 261.6256f32;
+    let data: Vec<f32> = (0..44100).map(|i| (std::f32::consts::TAU * f0 * i as f32 / 44100.0).sin() * 0.8).collect();
+    let run = |note: u8, lp: SampleLoop| {
+        let mut e = engine();
+        e.patch.sub_on = false;
+        e.patch.fl[0].on = false;
+        e.patch.osc[1].on = false;
+        e.patch.osc[0].mode = OscMode::Sample;
+        e.patch.osc[0].s_loop = lp;
+        e.patch.osc[0].sample = Some(Arc::new(NSample { name: "t".into(), data: data.clone() }));
+        e.note_on(note, 1.0);
+        render_vec(&mut e, 48000 * 2)
+    };
+    let v = run(60, SampleLoop::Loop);
+    let seg = &v[48000..48000 + 24000];
+    let at = goertzel(seg, f0, 48000.0);
+    let off = goertzel(seg, f0 * 1.5, 48000.0);
+    assert!(at > off * 8.0, "sample not at original pitch: {at} vs {off}");
+    // an octave up
+    let v = run(72, SampleLoop::Loop);
+    let seg = &v[48000..48000 + 24000];
+    assert!(goertzel(seg, f0 * 2.0, 48000.0) > goertzel(seg, f0, 48000.0) * 8.0, "octave up wrong");
+    // looping keeps sounding after the sample length, one-shot goes silent
+    assert!(rms(&run(60, SampleLoop::Loop)[90000..]) > 0.05);
+    assert!(rms(&run(60, SampleLoop::Off)[90000..]) < 1e-3);
+    assert!(run(60, SampleLoop::PingPong).iter().all(|x| x.is_finite() && x.abs() < 4.0));
+}

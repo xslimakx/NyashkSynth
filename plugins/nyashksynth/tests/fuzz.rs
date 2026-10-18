@@ -113,7 +113,7 @@ fn randomize(p: &mut Patch, r: &mut R, fs: f32) {
     p.bend = r.i(25) as f32;
     p.poly = 1 + r.i(16);
     p.tune = r.r(-100.0, 100.0);
-    p.arp = ArpP { on: r.b(0.35), mode: r.e(), beats: [0.125, 0.25, 0.5, 1.0][r.i(4)], octs: 1 + r.i(4), gate: r.r(0.05, 1.0), swing: r.f(), hold: r.b(0.3) };
+    p.arp = ArpP { on: r.b(0.35), mode: r.e(), beats: [0.125, 0.25, 0.5, 1.0][r.i(4)], octs: 1 + r.i(4), gate: r.r(0.05, 1.0), swing: r.f(), hold: r.b(0.3), ..Default::default() };
 }
 
 fn randomize_fx(f: &mut FxPatch, r: &mut R) {

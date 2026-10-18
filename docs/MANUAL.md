@@ -42,6 +42,28 @@ Quick visual guide. Every numbered badge in a picture is explained under it.
 * OCT / SEMI shift incoming notes; notes already held are released correctly when you change the shift.
 * MIDI learn works for every parameter: oscillator, filter, envelope, LFO, FX and macro knobs.
 
+## 4b. Sample oscillator
+
+![Sample oscillator](img/manual_sample.png)
+
+Each oscillator can be switched between **WT** (wavetable) and **SMP** (sample) with the two buttons next to ON.
+
+1. Drag the start / end markers on the waveform, or use the **START / END** knobs (both can be modulated, so you can scan through a sample).
+2. **LOAD SAMPLE** opens the sample browser (your `Noises` folder); you can also drop a `.wav` on the oscillator. The first 4 seconds are used.
+3. **One-shot / Loop / Ping-pong**; **XFADE** crossfades the loop seam.
+4. **ROOT** shifts the pitch the sample was recorded at. A sample plays at its original speed on middle C, follows the keyboard, OCT / SEMI / FINE and unison.
+5. Sample oscillators go through the same filters, envelopes and FX as wavetable ones.
+
+## 4c. Arpeggiator pattern editor
+
+![Arp pattern](img/manual_arp.png)
+
+Set **MODE = Pattern** in the ARP tab. 16 steps, each with on / rest, velocity, which held note it plays (1 = lowest, wraps round the chord) and a transposition in semitones. Right-click a step number to end the pattern there. The pattern is saved with presets and projects.
+
+## 4d. Undo / redo
+
+UNDO and REDO (header, or Ctrl+Z / Ctrl+Y) step through your parameter changes, including preset loads. Wavetable-editor edits have their own undo inside the editor.
+
 ## 5. Feature status compared to Serum 2
 
 | Area | Status |
@@ -51,6 +73,8 @@ Quick visual guide. Every numbered badge in a picture is explained under it.
 | 8 LFOs (with Lorenz/Rössler), 4 envelopes (invert legato), 8 macros | done |
 | 2 FX buses, Bode, Utility, split routing | done |
 | MIDI learn, transpose, wheels | done |
-| Sample / Multisample / Granular / Spectral oscillator modes | not yet |
-| Clip sequencer, arp pattern banks, oscillator mapping editor | not yet |
+| Sample oscillator (start / end / loop / ping-pong / crossfade) | done |
+| Arp pattern editor, undo / redo | done |
+| Multisample (SFZ) / Granular / Spectral oscillator modes | not yet |
+| Clip sequencer, 12-slot arp banks, oscillator mapping editor | not yet |
 | Convolve, reverb types, preset tags and ratings | not yet |

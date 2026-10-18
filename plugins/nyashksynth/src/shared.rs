@@ -46,6 +46,7 @@ impl<T> Slot<T> {
 pub struct Shared {
     pub waves: [Slot<Table>; 3],
     pub noise: Slot<NSample>,
+    pub smp: [Slot<NSample>; 3],
     pub lfo: [Slot<LfoCurve>; NLFO],
     /// Bumped whenever a slot is changed from state/preset (lets the GUI notice host state loads).
     pub version: std::sync::atomic::AtomicU32,
@@ -53,13 +54,15 @@ pub struct Shared {
 
 impl Shared {
     pub fn new() -> Self {
-        Self { waves: [Slot::new(), Slot::new(), Slot::new()], noise: Slot::new(), lfo: std::array::from_fn(|_| Slot::new()), version: std::sync::atomic::AtomicU32::new(0) }
+        Self { waves: [Slot::new(), Slot::new(), Slot::new()], noise: Slot::new(), smp: [Slot::new(), Slot::new(), Slot::new()], lfo: std::array::from_fn(|_| Slot::new()), version: std::sync::atomic::AtomicU32::new(0) }
     }
 
     /// Rebuild every slot from the strings stored in the parameters (state load).
     pub fn sync_from_params(&self, p: &crate::SynthParams) {
         for (i, op) in [&p.a, &p.b, &p.c].iter().enumerate() {
             let s = op.wave.lock().map(|g| g.clone()).unwrap_or_default();
+            let sm = op.smp.lock().map(|g| g.clone()).unwrap_or_default();
+            self.smp[i].set(if sm.is_empty() { None } else { NSample::decode(&sm).map(Arc::new) });
             self.waves[i].set(if s.is_empty() { None } else { crate::wavetable::decode_table(&s).map(|(_, t)| Arc::new(t)) });
         }
         let s = p.noise_sample.lock().map(|g| g.clone()).unwrap_or_default();

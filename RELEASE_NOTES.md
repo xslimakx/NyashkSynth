@@ -1,4 +1,4 @@
-## NyashkSynth v2.4.0
+## NyashkSynth v2.5.0
 
 Downloads: `NyashkSynth-Linux-VST3.zip`, `NyashkSynth-Windows-VST3.zip` (unzip and copy the whole `NyashkSynth.vst3` folder into your VST3 folder). Illustrated guide: `docs/MANUAL.md`.
 
@@ -9,7 +9,10 @@ Downloads: `NyashkSynth-Linux-VST3.zip`, `NyashkSynth-Windows-VST3.zip` (unzip a
 - **8 LFOs** (Lorenz and Rössler chaos shapes, rate up to 1000 Hz), **4 envelopes** with INV.LEGATO, **8 macros**.
 - **Two FX buses** with series / parallel / low-high / mid-side routing, plus **Bode** frequency shifter and **Utility**.
 - Master level can be typed in dB; deleting a user preset also removes empty folders.
-- Not yet (planned): Sample / Granular / Spectral oscillator modes, clip sequencer, arp pattern bank, Convolve.
+- **Sample oscillator mode** (WT / SMP switch per oscillator): start / end markers, one-shot / loop / ping-pong, loop crossfade, ROOT, modulatable start and end.
+- **Arp Pattern mode**: 16-step editor (on / rest, velocity, chord note, transpose, length).
+- **Undo / redo** (UNDO / REDO buttons, Ctrl+Z / Ctrl+Y).
+- Not yet (planned): Granular / Spectral / SFZ oscillator modes, clip sequencer, arp banks, Convolve.
 
 ## NyashkSynth v1.1.1
 

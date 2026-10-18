@@ -39,6 +39,13 @@ pub struct OscP {
     pub spread: f32,
     pub phase: f32,
     pub rand: f32,
+    pub mode: OscMode,
+    pub s_start: f32,
+    pub s_end: f32,
+    pub s_loop: SampleLoop,
+    pub s_xfade: f32,
+    pub s_root: f32,
+    pub sample: Option<Arc<NSample>>,
 }
 
 #[derive(Clone, Copy)]
@@ -165,8 +172,15 @@ pub struct Patch {
     pub tune: f32,
 }
 
-fn osc_read(o: &OscParams, tbl: Arc<Table>) -> OscP {
+fn osc_read(o: &OscParams, tbl: Arc<Table>, sample: Option<Arc<NSample>>) -> OscP {
     OscP {
+        mode: o.mode.value(),
+        s_start: o.s_start.value(),
+        s_end: o.s_end.value(),
+        s_loop: o.s_loop.value(),
+        s_xfade: o.s_xfade.value(),
+        s_root: o.s_root.value() as f32,
+        sample,
         on: o.on.value(),
         tbl,
         pos: o.pos.value(),
@@ -219,6 +233,13 @@ impl Patch {
                 Some(None) => prev.map(|pp| pp.osc[o].tbl.clone()).unwrap_or_else(builtin),
             }
         };
+        let pick_s = |o: usize| -> Option<Arc<NSample>> {
+            match shared.map(|s| s.smp[o].try_get()) {
+                Some(Some(x)) => x,
+                Some(None) => prev.and_then(|pp| pp.osc[o].sample.clone()),
+                None => None,
+            }
+        };
         let sample = match shared.map(|s| s.noise.try_get()) {
             Some(Some(x)) => x,
             Some(None) => prev.and_then(|pp| pp.sample.clone()),
@@ -230,7 +251,7 @@ impl Patch {
             None => None,
         });
         Patch {
-            osc: [osc_read(&p.a, pick(0, p.a.table.value().to_index())), osc_read(&p.b, pick(1, p.b.table.value().to_index())), osc_read(&p.c, pick(2, p.c.table.value().to_index()))],
+            osc: [osc_read(&p.a, pick(0, p.a.table.value().to_index()), pick_s(0)), osc_read(&p.b, pick(1, p.b.table.value().to_index()), pick_s(1)), osc_read(&p.c, pick(2, p.c.table.value().to_index()), pick_s(2))],
             sub_on: p.sub_on.value(),
             sub_wave: p.sub_wave.value(),
             sub_oct: p.sub_oct.value(),
@@ -251,7 +272,13 @@ impl Patch {
             lfo: std::array::from_fn(|i| lfo_read(&p.lfo[i])),
             lfo_curve,
             slots: std::array::from_fn(|i| SlotP { src: p.slot[i].src.value(), dst: p.slot[i].dst.value(), amount: p.slot[i].amount.value(), aux: p.slot[i].aux.value(), curve: p.slot[i].curve.value(), uni: p.slot[i].uni.value() }),
-            arp: ArpP { on: p.arp_on.value(), mode: p.arp_mode.value(), beats: p.arp_div.value().beats(), octs: p.arp_oct.value().clamp(1, 4) as usize, gate: p.arp_gate.value(), swing: p.arp_swing.value(), hold: p.arp_hold.value() },
+            arp: {
+                let (pat, plen) = match p.arp_pat.try_lock() {
+                    Ok(g) => crate::arp::parse_pattern(&g),
+                    Err(_) => prev.map(|pp| (pp.arp.pat, pp.arp.plen)).unwrap_or_else(crate::arp::default_pattern),
+                };
+                ArpP { pat, plen, on: p.arp_on.value(), mode: p.arp_mode.value(), beats: p.arp_div.value().beats(), octs: p.arp_oct.value().clamp(1, 4) as usize, gate: p.arp_gate.value(), swing: p.arp_swing.value(), hold: p.arp_hold.value() }
+            },
             macros: p.macros().map(|m| m.value()),
             vmode: p.vmode.value(),
             glide_ms: p.glide.value(),
@@ -671,6 +698,8 @@ struct Voice {
     t: f32,
     env: [Env; NENV],
     ph: [[f32; MAX_UNI]; 3],
+    sp: [[f32; MAX_UNI]; 3],
+    sdir: [[f32; MAX_UNI]; 3],
     sub_ph: f32,
     rnd: u32,
     rnd_val: f32,
@@ -700,6 +729,8 @@ impl Voice {
             t: 0.0,
             env: [Env::default(); NENV],
             ph: [[0.0; MAX_UNI]; 3],
+            sp: [[0.0; MAX_UNI]; 3],
+            sdir: [[1.0; MAX_UNI]; 3],
             sub_ph: 0.0,
             rnd: 1,
             rnd_val: 0.0,
@@ -743,6 +774,11 @@ struct OscRun {
     warp: f32,
     wmode2: WarpMode,
     warp2: f32,
+    smp: bool,
+    s0: f32,
+    s1: f32,
+    sloop: SampleLoop,
+    sxf: f32,
     n: usize,
     inc: [f32; MAX_UNI],
     gl: [f32; MAX_UNI],
@@ -751,7 +787,7 @@ struct OscRun {
 
 impl OscRun {
     fn off() -> Self {
-        Self { on: false, mip: 0, pos: 0.0, f0: 0, ff: 0.0, wmode: WarpMode::Off, warp: 0.0, wmode2: WarpMode::Off, warp2: 0.0, n: 1, inc: [0.0; MAX_UNI], gl: [0.0; MAX_UNI], gr: [0.0; MAX_UNI] }
+        Self { on: false, mip: 0, pos: 0.0, f0: 0, ff: 0.0, wmode: WarpMode::Off, warp: 0.0, wmode2: WarpMode::Off, warp2: 0.0, smp: false, s0: 0.0, s1: 1.0, sloop: SampleLoop::Loop, sxf: 0.0, n: 1, inc: [0.0; MAX_UNI], gl: [0.0; MAX_UNI], gr: [0.0; MAX_UNI] }
     }
 }
 
@@ -1013,6 +1049,20 @@ pub fn slot_value(sl: &SlotP, src: impl Fn(ModSrc) -> f32) -> f32 {
     val
 }
 
+/// 4-point Hermite interpolation of a sample buffer at fractional position `pos`.
+#[inline]
+fn hermite_read(d: &[f32], pos: f32) -> f32 {
+    let n = d.len();
+    let i = pos as usize;
+    let f = pos - i as f32;
+    let g = |k: isize| d[((i as isize + k).clamp(0, n as isize - 1)) as usize];
+    let (ym, y0, y1, y2) = (g(-1), g(0), g(1), g(2));
+    let c1 = 0.5 * (y1 - ym);
+    let c2 = ym - 2.5 * y0 + 2.0 * y1 - 0.5 * y2;
+    let c3 = 0.5 * (y2 - ym) + 1.5 * (y0 - y1);
+    ((c3 * f + c2) * f + c1) * f + y0
+}
+
 fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mut [f32]) {
     let m = out_l.len();
     let fs = c.fs;
@@ -1107,6 +1157,21 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
         let base = v.freq * c.tune * 2f32.powf(semis / 12.0);
         let r = &mut run[o];
         r.on = true;
+        let smp_len = if op.mode == OscMode::Sample { op.sample.as_ref().map_or(0, |x| x.data.len()) } else { 0 };
+        if op.mode == OscMode::Sample {
+            if smp_len < 16 {
+                r.on = false;
+                continue;
+            }
+            r.smp = true;
+            let len = smp_len as f32;
+            let a = (op.s_start + md[pos_i]).clamp(0.0, 1.0) * len;
+            let b = (op.s_end + md[wrp_i]).clamp(0.0, 1.0) * len;
+            r.s0 = a.min(len - 9.0);
+            r.s1 = b.max(r.s0 + 8.0).min(len - 1.0);
+            r.sloop = op.s_loop;
+            r.sxf = (op.s_xfade + md[[23, 24, 43][o]]).clamp(0.0, 1.0) * 0.5 * (r.s1 - r.s0);
+        }
         r.pos = (op.pos + md[pos_i]).clamp(0.0, 1.0);
         let (f0, ff) = op.tbl.frames_at(r.pos);
         r.f0 = f0;
@@ -1133,7 +1198,7 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
                 f = base * 2f32.powf((STACK_ST[j % 16] + off * cents_max / 100.0) / 12.0);
             }
             fmax = fmax.max(f);
-            r.inc[j] = (f / fs).clamp(0.0, 0.49);
+            r.inc[j] = if r.smp { (f / 261.6256 * 2f32.powf(-op.s_root / 12.0) * crate::sample::SAMPLE_RATE as f32 / fs).clamp(0.0, 16.0) } else { (f / fs).clamp(0.0, 0.49) };
             let lin = if n == 1 { 0.0 } else { j as f32 / (n - 1) as f32 * 2.0 - 1.0 };
             let w = 1.0 - (1.0 - blend) * 0.75 * lin.abs();
             ws[j] = w;
@@ -1149,7 +1214,9 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
             r.gl[j] *= g;
             r.gr[j] *= g;
         }
-        r.mip = op.tbl.mip_for(fmax * warp_bandwidth(r.wmode, r.warp) * warp_bandwidth(r.wmode2, r.warp2), fs);
+        if !r.smp {
+            r.mip = op.tbl.mip_for(fmax * warp_bandwidth(r.wmode, r.warp) * warp_bandwidth(r.wmode2, r.warp2), fs);
+        }
     }
 
     // ---- sub / noise / filter set-up
@@ -1198,6 +1265,51 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
         for o in 0..3 {
             let r = &run[o];
             if !r.on {
+                continue;
+            }
+            if r.smp {
+                let data = &p.osc[o].sample.as_ref().unwrap().data;
+                let (mut l, mut rr) = (0.0, 0.0);
+                for j in 0..r.n {
+                    let mut pos = v.sp[o][j];
+                    let mut dir = v.sdir[o][j];
+                    pos += r.inc[j] * dir;
+                    match r.sloop {
+                        SampleLoop::Off => {
+                            if pos >= r.s1 {
+                                pos = r.s1;
+                                dir = 0.0;
+                            }
+                        }
+                        SampleLoop::Loop => {
+                            if pos >= r.s1 {
+                                pos = r.s0 + (pos - r.s1) % (r.s1 - r.s0);
+                            }
+                        }
+                        SampleLoop::PingPong => {
+                            if pos >= r.s1 {
+                                pos = (2.0 * r.s1 - pos).max(r.s0);
+                                dir = -1.0;
+                            } else if pos <= r.s0 && dir < 0.0 {
+                                pos = (2.0 * r.s0 - pos).min(r.s1);
+                                dir = 1.0;
+                            }
+                        }
+                    }
+                    v.sp[o][j] = pos;
+                    v.sdir[o][j] = dir;
+                    let mut smp = if dir == 0.0 { 0.0 } else { hermite_read(data, pos) };
+                    if r.sloop == SampleLoop::Loop && r.sxf > 1.0 && dir != 0.0 {
+                        let xs = r.s1 - r.sxf;
+                        if pos > xs {
+                            let g = ((pos - xs) / r.sxf).clamp(0.0, 1.0);
+                            smp = smp * (1.0 - g).sqrt() + hermite_read(data, r.s0 + (pos - xs)) * g.sqrt();
+                        }
+                    }
+                    l += smp * r.gl[j];
+                    rr += smp * r.gr[j];
+                }
+                sig[o] = [l, rr];
                 continue;
             }
             let t = &p.osc[o].tbl;
@@ -1586,6 +1698,11 @@ impl Engine {
         for o in 0..3 {
             for j in 0..MAX_UNI {
                 v.ph[o][j] = (patch.osc[o].phase + patch.osc[o].rand * phases[o * MAX_UNI + j]).fract();
+                v.sdir[o][j] = 1.0;
+                v.sp[o][j] = match (&patch.osc[o].sample, patch.osc[o].mode) {
+                    (Some(sm), OscMode::Sample) => sm.data.len() as f32 * patch.osc[o].s_start,
+                    _ => 0.0,
+                };
             }
         }
         v.sub_ph = 0.0;
@@ -1763,7 +1880,7 @@ impl Engine {
         self.arp_gate_off();
         let ap = self.patch.arp;
         self.arp.advance(&ap);
-        if self.arp.out.is_empty() {
+        if self.arp.out.is_empty() && !self.arp.rested {
             self.arp.timer = f64::INFINITY;
             return;
         }
