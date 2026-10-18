@@ -23,7 +23,7 @@ use crate::wavetable::{self, Table, NAMES};
 use crate::Meters;
 
 pub const BASE_W: f32 = 1458.0;
-pub const BASE_H: f32 = 870.0;
+pub const BASE_H: f32 = 902.0;
 
 #[derive(PartialEq, Clone, Copy)]
 pub enum Overlay {
@@ -303,7 +303,9 @@ pub fn create(params: Arc<SynthParams>, meters: Arc<Meters>, shared: Arc<Shared>
             learn_begin(p, st);
             egui::CentralPanel::default().frame(egui::Frame::NONE.fill(BG)).show(ctx, |ui| {
                 let full = ui.max_rect();
-                let o = full.min;
+                let o_real = full.min;
+                // everything below the header sits one page bar lower
+                let o = Pos2::new(o_real.x, o_real.y + PAGE_SHIFT);
                 let rect = |x: f32, y: f32, w: f32, h: f32| Rect::from_min_size(Pos2::new(o.x + x, o.y + y), Vec2::new(w, h));
                 let painter = ui.painter().clone();
                 let now = ui.input(|i| i.time);
@@ -339,40 +341,50 @@ pub fn create(params: Arc<SynthParams>, meters: Arc<Meters>, shared: Arc<Shared>
                     set_b(setter, &p.clip_on, true);
                 }
                 autotest(setter, p, &shared, st, &meters, now);
-                header(ui, setter, p, &shared, st, &meters, o, now);
+                header(ui, setter, p, &shared, st, &meters, o_real, now);
+                page_bar(ui, p, st, o_real);
 
-                // ================================================= row 1: oscillators + filter
-                osc_panel(ui, setter, p, &shared, st, rect(14.0, 62.0, 350.0, 346.0), 0);
-                osc_panel(ui, setter, p, &shared, st, rect(372.0, 62.0, 350.0, 346.0), 1);
-                osc_panel(ui, setter, p, &shared, st, rect(730.0, 62.0, 350.0, 346.0), 2);
-                filter_panel(ui, setter, p, st, rect(1088.0, 62.0, 356.0, 346.0));
-
-                // ================================================= row 2: sub/noise + tabs
-                sub_noise_panel(ui, setter, p, &shared, st, rect(14.0, 416.0, 350.0, 300.0), now);
-                let rp = rect(372.0, 416.0, 1072.0, 300.0);
-                painter.rect_filled(rp, CornerRadius::same(6), PANEL);
-                painter.rect_stroke(rp, CornerRadius::same(6), Stroke::new(1.0_f32, LINE), StrokeKind::Inside);
-                for (i, name) in ["ENV", "LFO", "MATRIX", "FX", "ARP", "CLIP", "SETTINGS"].iter().enumerate() {
-                    if pill(ui, Rect::from_min_size(Pos2::new(rp.left() + 12.0 + 84.0 * i as f32, rp.top() + 8.0), Vec2::new(if i == 6 { 92.0 } else { 78.0 }, 24.0)), name, st.tab == i) {
-                        st.tab = i;
-                    }
-                }
-                let arp_on = p.arp_on.value();
-                if p.clip_on.value() && st.tab != 5 {
-                    painter.circle_filled(Pos2::new(rp.left() + 12.0 + 84.0 * 5.0 + 66.0, rp.top() + 14.0), 3.0, WHITE);
-                }
-                if arp_on && st.tab != 4 {
-                    painter.circle_filled(Pos2::new(rp.left() + 12.0 + 84.0 * 4.0 + 66.0, rp.top() + 14.0), 3.0, WHITE);
-                }
-                let content = Rect::from_min_size(Pos2::new(rp.left() + 10.0, rp.top() + 40.0), Vec2::new(rp.width() - 20.0, rp.height() - 46.0));
+                // ================================================= pages
+                let page_panel = |title: &str, r: Rect| -> Rect {
+                    painter.rect_filled(r, CornerRadius::same(6), PANEL);
+                    painter.rect_stroke(r, CornerRadius::same(6), Stroke::new(1.0_f32, LINE), StrokeKind::Inside);
+                    painter.text(Pos2::new(r.left() + 14.0, r.top() + 16.0), Align2::LEFT_CENTER, title, mono(11.0), WHITE);
+                    Rect::from_min_size(Pos2::new(r.left() + 10.0, r.top() + 40.0), Vec2::new(r.width() - 20.0, r.height() - 46.0))
+                };
                 match st.tab {
-                    0 => env_tab(ui, setter, p, st, content, now),
-                    1 => lfo_tab(ui, setter, p, &shared, st, content),
-                    2 => matrix_tab(ui, setter, p, st, content),
-                    3 => fxui::fx_tab(ui, setter, p, st, content),
-                    4 => arp_tab(ui, setter, p, &meters, content),
-                    5 => clip_tab(ui, setter, p, st, content),
-                    _ => settings_tab(ui, setter, p, &meters, st, content),
+                    0 => {
+                        osc_panel(ui, setter, p, &shared, st, rect(14.0, 62.0, 350.0, 346.0), 0);
+                        osc_panel(ui, setter, p, &shared, st, rect(372.0, 62.0, 350.0, 346.0), 1);
+                        osc_panel(ui, setter, p, &shared, st, rect(730.0, 62.0, 350.0, 346.0), 2);
+                        filter_panel(ui, setter, p, st, rect(1088.0, 62.0, 356.0, 346.0));
+                        sub_noise_panel(ui, setter, p, &shared, st, rect(14.0, 416.0, 350.0, 300.0), now);
+                        let c = page_panel("ENVELOPES", rect(372.0, 416.0, 1072.0, 300.0));
+                        env_tab(ui, setter, p, st, c, now);
+                    }
+                    1 => {
+                        let c = page_panel("LFO 1-4", rect(14.0, 62.0, 1430.0, 322.0));
+                        lfo_tab(ui, setter, p, &shared, st, c, 0);
+                        let c = page_panel("LFO 5-8", rect(14.0, 394.0, 1430.0, 322.0));
+                        lfo_tab(ui, setter, p, &shared, st, c, 1);
+                    }
+                    2 => {
+                        let c = page_panel("MODULATION MATRIX  (drag a source chip from the bottom strip onto any knob to add a route)", rect(14.0, 62.0, 1430.0, 654.0));
+                        matrix_tab(ui, setter, p, st, c);
+                    }
+                    3 => {
+                        let c = page_panel("EFFECTS", rect(14.0, 62.0, 1430.0, 654.0));
+                        fxui::fx_tab(ui, setter, p, st, c);
+                    }
+                    4 => {
+                        let c = page_panel("ARPEGGIATOR", rect(14.0, 62.0, 1430.0, 322.0));
+                        arp_tab(ui, setter, p, &meters, c);
+                        let c = page_panel("CLIP SEQUENCER", rect(14.0, 394.0, 1430.0, 322.0));
+                        clip_tab(ui, setter, p, st, c);
+                    }
+                    _ => {
+                        let c = page_panel("SETTINGS", rect(14.0, 62.0, 1430.0, 654.0));
+                        settings_tab(ui, setter, p, &meters, st, c);
+                    }
                 }
 
                 // ================================================= bottom strip: sources, macros, voice
@@ -409,6 +421,25 @@ pub fn create(params: Arc<SynthParams>, meters: Arc<Meters>, shared: Arc<Shared>
             });
         },
     )
+}
+
+const PAGE_SHIFT: f32 = 32.0;
+
+fn page_bar(ui: &mut Ui, p: &SynthParams, st: &mut Gui, o: Pos2) {
+    let painter = ui.painter().clone();
+    let names = ["SOUND", "MOD", "MATRIX", "FX", "SEQ", "SETTINGS"];
+    let tips = ["Oscillators, filter, sub / noise and envelopes", "LFO 1-8", "Modulation matrix (all 16 routes)", "Effects chain, two buses, routing", "Arpeggiator and clip sequencer", "Tuning, MIDI, bindings"];
+    for (i, n) in names.iter().enumerate() {
+        let r = Rect::from_min_size(Pos2::new(o.x + 14.0 + 98.0 * i as f32, o.y + 56.0), Vec2::new(94.0, 26.0));
+        if pill_tip(ui, r, n, st.tab == i, tips[i]) {
+            st.tab = i;
+        }
+        let lit = (i == 4 && (p.arp_on.value() || p.clip_on.value())) || (i == 3 && st.tab != 3 && false);
+        if lit && st.tab != i {
+            painter.circle_filled(Pos2::new(r.right() - 8.0, r.top() + 7.0), 3.0, WHITE);
+        }
+    }
+    painter.text(Pos2::new(o.x + 14.0 + 98.0 * 6.0 + 10.0, o.y + 69.0), Align2::LEFT_CENTER, "drag LFO / ENV / MACRO chips onto any knob", mono(9.0), DIM);
 }
 
 // ===================================================================== header
@@ -1770,7 +1801,7 @@ fn clip_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, c:
     }
     // ---- piano roll
     let rows = (PITCH_MAX - PITCH_MIN + 1) as usize;
-    let rh = 9.0;
+    let rh = ((c.height() - 36.0) / rows as f32).clamp(8.0, 13.0);
     let gx = c.left() + 34.0;
     let gy = c.top() + 30.0;
     let steps = clips[sel].steps();
@@ -1972,14 +2003,9 @@ fn settings_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, meters: &Met
 
 // ===================================================================== LFO tab
 
-fn lfo_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, st: &mut Gui, c: Rect) {
+fn lfo_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, st: &mut Gui, c: Rect, page: usize) {
     let w = (c.width() - 30.0) / 4.0;
-    for (k, t) in ["LFO 1-4", "LFO 5-8"].iter().enumerate() {
-        if pill(ui, Rect::from_min_size(Pos2::new(c.right() - 148.0 + 74.0 * k as f32, c.top() - 29.0), Vec2::new(70.0, 20.0)), t, st.lfo_page == k) {
-            st.lfo_page = k;
-        }
-    }
-    for i in st.lfo_page * 4..st.lfo_page * 4 + 4 {
+    for i in page * 4..page * 4 + 4 {
         let l = &p.lfo[i];
         let x = c.left() + (w + 10.0) * (i % 4) as f32;
         let lnow = ui.input(|i| i.time);
@@ -2056,18 +2082,21 @@ fn lfo_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, 
 // ===================================================================== MATRIX tab
 
 fn matrix_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, c: Rect) {
-    let rh = 27.0;
     let hy = c.top() + 4.0;
-    for (x, t) in [(30.0, "SOURCE"), (176.0, "DESTINATION"), (332.0, "AMOUNT"), (448.0, "CURVE"), (520.0, "UNI"), (556.0, "SCALED BY")] {
-        ui.painter().text(Pos2::new(c.left() + x, hy), Align2::LEFT_CENTER, t, mono(9.5), DIM);
-    }
-    for (i, t) in ["1-8", "9-16"].iter().enumerate() {
-        if pill(ui, Rect::from_min_size(Pos2::new(c.right() - 122.0 + 62.0 * i as f32, c.top() - 29.0), Vec2::new(58.0, 20.0)), t, st.mat_page == i) {
-            st.mat_page = i;
+    let _ = &st;
+    let colw = (c.width() - 24.0) / 2.0;
+    for col in 0..2 {
+        let cl = c.left() + (colw + 24.0) * col as f32;
+        for (x, t) in [(30.0, "SOURCE"), (176.0, "DESTINATION"), (332.0, "AMOUNT"), (448.0, "CURVE"), (520.0, "UNI"), (556.0, "SCALED BY")] {
+            ui.painter().text(Pos2::new(cl + x, hy), Align2::LEFT_CENTER, t, mono(9.5), DIM);
         }
     }
-    for r in 0..8 {
-        let i = st.mat_page * 8 + r;
+    let rh = 40.0;
+    for r16 in 0..16 {
+        let col = r16 / 8;
+        let r = r16 % 8;
+        let c = Rect::from_min_size(Pos2::new(c.left() + (colw + 24.0) * col as f32, c.top()), Vec2::new(colw, c.height()));
+        let i = r16;
         let s = &p.slot[i];
         let y = c.top() + 14.0 + rh * r as f32;
         let active = s.src.value() != ModSrc::None && s.dst.value() != ModDst::None;

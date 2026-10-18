@@ -1,3 +1,7 @@
+## NyashkSynth v2.7.0
+
+- **Pages like Serum**: SOUND, MOD, MATRIX, FX, SEQ, SETTINGS instead of one small tab block. All 8 LFOs are visible together, the matrix shows all 16 routes, arp and clip sequencer share the SEQ page. Window is a little taller (1458 x 902).
+
 ## NyashkSynth v2.6.0
 
 - **Clip sequencer**: 12 clips of 1-4 bars with a piano roll; a held key plays the clip transposed from that key.

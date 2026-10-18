@@ -32,6 +32,7 @@ A Serum-style wavetable synthesizer in the same black-and-white Nyashk design.
 | **Effects** | Hyper/Dimension, Distortion, Flanger, Phaser, Chorus, Delay, Compressor, Reverb, EQ, Filter, **Bode** frequency shifter, **Utility**: reorderable chain, **two FX buses** with series / parallel / low-high / mid-side routing |
 | **Arpeggiator** | 7 patterns + **16-step Pattern editor**, 18 rates incl. triplets/dotted, gate, swing, octaves, hold |
 | **Sequencing** | **Clip sequencer**: 12 clips with piano roll, transposed from the held key |
+| **Layout** | Serum-style pages: SOUND / MOD / MATRIX / FX / SEQ / SETTINGS |
 | **Workflow** | Undo / redo (Ctrl+Z / Ctrl+Y), SETTINGS tab (A4 / scale tuning, MIDI channel, velocity curve) |
 | **MIDI** | **MIDI learn** on every knob, OCT/SEMI transpose spinners, pitch and mod wheels |
 | **Performance** | Poly / Mono / Legato, glide, sustain pedal, mod wheel, pitch bend, aftertouch, on-screen keyboard, oscilloscope |

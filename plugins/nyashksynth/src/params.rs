@@ -1515,7 +1515,7 @@ fn order_param(i: i32) -> IntParam {
 impl Default for SynthParams {
     fn default() -> Self {
         Self {
-            editor_state: EguiState::from_size(1458, 870),
+            editor_state: EguiState::from_size(1458, 902),
             preset_name: Arc::new(std::sync::Mutex::new("Init".to_string())),
             noise_sample: Arc::new(std::sync::Mutex::new(String::new())),
             cc_map: Arc::new(std::sync::Mutex::new(String::new())),

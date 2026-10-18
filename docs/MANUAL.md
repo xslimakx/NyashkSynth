@@ -2,6 +2,21 @@
 
 Quick visual guide. Every numbered badge in a picture is explained under it.
 
+## 0. Pages
+
+Like Serum, the plugin is split into pages (buttons under the header):
+
+| Page | What is on it |
+|---|---|
+| **SOUND** | 3 oscillators, 2 filters, sub / noise, 4 envelopes |
+| **MOD** | all 8 LFOs at once |
+| **MATRIX** | all 16 modulation routes in two columns |
+| **FX** | effects chain, two buses, routing |
+| **SEQ** | arpeggiator (with pattern editor) and clip sequencer |
+| **SETTINGS** | tuning, MIDI, learned CCs |
+
+The mod-source chips, macros, voice settings, keyboard and wheels stay visible on every page.
+
 ## 1. Overview
 
 ![Overview](img/manual_overview.png)
@@ -10,7 +25,7 @@ Quick visual guide. Every numbered badge in a picture is explained under it.
 2. **Filter**: two filters (tabs **1** and **2**), `SER` toggles series / parallel. 16 types plus **Custom (points)**: drag up to 8 EQ-style points on the graph. `ROUTE` picks which sources feed the selected filter.
 3. **MIDI LEARN**: switch it on, click any knob, then move a knob/fader on your MIDI keyboard. The knob shows `CCn`. Right-click a bound knob to unbind, `CLEAR` removes all bindings. Bindings are saved with the project.
 4. **SUB / NOISE** with INIT, RANDOM and COPY OSC tools.
-5. **Tabs**: ENV (4 envelopes, INV.LEGATO), LFO (8 LFOs on two pages), MATRIX (16 slots), FX, ARP.
+5. **Pages**: SOUND, MOD (8 LFOs), MATRIX (16 slots), FX, SEQ (arp + clips), SETTINGS.
 6. **Mod sources**: drag a chip onto any knob; drag vertically on the knob to set the depth. Right-click the modulation ring to remove it.
 7. **8 macros**: assign them like any other source.
 8. **OCT / SEMI spinners and wheels**: click the arrows, drag, use the mouse wheel; double-click resets. They transpose both MIDI input and the on-screen keys. The pitch wheel springs back, the mod wheel stays where you leave it; both follow your hardware wheels.
@@ -42,6 +57,12 @@ Quick visual guide. Every numbered badge in a picture is explained under it.
 * OCT / SEMI shift incoming notes; notes already held are released correctly when you change the shift.
 * MIDI learn works for every parameter: oscillator, filter, envelope, LFO, FX and macro knobs.
 
+## 3b. Modulation matrix
+
+![Matrix](img/manual_matrix.png)
+
+Each route: **source**, **destination**, **amount** (bipolar), **curve**, **UNI** (unipolar) and an optional **scaled by** source. Routes made by dragging a chip onto a knob appear here automatically.
+
 ## 4b. Sample oscillator
 
 ![Sample oscillator](img/manual_sample.png)
@@ -58,13 +79,13 @@ Each oscillator can be switched between **WT** (wavetable) and **SMP** (sample) 
 
 ![Arp pattern](img/manual_arp.png)
 
-Set **MODE = Pattern** in the ARP tab. 16 steps, each with on / rest, velocity, which held note it plays (1 = lowest, wraps round the chord) and a transposition in semitones. Right-click a step number to end the pattern there. The pattern is saved with presets and projects.
+Set **MODE = Pattern** in the ARPEGGIATOR panel of the SEQ page. 16 steps, each with on / rest, velocity, which held note it plays (1 = lowest, wraps round the chord) and a transposition in semitones. Right-click a step number to end the pattern there. The pattern is saved with presets and projects.
 
 ## 4d. Clip sequencer
 
 ![Clip sequencer](img/manual_clip.png)
 
-Open the **CLIP** tab and switch **CLIP ON**. Hold a key: the selected clip plays and loops, transposed from the key you hold (the **KEY** row of the piano roll is that key). Releasing the key stops it.
+Open the **SEQ** page, go to the CLIP SEQUENCER panel and switch **CLIP ON**. Hold a key: the selected clip plays and loops, transposed from the key you hold (the **KEY** row of the piano roll is that key). Releasing the key stops it.
 
 1. **CLIP ON** replaces the arpeggiator while it is on.
 2. **12 clip slots**; a dot marks slots that contain notes. Clips are saved with the preset.
@@ -100,6 +121,7 @@ UNDO and REDO (header, or Ctrl+Z / Ctrl+Y) step through your parameter changes, 
 | Arp pattern editor, undo / redo | done |
 | Multisample (SFZ) / Granular / Spectral oscillator modes | not yet |
 | Clip sequencer (12 clips, piano roll) | done |
+| Serum-style pages (SOUND / MOD / MATRIX / FX / SEQ / SETTINGS) | done |
 | Tuning (A4, scales), MIDI channel, velocity curve | done |
 | Arp banks (12 slots), oscillator mapping editor | not yet |
 | Convolve, reverb types, preset tags and ratings | not yet |
