@@ -449,6 +449,7 @@ fn drop_files(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Share
         return;
     }
     let pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or(area_a.center());
+    st.say(now, format!("dropped {} file(s)", dropped.len()));
     let mut msgs: Vec<String> = Vec::new();
     for path in dropped {
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();

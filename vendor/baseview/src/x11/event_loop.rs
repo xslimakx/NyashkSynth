@@ -365,6 +365,7 @@ impl EventLoop {
             }
             self.dnd_source = Some(src);
             self.dnd_ok = types.contains(&a.TEXT_URI_LIST);
+            dnd_log(&format!("enter from {src}, offers uri-list: {} ({} types)", self.dnd_ok, types.len()));
             self.dnd_entered = false;
             true
         } else if event.type_ == a.XdndPosition {
@@ -399,6 +400,7 @@ impl EventLoop {
             self.dnd_entered = false;
             true
         } else if event.type_ == a.XdndDrop {
+            dnd_log(&format!("drop (accepted={})", self.dnd_ok));
             if self.dnd_source == Some(d[0]) && self.dnd_ok {
                 let _ = self.window.xcb_connection.conn.convert_selection(win, a.XdndSelection, a.TEXT_URI_LIST, a.NYASHK_DROP, d[2]);
                 let _ = self.window.xcb_connection.conn.flush();
@@ -429,6 +431,7 @@ impl EventLoop {
                 files = parse_uri_list(&String::from_utf8_lossy(&r.value));
             }
         }
+        dnd_log(&format!("received {} file(s)", files.len()));
         if let Some(src) = self.dnd_source.take() {
             self.dnd_send(src, a.XdndFinished, [win, 1, a.XdndActionCopy, 0, 0]);
         }
@@ -461,6 +464,13 @@ fn mouse_id(id: u8) -> MouseButton {
         8 => MouseButton::Back,
         9 => MouseButton::Forward,
         id => MouseButton::Other(id),
+    }
+}
+
+fn dnd_log(msg: &str) {
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nyashktune.log") {
+        let _ = writeln!(f, "dnd: {msg}");
     }
 }
 
