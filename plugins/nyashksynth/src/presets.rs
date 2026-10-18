@@ -1,0 +1,869 @@
+//! Factory presets: lists of (parameter id, plain value). Everything else is reset to default.
+
+use crate::files;
+use crate::shared::Shared;
+use crate::SynthParams;
+use nih_plug::prelude::*;
+use std::path::PathBuf;
+
+pub struct Preset {
+    pub name: &'static str,
+    pub cat: &'static str,
+    pub values: &'static [(&'static str, f32)],
+}
+
+pub const PRESETS: &[Preset] = &[
+    Preset { name: "Init",
+        cat: "Init", values: &[] },
+    Preset {
+        name: "Pure Saw Lead",
+        cat: "Lead",
+        values: &[
+            ("a_pos", 0.5), ("a_un", 5.0), ("a_dt", 0.28), ("fl_cut", 7000.0), ("fl_res", 0.12),
+            ("e1_a", 2.0), ("e1_d", 400.0), ("e1_s", 0.8), ("e1_r", 180.0),
+            ("ch_on", 1.0), ("ch_mx", 0.3), ("dl_on", 1.0), ("dl_mx", 0.18), ("dl_fb", 0.3),
+        ],
+    },
+    Preset {
+        name: "Supersaw Pad",
+        cat: "Pad",
+        values: &[
+            ("a_pos", 0.5), ("a_un", 9.0), ("a_dt", 0.42), ("a_bl", 0.9), ("a_lv", 0.6),
+            ("b_on", 1.0), ("b_pos", 0.5), ("b_un", 7.0), ("b_dt", 0.3), ("b_fn", 7.0), ("b_lv", 0.5),
+            ("fl_cut", 3200.0), ("fl_res", 0.15),
+            ("e1_a", 700.0), ("e1_d", 900.0), ("e1_s", 0.85), ("e1_r", 1600.0),
+            ("ch_on", 1.0), ("ch_mx", 0.4), ("rv_on", 1.0), ("rv_mx", 0.3), ("rv_sz", 0.8),
+        ],
+    },
+    Preset {
+        name: "Sub Bass",
+        cat: "Bass",
+        values: &[
+            ("a_pos", 0.0), ("a_lv", 0.8), ("sub_on", 1.0), ("sub_lv", 0.5), ("sub_wv", 1.0),
+            ("fl_cut", 900.0), ("fl_res", 0.1), ("vm", 1.0), ("gl", 40.0),
+            ("e1_a", 1.0), ("e1_d", 200.0), ("e1_s", 0.9), ("e1_r", 120.0),
+        ],
+    },
+    Preset {
+        name: "Reese Bass",
+        cat: "Bass",
+        values: &[
+            ("a_pos", 0.5), ("a_un", 3.0), ("a_dt", 0.22), ("a_oc", -1.0),
+            ("b_on", 1.0), ("b_pos", 0.5), ("b_un", 3.0), ("b_dt", 0.22), ("b_oc", -1.0), ("b_fn", 14.0),
+            ("fl_cut", 650.0), ("fl_res", 0.3), ("fl_drv", 0.2),
+            ("sh_1", 0.0), ("rt_1", 0.3), ("ms_1", 3.0), ("md_1", 9.0), ("ma_1", 0.2),
+            ("ds_on", 1.0), ("ds_dr", 0.3), ("ds_mx", 0.6), ("vm", 1.0), ("gl", 60.0),
+        ],
+    },
+    Preset {
+        name: "Wobble Bass",
+        cat: "Bass",
+        values: &[
+            ("a_pos", 0.5), ("a_un", 2.0), ("a_dt", 0.15), ("a_oc", -1.0), ("sub_on", 1.0), ("sub_lv", 0.4),
+            ("fl_cut", 420.0), ("fl_res", 0.55), ("fl_drv", 0.3),
+            ("sh_1", 0.0), ("sy_1", 1.0), ("dv_1", 6.0), ("ms_1", 3.0), ("md_1", 9.0), ("ma_1", 0.55),
+            ("vm", 1.0), ("e1_s", 1.0),
+        ],
+    },
+    Preset {
+        name: "Fold Bass",
+        cat: "Bass",
+        values: &[
+            ("a_tb", 2.0), ("a_pos", 0.25), ("a_oc", -1.0), ("fl_cut", 2400.0), ("fl_res", 0.2),
+            ("ms_1", 1.0), ("md_1", 1.0), ("ma_1", 0.5), ("e2_a", 1.0), ("e2_d", 500.0), ("e2_s", 0.0),
+            ("ds_on", 1.0), ("ds_ty", 2.0), ("ds_dr", 0.5), ("ds_mx", 0.7), ("vm", 1.0),
+        ],
+    },
+    Preset {
+        name: "Vowel Pluck",
+        cat: "Pluck",
+        values: &[
+            ("a_tb", 3.0), ("a_pos", 0.05), ("a_un", 3.0), ("a_dt", 0.15),
+            ("ms_1", 1.0), ("md_1", 1.0), ("ma_1", 0.6), ("e2_a", 1.0), ("e2_d", 450.0), ("e2_s", 0.0),
+            ("e1_a", 1.0), ("e1_d", 450.0), ("e1_s", 0.0), ("e1_r", 260.0),
+            ("fl_cut", 9000.0), ("dl_on", 1.0), ("dl_mx", 0.25), ("dl_sy", 1.0), ("dl_dv", 6.0), ("rv_on", 1.0), ("rv_mx", 0.22),
+        ],
+    },
+    Preset {
+        name: "Glass Bells",
+        cat: "Keys",
+        values: &[
+            ("a_tb", 5.0), ("a_pos", 0.45), ("a_un", 2.0), ("a_dt", 0.08),
+            ("ms_1", 1.0), ("md_1", 1.0), ("ma_1", -0.35), ("e2_a", 1.0), ("e2_d", 2500.0), ("e2_s", 0.0),
+            ("e1_a", 1.0), ("e1_d", 2200.0), ("e1_s", 0.0), ("e1_r", 1200.0),
+            ("fl_cut", 12000.0), ("rv_on", 1.0), ("rv_mx", 0.35), ("rv_sz", 0.85),
+        ],
+    },
+    Preset {
+        name: "Comb Drift Pad",
+        cat: "Pad",
+        values: &[
+            ("a_tb", 4.0), ("a_pos", 0.4), ("a_un", 5.0), ("a_dt", 0.3), ("a_lv", 0.65),
+            ("sh_1", 6.0), ("rt_1", 0.18), ("ms_1", 3.0), ("md_1", 1.0), ("ma_1", 0.5),
+            ("e1_a", 900.0), ("e1_d", 1000.0), ("e1_s", 0.9), ("e1_r", 1800.0),
+            ("fl_cut", 5500.0), ("ch_on", 1.0), ("rv_on", 1.0), ("rv_mx", 0.35),
+        ],
+    },
+    Preset {
+        name: "PWM Lead",
+        cat: "Lead",
+        values: &[
+            ("a_tb", 1.0), ("a_pos", 0.3), ("a_un", 3.0), ("a_dt", 0.18),
+            ("sh_1", 1.0), ("rt_1", 0.8), ("ms_1", 3.0), ("md_1", 1.0), ("ma_1", 0.45),
+            ("fl_cut", 5200.0), ("fl_res", 0.15), ("e1_a", 3.0), ("e1_s", 0.85), ("e1_r", 200.0),
+            ("dl_on", 1.0), ("dl_mx", 0.2),
+        ],
+    },
+    Preset {
+        name: "Organ Keys",
+        cat: "Keys",
+        values: &[
+            ("a_tb", 6.0), ("a_pos", 0.4), ("a_un", 2.0), ("a_dt", 0.06),
+            ("e1_a", 3.0), ("e1_d", 100.0), ("e1_s", 1.0), ("e1_r", 90.0),
+            ("fl_cut", 9000.0), ("ch_on", 1.0), ("ch_mx", 0.35), ("rv_on", 1.0), ("rv_mx", 0.15),
+        ],
+    },
+    Preset {
+        name: "Digital Rise",
+        cat: "FX",
+        values: &[
+            ("a_tb", 7.0), ("a_pos", 0.0), ("a_un", 4.0), ("a_dt", 0.2),
+            ("ms_1", 1.0), ("md_1", 1.0), ("ma_1", 1.0), ("e2_a", 4000.0), ("e2_d", 2000.0), ("e2_s", 1.0),
+            ("fl_ty", 1.0), ("fl_cut", 700.0), ("ms_2", 1.0), ("md_2", 9.0), ("ma_2", 0.7),
+            ("e1_a", 1500.0), ("e1_s", 1.0), ("e1_r", 900.0), ("rv_on", 1.0), ("rv_mx", 0.3),
+        ],
+    },
+    Preset {
+        name: "Sync Screamer",
+        cat: "Lead",
+        values: &[
+            ("a_pos", 0.5), ("a_wm", 5.0), ("a_wa", 0.3), ("a_un", 2.0), ("a_dt", 0.12),
+            ("ms_1", 1.0), ("md_1", 7.0), ("ma_1", 0.7), ("e2_a", 1.0), ("e2_d", 600.0), ("e2_s", 0.2),
+            ("fl_cut", 6000.0), ("fl_res", 0.2), ("e1_s", 0.85), ("e1_r", 160.0), ("vm", 1.0), ("gl", 80.0),
+        ],
+    },
+    Preset {
+        name: "Dream Keys",
+        cat: "Keys",
+        values: &[
+            ("a_pos", 0.12), ("a_un", 3.0), ("a_dt", 0.12), ("b_on", 1.0), ("b_tb", 6.0), ("b_pos", 0.7), ("b_lv", 0.3), ("b_oc", 1.0),
+            ("fl_cut", 4200.0), ("e1_a", 6.0), ("e1_d", 1200.0), ("e1_s", 0.35), ("e1_r", 900.0),
+            ("ch_on", 1.0), ("dl_on", 1.0), ("dl_mx", 0.22), ("dl_fb", 0.4), ("rv_on", 1.0), ("rv_mx", 0.3), ("rv_sz", 0.8),
+        ],
+    },
+    Preset {
+        name: "Brass Stab",
+        cat: "Brass",
+        values: &[
+            ("a_pos", 0.5), ("a_un", 4.0), ("a_dt", 0.14), ("b_on", 1.0), ("b_pos", 0.5), ("b_fn", 9.0), ("b_un", 3.0),
+            ("fl_cut", 450.0), ("fl_res", 0.2), ("ms_1", 1.0), ("md_1", 9.0), ("ma_1", 0.55), ("e2_a", 60.0), ("e2_d", 350.0), ("e2_s", 0.35),
+            ("e1_a", 25.0), ("e1_d", 500.0), ("e1_s", 0.75), ("e1_r", 200.0), ("rv_on", 1.0), ("rv_mx", 0.18),
+        ],
+    },
+
+    Preset {
+        name: "Growl Bass",
+        cat: "Bass",
+        values: &[
+            ("a_pos", 0.5), ("a_oc", -1.0), ("a_wm", 5.0), ("a_wa", 0.25), ("a_un", 3.0), ("a_dt", 0.2),
+            ("sub_on", 1.0), ("sub_lv", 0.45), ("fl_ty", 6.0), ("fl_cut", 520.0), ("fl_res", 0.45), ("fl_drv", 0.35),
+            ("sh_1", 6.0), ("rt_1", 2.5), ("ms_1", 3.0), ("md_1", 7.0), ("ma_1", 0.45),
+            ("ms_2", 3.0), ("md_2", 9.0), ("ma_2", 0.25), ("vm", 1.0), ("gl", 30.0),
+            ("ds_on", 1.0), ("ds_ty", 4.0), ("ds_dr", 0.35), ("ds_mx", 0.7),
+        ],
+    },
+    Preset {
+        name: "Acid Squelch",
+        cat: "Bass",
+        values: &[
+            ("a_pos", 0.5), ("a_oc", -1.0), ("fl_ty", 6.0), ("fl_cut", 260.0), ("fl_res", 0.78), ("fl_drv", 0.25),
+            ("ms_1", 1.0), ("md_1", 9.0), ("ma_1", 0.55), ("e2_a", 1.0), ("e2_d", 180.0), ("e2_s", 0.0),
+            ("e1_a", 1.0), ("e1_d", 250.0), ("e1_s", 0.6), ("e1_r", 90.0), ("vm", 2.0), ("gl", 55.0),
+        ],
+    },
+    Preset {
+        name: "Sub Pressure",
+        cat: "Bass",
+        values: &[
+            ("a_pos", 0.0), ("a_oc", -1.0), ("a_lv", 0.8), ("sub_on", 1.0), ("sub_oc", -1.0), ("sub_lv", 0.5),
+            ("fl_cut", 600.0), ("fl_drv", 0.3), ("e1_a", 1.0), ("e1_d", 400.0), ("e1_s", 1.0), ("e1_r", 80.0), ("vm", 1.0),
+            ("ds_on", 1.0), ("ds_ty", 11.0), ("ds_dr", 0.2), ("ds_mx", 0.5), ("eq_on", 1.0), ("eq_lf", 90.0), ("eq_lg", 3.0), ("eq_mg", -2.0), ("eq_mf", 350.0),
+        ],
+    },
+    Preset {
+        name: "Rubber Bass",
+        cat: "Bass",
+        values: &[
+            ("a_tb", 2.0), ("a_pos", 0.35), ("a_oc", -1.0), ("fl_cut", 380.0), ("fl_res", 0.3),
+            ("ms_1", 1.0), ("md_1", 9.0), ("ma_1", 0.5), ("e2_a", 1.0), ("e2_d", 220.0), ("e2_s", 0.1),
+            ("e1_a", 1.0), ("e1_d", 380.0), ("e1_s", 0.0), ("e1_r", 120.0), ("cp_on", 1.0), ("cp_th", -20.0), ("cp_rt", 4.0), ("cp_gn", 4.0),
+        ],
+    },
+    Preset {
+        name: "Hyper Lead",
+        cat: "Lead",
+        values: &[
+            ("a_pos", 0.5), ("a_un", 7.0), ("a_dt", 0.35), ("a_um", 1.0), ("a_bl", 0.8), ("fl_cut", 9000.0), ("fl_res", 0.1),
+            ("e1_a", 2.0), ("e1_d", 300.0), ("e1_s", 0.85), ("e1_r", 220.0),
+            ("hy_on", 1.0), ("hy_mx", 0.5), ("hy_un", 5.0), ("hy_dm", 0.5), ("dl_on", 1.0), ("dl_mx", 0.2), ("dl_sy", 1.0), ("dl_dv", 6.0), ("rv_on", 1.0), ("rv_mx", 0.2),
+        ],
+    },
+    Preset {
+        name: "Mono Glide Lead",
+        cat: "Lead",
+        values: &[
+            ("a_pos", 0.55), ("a_un", 2.0), ("a_dt", 0.1), ("b_on", 1.0), ("b_pos", 0.25), ("b_lv", 0.4), ("b_oc", 0.0), ("b_fn", 6.0),
+            ("fl_ty", 1.0), ("fl_cut", 4200.0), ("fl_res", 0.2), ("vm", 2.0), ("gl", 90.0),
+            ("sh_1", 0.0), ("rt_1", 5.5), ("ri_1", 600.0), ("tg_1", 1.0), ("ms_1", 3.0), ("md_1", 5.0), ("ma_1", 0.04),
+            ("e1_a", 5.0), ("e1_s", 0.9), ("e1_r", 200.0), ("dl_on", 1.0), ("dl_mx", 0.25),
+        ],
+    },
+    Preset {
+        name: "Square Pulse Lead",
+        cat: "Lead",
+        values: &[
+            ("a_pos", 0.75), ("a_wm", 4.0), ("a_wa", 0.2), ("a_un", 3.0), ("a_dt", 0.15),
+            ("sh_1", 1.0), ("rt_1", 3.0), ("ms_1", 3.0), ("md_1", 7.0), ("ma_1", 0.3),
+            ("fl_cut", 6500.0), ("e1_a", 2.0), ("e1_s", 0.8), ("e1_r", 120.0), ("ch_on", 1.0), ("ch_mx", 0.3),
+        ],
+    },
+    Preset {
+        name: "Formant Lead",
+        cat: "Lead",
+        values: &[
+            ("a_pos", 0.5), ("a_un", 3.0), ("a_dt", 0.2), ("fl_ty", 15.0), ("fl_cut", 160.0), ("fl_res", 0.55),
+            ("ms_1", 3.0), ("md_1", 9.0), ("ma_1", 0.5), ("sh_1", 6.0), ("rt_1", 0.5),
+            ("ms_2", 9.0), ("md_2", 9.0), ("ma_2", 0.2), ("e1_a", 6.0), ("e1_s", 0.9), ("e1_r", 250.0), ("rv_on", 1.0), ("rv_mx", 0.2),
+        ],
+    },
+    Preset {
+        name: "Warm Pad",
+        cat: "Pad",
+        values: &[
+            ("a_pos", 0.4), ("a_un", 6.0), ("a_dt", 0.28), ("a_lv", 0.6), ("b_on", 1.0), ("b_tb", 1.0), ("b_pos", 0.2), ("b_un", 4.0), ("b_dt", 0.2), ("b_lv", 0.4),
+            ("fl_cut", 2400.0), ("fl_res", 0.12), ("fl_kt", 0.4), ("e1_a", 900.0), ("e1_d", 1200.0), ("e1_s", 0.85), ("e1_r", 1800.0),
+            ("sh_1", 6.0), ("rt_1", 0.12), ("ms_1", 3.0), ("md_1", 9.0), ("ma_1", 0.15),
+            ("ch_on", 1.0), ("ch_mx", 0.35), ("rv_on", 1.0), ("rv_sz", 0.85), ("rv_mx", 0.3),
+        ],
+    },
+    Preset {
+        name: "Phaser Strings",
+        cat: "Pad",
+        values: &[
+            ("a_pos", 0.5), ("a_un", 8.0), ("a_dt", 0.38), ("a_bl", 0.9), ("fl_cut", 5200.0), ("e1_a", 450.0), ("e1_d", 800.0), ("e1_s", 0.9), ("e1_r", 1100.0),
+            ("ph_on", 1.0), ("ph_rt", 0.25), ("ph_dp", 0.7), ("ph_fb", 0.45), ("ph_mx", 0.5), ("rv_on", 1.0), ("rv_mx", 0.28),
+        ],
+    },
+    Preset {
+        name: "Glass Pad",
+        cat: "Pad",
+        values: &[
+            ("a_tb", 5.0), ("a_pos", 0.3), ("a_un", 5.0), ("a_dt", 0.25), ("a_lv", 0.55), ("fl_cut", 14000.0),
+            ("sh_1", 6.0), ("rt_1", 0.2), ("ms_1", 3.0), ("md_1", 1.0), ("ma_1", 0.35),
+            ("e1_a", 1100.0), ("e1_d", 1500.0), ("e1_s", 0.8), ("e1_r", 2600.0), ("ch_on", 1.0), ("rv_on", 1.0), ("rv_sz", 0.95), ("rv_mx", 0.45), ("rv_lc", 300.0),
+        ],
+    },
+    Preset {
+        name: "Dark Atmosphere",
+        cat: "Pad",
+        values: &[
+            ("a_tb", 7.0), ("a_pos", 0.2), ("a_oc", -1.0), ("a_un", 4.0), ("a_dt", 0.3), ("noi_lv", 0.35), ("noi_ty", 10.0),
+            ("fl_ty", 1.0), ("fl_cut", 900.0), ("fl_res", 0.2), ("sh_1", 6.0), ("rt_1", 0.08), ("ms_1", 3.0), ("md_1", 9.0), ("ma_1", 0.3),
+            ("e1_a", 2500.0), ("e1_d", 2000.0), ("e1_s", 0.9), ("e1_r", 3500.0), ("rv_on", 1.0), ("rv_sz", 0.95), ("rv_mx", 0.4),
+        ],
+    },
+    Preset {
+        name: "Soft Pluck",
+        cat: "Pluck",
+        values: &[
+            ("a_pos", 0.5), ("a_un", 3.0), ("a_dt", 0.1), ("fl_cut", 800.0), ("fl_res", 0.15),
+            ("ms_1", 1.0), ("md_1", 9.0), ("ma_1", 0.6), ("e2_a", 1.0), ("e2_d", 260.0), ("e2_s", 0.0),
+            ("e1_a", 1.0), ("e1_d", 420.0), ("e1_s", 0.0), ("e1_r", 260.0), ("dl_on", 1.0), ("dl_mx", 0.22), ("rv_on", 1.0), ("rv_mx", 0.2),
+        ],
+    },
+    Preset {
+        name: "Kalimba",
+        cat: "Pluck",
+        values: &[
+            ("a_tb", 5.0), ("a_pos", 0.2), ("a_oc", 1.0), ("a_un", 1.0), ("ms_1", 1.0), ("md_1", 1.0), ("ma_1", -0.15), ("e2_a", 1.0), ("e2_d", 300.0), ("e2_s", 0.0),
+            ("e1_a", 1.0), ("e1_d", 900.0), ("e1_s", 0.0), ("e1_r", 500.0), ("fl_cut", 10000.0), ("rv_on", 1.0), ("rv_mx", 0.28),
+        ],
+    },
+    Preset {
+        name: "Pizzicato",
+        cat: "Pluck",
+        values: &[
+            ("a_tb", 2.0), ("a_pos", 0.4), ("fl_ty", 1.0), ("fl_cut", 1600.0), ("fl_res", 0.1), ("ms_1", 1.0), ("md_1", 9.0), ("ma_1", 0.35), ("e2_a", 1.0), ("e2_d", 130.0), ("e2_s", 0.0),
+            ("e1_a", 1.0), ("e1_d", 200.0), ("e1_s", 0.0), ("e1_r", 120.0), ("rv_on", 1.0), ("rv_mx", 0.14),
+        ],
+    },
+    Preset {
+        name: "FM Electric Piano",
+        cat: "Keys",
+        values: &[
+            ("a_tb", 5.0), ("a_pos", 0.18), ("a_un", 2.0), ("a_dt", 0.05), ("ms_1", 7.0), ("md_1", 1.0), ("ma_1", 0.3),
+            ("e1_a", 1.0), ("e1_d", 1800.0), ("e1_s", 0.0), ("e1_r", 300.0), ("fl_cut", 9000.0), ("ch_on", 1.0), ("ch_mx", 0.3), ("rv_on", 1.0), ("rv_mx", 0.18),
+        ],
+    },
+    Preset {
+        name: "Clav Comb",
+        cat: "Keys",
+        values: &[
+            ("a_tb", 4.0), ("a_pos", 0.55), ("fl_ty", 2.0), ("fl_cut", 280.0), ("ms_1", 1.0), ("md_1", 1.0), ("ma_1", -0.4), ("e2_a", 1.0), ("e2_d", 220.0), ("e2_s", 0.0),
+            ("e1_a", 1.0), ("e1_d", 500.0), ("e1_s", 0.0), ("e1_r", 90.0), ("ph_on", 1.0), ("ph_mx", 0.3), ("ph_rt", 0.4),
+        ],
+    },
+    Preset {
+        name: "Choir Ahh",
+        cat: "Vocal",
+        values: &[
+            ("a_tb", 3.0), ("a_pos", 0.0), ("a_un", 5.0), ("a_dt", 0.18), ("a_lv", 0.6), ("ms_1", 3.0), ("md_1", 1.0), ("ma_1", 0.0),
+            ("fl_cut", 7000.0), ("e1_a", 600.0), ("e1_d", 600.0), ("e1_s", 0.9), ("e1_r", 900.0), ("ch_on", 1.0), ("rv_on", 1.0), ("rv_sz", 0.85), ("rv_mx", 0.35),
+        ],
+    },
+    Preset {
+        name: "Vowel Morph",
+        cat: "Vocal",
+        values: &[
+            ("a_tb", 3.0), ("a_pos", 0.0), ("a_un", 3.0), ("a_dt", 0.12), ("sh_1", 0.0), ("rt_1", 0.35), ("ms_1", 3.0), ("md_1", 1.0), ("ma_1", 1.0),
+            ("fl_cut", 8000.0), ("e1_a", 40.0), ("e1_s", 0.9), ("e1_r", 300.0), ("dl_on", 1.0), ("dl_mx", 0.2), ("rv_on", 1.0), ("rv_mx", 0.2),
+        ],
+    },
+    Preset {
+        name: "Wavetable Morph",
+        cat: "Synth",
+        values: &[
+            ("a_tb", 2.0), ("a_pos", 0.0), ("a_un", 4.0), ("a_dt", 0.2), ("sh_1", 1.0), ("rt_1", 0.25), ("ms_1", 3.0), ("md_1", 1.0), ("ma_1", 1.0),
+            ("fl_cut", 5200.0), ("e1_a", 25.0), ("e1_s", 0.85), ("e1_r", 400.0), ("ch_on", 1.0), ("dl_on", 1.0), ("dl_mx", 0.2),
+        ],
+    },
+    Preset {
+        name: "Retro Poly",
+        cat: "Synth",
+        values: &[
+            ("a_pos", 0.5), ("a_un", 2.0), ("a_dt", 0.08), ("b_on", 1.0), ("b_pos", 0.75), ("b_lv", 0.4), ("fl_cut", 1800.0), ("fl_res", 0.3), ("fl_kt", 0.5),
+            ("ms_1", 1.0), ("md_1", 9.0), ("ma_1", 0.3), ("e2_a", 1.0), ("e2_d", 500.0), ("e2_s", 0.3),
+            ("e1_a", 8.0), ("e1_d", 600.0), ("e1_s", 0.7), ("e1_r", 300.0), ("ch_on", 1.0), ("ch_mx", 0.45),
+        ],
+    },
+    Preset {
+        name: "Wind Sweep",
+        cat: "FX",
+        values: &[
+            ("a_on", 0.0), ("noi_lv", 0.7), ("noi_ty", 10.0), ("fl_ty", 4.0), ("fl_cut", 700.0), ("fl_res", 0.5),
+            ("sh_1", 6.0), ("rt_1", 0.15), ("ms_1", 3.0), ("md_1", 9.0), ("ma_1", 0.5), ("e1_a", 1500.0), ("e1_s", 1.0), ("e1_r", 2500.0), ("rv_on", 1.0), ("rv_mx", 0.35),
+        ],
+    },
+    Preset {
+        name: "Vinyl Dust",
+        cat: "FX",
+        values: &[
+            ("a_on", 0.0), ("noi_lv", 0.6), ("noi_ty", 8.0), ("fl_cut", 9000.0), ("e1_a", 20.0), ("e1_s", 1.0), ("e1_r", 300.0), ("fl_n", 1.0),
+        ],
+    },
+    Preset {
+        name: "Noise Riser",
+        cat: "FX",
+        values: &[
+            ("a_on", 0.0), ("noi_lv", 0.8), ("noi_ty", 0.0), ("fl_ty", 4.0), ("fl_cut", 300.0), ("fl_res", 0.4),
+            ("ms_1", 1.0), ("md_1", 9.0), ("ma_1", 1.0), ("e2_a", 6000.0), ("e2_d", 100.0), ("e2_s", 1.0),
+            ("e1_a", 3000.0), ("e1_s", 1.0), ("e1_r", 400.0), ("rv_on", 1.0), ("rv_mx", 0.3),
+        ],
+    },
+    Preset {
+        name: "Laser Zap",
+        cat: "FX",
+        values: &[
+            ("a_pos", 0.5), ("a_wm", 5.0), ("a_wa", 0.6), ("ms_1", 1.0), ("md_1", 5.0), ("ma_1", 0.9), ("e2_a", 1.0), ("e2_d", 280.0), ("e2_s", 0.0),
+            ("e1_a", 1.0), ("e1_d", 380.0), ("e1_s", 0.0), ("e1_r", 120.0), ("dl_on", 1.0), ("dl_mx", 0.3), ("dl_fb", 0.4),
+        ],
+    },
+    Preset {
+        name: "Tape Hiss Bed",
+        cat: "FX",
+        values: &[
+            ("a_on", 0.0), ("noi_lv", 0.5), ("noi_ty", 9.0), ("e1_a", 100.0), ("e1_s", 1.0), ("e1_r", 400.0), ("fl_cut", 12000.0),
+        ],
+    },
+    Preset {
+        name: "Fat Brass",
+        cat: "Brass",
+        values: &[
+            ("a_pos", 0.5), ("a_un", 5.0), ("a_dt", 0.16), ("b_on", 1.0), ("b_pos", 0.5), ("b_fn", 7.0), ("b_un", 4.0), ("b_lv", 0.55),
+            ("fl_ty", 1.0), ("fl_cut", 500.0), ("fl_res", 0.2), ("ms_1", 1.0), ("md_1", 9.0), ("ma_1", 0.5), ("e2_a", 90.0), ("e2_d", 400.0), ("e2_s", 0.4),
+            ("e1_a", 40.0), ("e1_d", 400.0), ("e1_s", 0.8), ("e1_r", 220.0), ("rv_on", 1.0), ("rv_mx", 0.15), ("cp_on", 1.0), ("cp_th", -16.0),
+        ],
+    },
+    Preset {
+        name: "Chorused Saw",
+        cat: "Synth",
+        values: &[
+            ("a_pos", 0.5), ("a_un", 3.0), ("a_dt", 0.12), ("fl_cut", 7500.0), ("e1_a", 4.0), ("e1_s", 0.9), ("e1_r", 200.0),
+            ("ch_on", 1.0), ("ch_mx", 0.5), ("ch_dp", 0.6), ("hy_on", 1.0), ("hy_mx", 0.25), ("hy_dm", 0.5),
+        ],
+    },
+    // ---------------------------------------------------------------- v2.1: arpeggiator, effect modulation, slopes
+    Preset {
+        name: "Arp Pluck",
+        cat: "Arp",
+        values: &[
+            ("a_tb", 2.0), ("a_pos", 0.3), ("a_un", 2.0), ("a_dt", 0.12), ("fl_cut", 2600.0), ("fl_res", 0.2),
+            ("e1_a", 1.0), ("e1_d", 260.0), ("e1_s", 0.0), ("e1_r", 200.0),
+            ("ms_1", 1.0), ("md_1", 9.0), ("ma_1", 0.4), ("e2_a", 1.0), ("e2_d", 220.0), ("e2_s", 0.0),
+            ("ar_on", 1.0), ("ar_md", 0.0), ("ar_dv", 3.0), ("ar_oc", 2.0), ("ar_gt", 0.5),
+            ("dl_on", 1.0), ("dl_mx", 0.25), ("dl_sy", 1.0), ("dl_dv", 7.0), ("dl_fb", 0.4), ("rv_on", 1.0), ("rv_mx", 0.2),
+        ],
+    },
+    Preset {
+        name: "Trance Gate Chords",
+        cat: "Arp",
+        values: &[
+            ("a_pos", 0.5), ("a_un", 7.0), ("a_dt", 0.35), ("b_on", 1.0), ("b_pos", 0.5), ("b_un", 5.0), ("b_fn", 9.0), ("b_lv", 0.5),
+            ("fl_cut", 5200.0), ("fl_res", 0.1), ("e1_a", 3.0), ("e1_d", 200.0), ("e1_s", 0.9), ("e1_r", 120.0),
+            ("ar_on", 1.0), ("ar_md", 6.0), ("ar_dv", 3.0), ("ar_gt", 0.35),
+            ("hy_on", 1.0), ("hy_mx", 0.4), ("rv_on", 1.0), ("rv_mx", 0.22), ("rv_sz", 0.7),
+        ],
+    },
+    Preset {
+        name: "Up Down Bell Arp",
+        cat: "Arp",
+        values: &[
+            ("a_tb", 5.0), ("a_pos", 0.4), ("fl_cut", 9000.0), ("e1_a", 1.0), ("e1_d", 700.0), ("e1_s", 0.0), ("e1_r", 500.0),
+            ("ar_on", 1.0), ("ar_md", 2.0), ("ar_dv", 3.0), ("ar_oc", 2.0), ("ar_gt", 0.6), ("ar_sw", 0.25),
+            ("dl_on", 1.0), ("dl_mx", 0.3), ("dl_sy", 1.0), ("dl_dv", 8.0), ("dl_fb", 0.45), ("rv_on", 1.0), ("rv_mx", 0.35), ("rv_sz", 0.8),
+        ],
+    },
+    Preset {
+        name: "Pump Pad",
+        cat: "Pad",
+        values: &[
+            ("a_pos", 0.5), ("a_un", 8.0), ("a_dt", 0.4), ("a_lv", 0.65), ("b_on", 1.0), ("b_pos", 0.45), ("b_un", 6.0), ("b_fn", -8.0), ("b_lv", 0.5),
+            ("fl_cut", 4200.0), ("e1_a", 500.0), ("e1_d", 500.0), ("e1_s", 1.0), ("e1_r", 1200.0),
+            ("sh_1", 3.0), ("sy_1", 1.0), ("dv_1", 9.0), ("tg_1", 0.0), ("ms_1", 3.0), ("md_1", 14.0), ("ma_1", -0.7), ("mu_1", 1.0),
+            ("rv_on", 1.0), ("rv_mx", 0.3), ("rv_sz", 0.85), ("ch_on", 1.0), ("ch_mx", 0.3),
+        ],
+    },
+    Preset {
+        name: "Snappy Slope Pluck",
+        cat: "Pluck",
+        values: &[
+            ("a_tb", 1.0), ("a_pos", 0.2), ("a_un", 3.0), ("a_dt", 0.16), ("fl_cut", 2200.0), ("fl_res", 0.25),
+            ("e1_a", 1.0), ("e1_d", 420.0), ("e1_s", 0.0), ("e1_r", 300.0), ("e1_dc", -0.6),
+            ("ms_1", 1.0), ("md_1", 9.0), ("ma_1", 0.55), ("e2_a", 1.0), ("e2_d", 300.0), ("e2_s", 0.0), ("e2_dc", -0.7),
+            ("dl_on", 1.0), ("dl_mx", 0.2), ("rv_on", 1.0), ("rv_mx", 0.18),
+        ],
+    },
+    Preset {
+        name: "Slow Bloom",
+        cat: "Pad",
+        values: &[
+            ("a_pos", 0.4), ("a_un", 8.0), ("a_dt", 0.38), ("b_on", 1.0), ("b_tb", 3.0), ("b_pos", 0.2), ("b_lv", 0.45), ("fl_cut", 1800.0), ("fl_res", 0.15),
+            ("e1_a", 1800.0), ("e1_ac", 0.55), ("e1_d", 800.0), ("e1_s", 0.9), ("e1_r", 2200.0), ("e1_rc", -0.3),
+            ("ms_1", 1.0), ("md_1", 9.0), ("ma_1", 0.35), ("e2_a", 2500.0), ("e2_d", 2000.0), ("e2_s", 0.6),
+            ("sh_1", 0.0), ("rt_1", 0.25), ("ld_1", 1500.0), ("tg_1", 1.0), ("ms_2", 3.0), ("md_2", 1.0), ("ma_2", 0.2),
+            ("rv_on", 1.0), ("rv_mx", 0.4), ("rv_sz", 0.9), ("hy_on", 1.0), ("hy_mx", 0.35),
+        ],
+    },
+    Preset {
+        name: "Delayed Vibrato Lead",
+        cat: "Lead",
+        values: &[
+            ("a_pos", 0.55), ("a_un", 3.0), ("a_dt", 0.14), ("fl_cut", 6000.0), ("fl_res", 0.18), ("vm", 2.0), ("gl", 70.0),
+            ("e1_a", 6.0), ("e1_d", 300.0), ("e1_s", 0.85), ("e1_r", 250.0),
+            ("sh_1", 0.0), ("rt_1", 5.5), ("tg_1", 1.0), ("ld_1", 450.0), ("ri_1", 600.0), ("ms_1", 3.0), ("md_1", 5.0), ("ma_1", 0.045),
+            ("ms_2", 9.0), ("md_2", 5.0), ("ma_2", 0.08), ("dl_on", 1.0), ("dl_mx", 0.2), ("dl_sy", 1.0), ("dl_dv", 7.0), ("rv_on", 1.0), ("rv_mx", 0.2),
+        ],
+    },
+    Preset {
+        name: "Triplet Wobble",
+        cat: "Bass",
+        values: &[
+            ("a_pos", 0.5), ("a_un", 3.0), ("a_dt", 0.2), ("a_oc", -1.0), ("sub_on", 1.0), ("sub_lv", 0.45),
+            ("fl_cut", 380.0), ("fl_res", 0.5), ("fl_drv", 0.3), ("vm", 1.0), ("e1_s", 1.0),
+            ("sh_1", 1.0), ("sy_1", 1.0), ("dv_1", 5.0), ("ms_1", 3.0), ("md_1", 9.0), ("ma_1", 0.6),
+            ("ds_on", 1.0), ("ds_ty", 4.0), ("ds_dr", 0.35), ("ds_mx", 0.6),
+        ],
+    },
+    Preset {
+        name: "Dotted Echo Keys",
+        cat: "Keys",
+        values: &[
+            ("a_tb", 6.0), ("a_pos", 0.3), ("a_un", 2.0), ("a_dt", 0.08), ("fl_cut", 5500.0),
+            ("e1_a", 2.0), ("e1_d", 900.0), ("e1_s", 0.3), ("e1_r", 450.0),
+            ("dl_on", 1.0), ("dl_mx", 0.35), ("dl_sy", 1.0), ("dl_dv", 7.0), ("dl_fb", 0.5), ("dl_pp", 1.0), ("rv_on", 1.0), ("rv_mx", 0.25), ("ch_on", 1.0), ("ch_mx", 0.25),
+        ],
+    },
+    Preset {
+        name: "Macro Delay Throw",
+        cat: "FX",
+        values: &[
+            ("a_pos", 0.5), ("a_un", 4.0), ("a_dt", 0.2), ("fl_cut", 5000.0), ("e1_a", 3.0), ("e1_d", 400.0), ("e1_s", 0.7), ("e1_r", 300.0),
+            ("dl_on", 1.0), ("dl_mx", 0.0), ("dl_sy", 1.0), ("dl_dv", 7.0), ("dl_fb", 0.3), ("rv_on", 1.0), ("rv_mx", 0.0), ("rv_sz", 0.85),
+            ("ms_1", 12.0), ("md_1", 31.0), ("ma_1", 0.7), ("ms_2", 12.0), ("md_2", 32.0), ("ma_2", 0.5), ("ms_3", 13.0), ("md_3", 33.0), ("ma_3", 0.5),
+        ],
+    },
+    Preset {
+        name: "Macro Filter Sweep",
+        cat: "FX",
+        values: &[
+            ("a_pos", 0.5), ("a_un", 6.0), ("a_dt", 0.35), ("a_lv", 0.5), ("b_on", 1.0), ("b_pos", 0.5), ("b_un", 5.0), ("b_fn", 10.0), ("b_lv", 0.4), ("fl_on", 0.0),
+            ("e1_a", 40.0), ("e1_d", 400.0), ("e1_s", 1.0), ("e1_r", 400.0),
+            ("ff_on", 1.0), ("ff_ty", 1.0), ("ff_fc", 700.0), ("ff_q", 0.35), ("ms_1", 12.0), ("md_1", 35.0), ("ma_1", 0.9), ("ms_2", 13.0), ("md_2", 36.0), ("ma_2", 0.5),
+            ("rv_on", 1.0), ("rv_mx", 0.2),
+        ],
+    },
+    Preset {
+        name: "Vowel Choir",
+        cat: "Vocal",
+        values: &[
+            ("a_tb", 3.0), ("a_pos", 0.1), ("a_un", 5.0), ("a_dt", 0.18), ("fl_on", 1.0), ("fl_cut", 1600.0), ("e1_a", 200.0), ("e1_d", 600.0), ("e1_s", 0.9), ("e1_r", 700.0),
+            ("sh_1", 6.0), ("rt_1", 0.5), ("ms_1", 3.0), ("md_1", 1.0), ("ma_1", 0.5), ("rv_on", 1.0), ("rv_mx", 0.35), ("rv_sz", 0.8), ("ch_on", 1.0), ("ch_mx", 0.3),
+        ],
+    },
+    Preset {
+        name: "Comb Metal",
+        cat: "Synth",
+        values: &[
+            ("a_tb", 4.0), ("a_pos", 0.3), ("a_un", 3.0), ("a_dt", 0.1), ("fl_ty", 12.0), ("fl_cut", 440.0), ("fl_res", 0.7),
+            ("e1_a", 1.0), ("e1_d", 500.0), ("e1_s", 0.2), ("e1_r", 400.0), ("ms_1", 1.0), ("md_1", 9.0), ("ma_1", 0.25), ("e2_a", 1.0), ("e2_d", 400.0), ("e2_s", 0.0),
+            ("rv_on", 1.0), ("rv_mx", 0.25),
+        ],
+    },
+    Preset {
+        name: "Ladder Acid",
+        cat: "Bass",
+        values: &[
+            ("a_pos", 0.45), ("a_tb", 2.0), ("fl_ty", 6.0), ("fl_cut", 500.0), ("fl_res", 0.7), ("fl_drv", 0.35), ("vm", 2.0), ("gl", 90.0),
+            ("e1_a", 1.0), ("e1_d", 250.0), ("e1_s", 0.7), ("e1_r", 90.0), ("ms_1", 1.0), ("md_1", 9.0), ("ma_1", 0.6), ("e2_a", 1.0), ("e2_d", 260.0), ("e2_s", 0.1), ("e2_dc", -0.3),
+            ("ms_2", 7.0), ("md_2", 9.0), ("ma_2", 0.25), ("ds_on", 1.0), ("ds_dr", 0.25), ("ds_mx", 0.5),
+        ],
+    },
+    Preset {
+        name: "FM Chime",
+        cat: "Keys",
+        values: &[
+            ("a_tb", 5.0), ("a_pos", 0.55), ("b_on", 1.0), ("b_tb", 5.0), ("b_pos", 0.2), ("b_oc", 1.0), ("b_lv", 0.4),
+            ("e1_a", 1.0), ("e1_d", 1400.0), ("e1_s", 0.0), ("e1_r", 900.0), ("e1_dc", -0.2),
+            ("ms_1", 1.0), ("md_1", 1.0), ("ma_1", -0.3), ("e2_a", 1.0), ("e2_d", 900.0), ("e2_s", 0.0),
+            ("rv_on", 1.0), ("rv_mx", 0.35), ("rv_sz", 0.8),
+        ],
+    },
+    Preset {
+        name: "Kick Thump",
+        cat: "Perc",
+        values: &[
+            ("a_pos", 0.0), ("a_oc", -2.0), ("a_lv", 0.9), ("fl_cut", 1200.0), ("vm", 1.0),
+            ("e1_a", 0.5), ("e1_d", 220.0), ("e1_s", 0.0), ("e1_r", 60.0), ("e1_dc", -0.2),
+            ("ms_1", 1.0), ("md_1", 5.0), ("ma_1", 0.5), ("e2_a", 0.5), ("e2_d", 70.0), ("e2_s", 0.0), ("e2_dc", -0.4),
+            ("ds_on", 1.0), ("ds_ty", 4.0), ("ds_dr", 0.35), ("ds_mx", 0.6),
+        ],
+    },
+    Preset {
+        name: "Noise Snare",
+        cat: "Perc",
+        values: &[
+            ("a_pos", 0.0), ("a_oc", -1.0), ("a_lv", 0.4), ("noi_lv", 0.8), ("noi_ty", 0.0), ("fl_ty", 2.0), ("fl_cut", 900.0), ("fl_res", 0.15),
+            ("e1_a", 0.5), ("e1_d", 170.0), ("e1_s", 0.0), ("e1_r", 120.0), ("e1_dc", -0.3),
+            ("ms_1", 1.0), ("md_1", 5.0), ("ma_1", 0.2), ("e2_a", 0.5), ("e2_d", 60.0), ("e2_s", 0.0), ("rv_on", 1.0), ("rv_mx", 0.15), ("rv_sz", 0.3),
+        ],
+    },
+    Preset {
+        name: "Closed Hat",
+        cat: "Perc",
+        values: &[
+            ("a_on", 0.0), ("noi_lv", 0.8), ("noi_ty", 6.0), ("fl_ty", 3.0), ("fl_cut", 6500.0), ("fl_res", 0.1),
+            ("e1_a", 0.5), ("e1_d", 60.0), ("e1_s", 0.0), ("e1_r", 40.0), ("e1_dc", -0.4),
+        ],
+    },
+    Preset {
+        name: "Hoover",
+        cat: "Lead",
+        values: &[
+            ("a_pos", 0.55), ("a_un", 12.0), ("a_dt", 0.5), ("a_um", 1.0), ("a_bl", 1.0), ("b_on", 1.0), ("b_pos", 0.55), ("b_un", 9.0), ("b_dt", 0.45), ("b_oc", -1.0),
+            ("fl_cut", 3800.0), ("fl_res", 0.2), ("vm", 2.0), ("gl", 130.0),
+            ("e1_a", 5.0), ("e1_d", 300.0), ("e1_s", 0.9), ("e1_r", 240.0), ("ms_1", 1.0), ("md_1", 5.0), ("ma_1", -0.12), ("e2_a", 90.0), ("e2_d", 200.0), ("e2_s", 0.0),
+            ("ds_on", 1.0), ("ds_dr", 0.3), ("ds_mx", 0.6), ("ch_on", 1.0), ("ch_mx", 0.4),
+        ],
+    },
+    Preset {
+        name: "Bit Crush Lead",
+        cat: "Lead",
+        values: &[
+            ("a_tb", 2.0), ("a_pos", 0.2), ("a_un", 2.0), ("a_dt", 0.1), ("fl_cut", 7000.0), ("e1_a", 2.0), ("e1_d", 300.0), ("e1_s", 0.85), ("e1_r", 160.0),
+            ("ds_on", 1.0), ("ds_ty", 3.0), ("ds_dr", 0.4), ("ds_mx", 0.7), ("dl_on", 1.0), ("dl_mx", 0.2), ("dl_sy", 1.0), ("dl_dv", 6.0),
+        ],
+    },
+    Preset {
+        name: "Wind Texture",
+        cat: "FX",
+        values: &[
+            ("a_on", 0.0), ("noi_lv", 0.7), ("noi_ty", 10.0), ("fl_ty", 4.0), ("fl_cut", 1200.0), ("fl_res", 0.5),
+            ("e1_a", 1500.0), ("e1_d", 500.0), ("e1_s", 1.0), ("e1_r", 2500.0),
+            ("sh_1", 6.0), ("rt_1", 0.18), ("ms_1", 3.0), ("md_1", 9.0), ("ma_1", 0.5), ("sh_2", 6.0), ("rt_2", 0.3), ("ms_2", 4.0), ("md_2", 13.0), ("ma_2", 0.6),
+            ("rv_on", 1.0), ("rv_mx", 0.45), ("rv_sz", 0.9), ("ph_on", 1.0), ("ph_mx", 0.4),
+        ],
+    },
+    Preset {
+        name: "Wide Hyper Chords",
+        cat: "Keys",
+        values: &[
+            ("a_pos", 0.5), ("a_un", 5.0), ("a_dt", 0.2), ("a_lv", 0.6), ("b_on", 1.0), ("b_tb", 1.0), ("b_pos", 0.3), ("b_un", 4.0), ("b_lv", 0.4),
+            ("fl_cut", 3800.0), ("e1_a", 6.0), ("e1_d", 600.0), ("e1_s", 0.6), ("e1_r", 500.0),
+            ("hy_on", 1.0), ("hy_mx", 0.55), ("hy_un", 6.0), ("hy_dm", 0.6), ("rv_on", 1.0), ("rv_mx", 0.25),
+        ],
+    },
+    Preset {
+        name: "Phaser Keys",
+        cat: "Keys",
+        values: &[
+            ("a_tb", 6.0), ("a_pos", 0.4), ("a_un", 2.0), ("a_dt", 0.1), ("fl_cut", 6000.0), ("e1_a", 3.0), ("e1_d", 700.0), ("e1_s", 0.5), ("e1_r", 400.0),
+            ("ph_on", 1.0), ("ph_mx", 0.55), ("ph_rt", 0.35), ("ph_fb", 0.5), ("fg_on", 1.0), ("fg_mx", 0.2), ("rv_on", 1.0), ("rv_mx", 0.2),
+        ],
+    },
+    Preset {
+        name: "Mod Wheel Growl",
+        cat: "Synth",
+        values: &[
+            ("a_pos", 0.5), ("a_un", 3.0), ("a_dt", 0.2), ("a_wm", 8.0), ("b_on", 1.0), ("b_pos", 0.3), ("b_oc", -1.0), ("fl_cut", 2400.0), ("fl_res", 0.3),
+            ("e1_a", 5.0), ("e1_d", 400.0), ("e1_s", 0.8), ("e1_r", 200.0),
+            ("ms_1", 9.0), ("md_1", 7.0), ("ma_1", 0.8), ("ms_2", 9.0), ("md_2", 9.0), ("ma_2", 0.35), ("ms_3", 9.0), ("md_3", 26.0), ("ma_3", 0.7),
+            ("ds_on", 1.0), ("ds_dr", 0.1), ("ds_mx", 0.8), ("rv_on", 1.0), ("rv_mx", 0.2),
+        ],
+    },
+];
+
+
+fn find(map: &[(String, ParamPtr, String)], id: &str) -> Option<ParamPtr> {
+    map.iter().find(|(k, _, _)| k == id).map(|(_, p, _)| *p)
+}
+
+/// Embedded data blobs stored next to the numbers: wavetables, noise sample, drawn LFO shapes.
+#[derive(Default, Clone)]
+pub struct Blobs {
+    pub wave: [String; 2],
+    pub noise: String,
+    pub lfo: [String; 4],
+}
+
+impl Blobs {
+    pub fn from_params(p: &SynthParams) -> Blobs {
+        let g = |m: &std::sync::Mutex<String>| m.lock().map(|x| x.clone()).unwrap_or_default();
+        Blobs { wave: [g(&p.a.wave), g(&p.b.wave)], noise: g(&p.noise_sample), lfo: std::array::from_fn(|i| g(&p.lfo[i].draw)) }
+    }
+
+    /// Store in the parameters and rebuild the shared audio-side data.
+    pub fn apply(&self, p: &SynthParams, sh: &Shared) {
+        let set = |m: &std::sync::Mutex<String>, v: &str| {
+            if let Ok(mut g) = m.lock() {
+                *g = v.to_string();
+            }
+        };
+        set(&p.a.wave, &self.wave[0]);
+        set(&p.b.wave, &self.wave[1]);
+        set(&p.noise_sample, &self.noise);
+        for i in 0..4 {
+            set(&p.lfo[i].draw, &self.lfo[i]);
+        }
+        sh.sync_from_params(p);
+    }
+}
+
+/// Reset every parameter, then apply a list of (id, plain value).
+pub fn apply_values(setter: &ParamSetter, params: &SynthParams, vals: &[(String, f32)]) {
+    let map = params.param_map();
+    // SAFETY: the pointers come from `params`, which outlives this call.
+    unsafe {
+        for (_, ptr, _) in &map {
+            setter.raw_context.raw_begin_set_parameter(*ptr);
+            setter.raw_context.raw_set_parameter_normalized(*ptr, ptr.default_normalized_value());
+            setter.raw_context.raw_end_set_parameter(*ptr);
+        }
+        for (id, v) in vals {
+            if let Some(ptr) = find(&map, id) {
+                let n = ptr.preview_normalized(*v);
+                setter.raw_context.raw_begin_set_parameter(ptr);
+                setter.raw_context.raw_set_parameter_normalized(ptr, n);
+                setter.raw_context.raw_end_set_parameter(ptr);
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- the preset list
+
+#[derive(Clone, Debug)]
+pub struct PresetRef {
+    pub name: String,
+    pub cat: String,
+    pub factory: Option<usize>,
+    pub path: Option<PathBuf>,
+}
+
+impl PresetRef {
+    pub fn key(&self) -> String {
+        format!("{}/{}", self.cat, self.name)
+    }
+    pub fn is_user(&self) -> bool {
+        self.factory.is_none()
+    }
+}
+
+/// Factory presets plus everything found in the user's preset folder.
+pub fn list_all() -> Vec<PresetRef> {
+    let mut out: Vec<PresetRef> = PRESETS.iter().enumerate().map(|(i, p)| PresetRef { name: p.name.to_string(), cat: p.cat.to_string(), factory: Some(i), path: None }).collect();
+    if let Some(dir) = files::presets_dir() {
+        for e in files::scan(&dir, &["nyp"]) {
+            out.push(PresetRef { name: e.name, cat: e.cat, factory: None, path: Some(e.path) });
+        }
+    }
+    out.sort_by(|a, b| (a.cat.to_lowercase(), a.name.to_lowercase()).cmp(&(b.cat.to_lowercase(), b.name.to_lowercase())));
+    out
+}
+
+fn parse_file(txt: &str) -> (Vec<(String, f32)>, Blobs) {
+    let mut vals = Vec::new();
+    let mut bl = Blobs::default();
+    for line in txt.lines() {
+        if line.starts_with('#') {
+            continue;
+        }
+        let Some((k, v)) = line.split_once('=') else { continue };
+        let (k, v) = (k.trim(), v.trim());
+        if let Some(b) = k.strip_prefix('@') {
+            match b {
+                "a_wave" => bl.wave[0] = v.to_string(),
+                "b_wave" => bl.wave[1] = v.to_string(),
+                "noise" => bl.noise = v.to_string(),
+                "lfo1" => bl.lfo[0] = v.to_string(),
+                "lfo2" => bl.lfo[1] = v.to_string(),
+                "lfo3" => bl.lfo[2] = v.to_string(),
+                "lfo4" => bl.lfo[3] = v.to_string(),
+                _ => {}
+            }
+        } else if let Ok(x) = v.parse::<f32>() {
+            vals.push((k.to_string(), x));
+        }
+    }
+    (vals, bl)
+}
+
+/// Load a preset (factory or file). Returns an error text if a file cannot be read.
+pub fn load(setter: &ParamSetter, params: &SynthParams, shared: &Shared, r: &PresetRef) -> Result<(), String> {
+    if let Some(i) = r.factory {
+        let p = PRESETS.get(i).ok_or("no such preset")?;
+        let vals: Vec<(String, f32)> = p.values.iter().map(|(k, v)| (k.to_string(), *v)).collect();
+        apply_values(setter, params, &vals);
+        Blobs::default().apply(params, shared);
+    } else if let Some(path) = &r.path {
+        let txt = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+        let (vals, bl) = parse_file(&txt);
+        apply_values(setter, params, &vals);
+        bl.apply(params, shared);
+    }
+    if let Ok(mut g) = params.preset_name.lock() {
+        *g = r.name.clone();
+    }
+    Ok(())
+}
+
+/// Save the current sound into `<Presets>/<category>/<name>.nyp`.
+pub fn save_user(params: &SynthParams, name: &str, cat: &str) -> Result<PathBuf, String> {
+    let name = files::clean_name(name);
+    if name.is_empty() {
+        return Err("empty name".into());
+    }
+    let cat = files::clean_name(cat);
+    let mut dir = files::presets_dir().ok_or("no config folder")?;
+    if !cat.is_empty() && cat != "User" {
+        dir = dir.join(&cat);
+    }
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let mut txt = String::from("# NyashkSynth preset v2\n");
+    for (id, ptr, _) in params.param_map() {
+        // SAFETY: the pointers come from `params`, which is alive.
+        let v = unsafe { ptr.unmodulated_plain_value() };
+        txt.push_str(&format!("{id}={v}\n"));
+    }
+    let bl = Blobs::from_params(params);
+    if !bl.wave[0].is_empty() {
+        txt.push_str(&format!("@a_wave={}\n", bl.wave[0]));
+    }
+    if !bl.wave[1].is_empty() {
+        txt.push_str(&format!("@b_wave={}\n", bl.wave[1]));
+    }
+    if !bl.noise.is_empty() {
+        txt.push_str(&format!("@noise={}\n", bl.noise));
+    }
+    for i in 0..4 {
+        if !bl.lfo[i].is_empty() {
+            txt.push_str(&format!("@lfo{}={}\n", i + 1, bl.lfo[i]));
+        }
+    }
+    let path = dir.join(format!("{name}.nyp"));
+    std::fs::write(&path, txt).map_err(|e| e.to_string())?;
+    Ok(path)
+}
+
+pub fn delete_user(r: &PresetRef) {
+    if let Some(p) = &r.path {
+        let _ = std::fs::remove_file(p);
+    }
+}
+
+// ---------------------------------------------------------------- favourites
+
+fn fav_path() -> Option<PathBuf> {
+    files::base_dir().map(|b| b.join("favorites.txt"))
+}
+
+pub fn load_favs() -> Vec<String> {
+    fav_path().and_then(|p| std::fs::read_to_string(p).ok()).map(|t| t.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect()).unwrap_or_default()
+}
+
+pub fn save_favs(f: &[String]) {
+    if let Some(p) = fav_path() {
+        if let Some(d) = p.parent() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        let _ = std::fs::write(p, f.join("\n"));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn user_preset_roundtrip() {
+        let dir = std::env::temp_dir().join("nyashk_preset_test2");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::env::set_var("XDG_CONFIG_HOME", &dir);
+        std::env::set_var("APPDATA", &dir);
+        let params = SynthParams::default();
+        if let Ok(mut g) = params.a.wave.lock() {
+            *g = crate::wavetable::encode_table("T", &crate::wavetable::tables().t[2]);
+        }
+        let path = save_user(&params, "My Test/Sound", "Bass").expect("save");
+        assert!(path.ends_with("Bass/My Test_Sound.nyp"));
+        let all = list_all();
+        let me = all.iter().find(|r| r.name == "My Test_Sound").expect("listed");
+        assert_eq!(me.cat, "Bass");
+        let txt = std::fs::read_to_string(path).unwrap();
+        let (vals, bl) = parse_file(&txt);
+        assert_eq!(vals.len(), params.param_map().len());
+        assert!(bl.wave[0].starts_with("NWT1|T|"));
+        delete_user(me);
+        assert!(!list_all().iter().any(|r| r.name == "My Test_Sound"));
+    }
+
+    #[test]
+    fn all_preset_ids_exist() {
+        let params = SynthParams::default();
+        let map = params.param_map();
+        for p in PRESETS {
+            for (id, _) in p.values {
+                assert!(find(&map, id).is_some(), "preset '{}' uses unknown id '{}'", p.name, id);
+            }
+        }
+    }
+}
