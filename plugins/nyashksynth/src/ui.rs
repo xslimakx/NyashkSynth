@@ -159,6 +159,12 @@ pub fn set_b(setter: &ParamSetter, p: &BoolParam, v: bool) {
     setter.set_parameter(p, v);
     setter.end_set_parameter(p);
 }
+pub fn set_i(setter: &ParamSetter, p: &IntParam, v: i32) {
+    setter.begin_set_parameter(p);
+    setter.set_parameter(p, v);
+    setter.end_set_parameter(p);
+}
+
 pub fn set_e<E: Enum + PartialEq>(setter: &ParamSetter, p: &EnumParam<E>, v: E) {
     setter.begin_set_parameter(p);
     setter.set_parameter(p, v);

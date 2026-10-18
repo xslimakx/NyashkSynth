@@ -520,6 +520,34 @@ pub enum DistType {
 }
 
 #[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
+pub enum Tuning {
+    #[name = "Equal (12-TET)"]
+    Equal,
+    #[name = "Just intonation"]
+    Just,
+    #[name = "Pythagorean"]
+    Pythagorean,
+    #[name = "Meantone 1/4"]
+    Meantone,
+    #[name = "Werckmeister III"]
+    Werckmeister,
+}
+
+impl Tuning {
+    /// Deviation in cents from equal temperament for the 12 scale degrees above the root.
+    pub fn cents(self) -> [f32; 12] {
+        let t: [f32; 12] = match self {
+            Tuning::Equal => return [0.0; 12],
+            Tuning::Just => [0.0, 111.73, 203.91, 315.64, 386.31, 498.04, 582.51, 701.96, 813.69, 884.36, 1017.60, 1088.27],
+            Tuning::Pythagorean => [0.0, 90.22, 203.91, 294.13, 407.82, 498.04, 611.73, 701.96, 792.18, 905.87, 996.09, 1109.78],
+            Tuning::Meantone => [0.0, 76.05, 193.16, 310.26, 386.31, 503.42, 579.47, 696.58, 772.63, 889.74, 1006.84, 1082.89],
+            Tuning::Werckmeister => [0.0, 90.225, 192.18, 294.135, 390.225, 498.045, 588.27, 696.09, 792.18, 888.27, 996.09, 1092.18],
+        };
+        std::array::from_fn(|i| t[i] - 100.0 * i as f32)
+    }
+}
+
+#[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
 pub enum OscMode {
     #[name = "Wavetable"]
     Wavetable,
@@ -1414,6 +1442,16 @@ pub struct SynthParams {
     pub poly: IntParam,
     #[id = "mt"]
     pub tune: FloatParam,
+    #[id = "a4hz"]
+    pub a4: FloatParam,
+    #[id = "tun"]
+    pub tuning: EnumParam<Tuning>,
+    #[id = "tnr"]
+    pub tun_root: IntParam,
+    #[id = "vcv"]
+    pub vel_curve: FloatParam,
+    #[id = "mch"]
+    pub midi_ch: IntParam,
     #[id = "mv"]
     pub master: FloatParam,
 
@@ -1446,6 +1484,14 @@ pub struct SynthParams {
     pub arp_hold: BoolParam,
     #[persist = "arp-pat"]
     pub arp_pat: Arc<std::sync::Mutex<String>>,
+    #[persist = "clips"]
+    pub clips: Arc<std::sync::Mutex<String>>,
+    #[id = "clp_on"]
+    pub clip_on: BoolParam,
+    #[id = "clp_sl"]
+    pub clip_sel: IntParam,
+    #[id = "clp_dv"]
+    pub clip_div: EnumParam<Div>,
 }
 
 impl SynthParams {
@@ -1515,6 +1561,11 @@ impl Default for SynthParams {
             bend: IntParam::new("Bend Range", 2, IntRange::Linear { min: 0, max: 24 }),
             poly: IntParam::new("Voices", 16, IntRange::Linear { min: 1, max: 16 }),
             tune: FloatParam::new("Master Tune", 0.0, FloatRange::Linear { min: -100.0, max: 100.0 }).with_unit(" ct").with_step_size(0.1),
+            a4: FloatParam::new("Tuning A4", 440.0, FloatRange::Linear { min: 400.0, max: 480.0 }).with_unit(" Hz").with_step_size(0.1),
+            tuning: EnumParam::new("Scale Tuning", Tuning::Equal),
+            tun_root: IntParam::new("Tuning Root", 0, IntRange::Linear { min: 0, max: 11 }),
+            vel_curve: FloatParam::new("Velocity Curve", 0.0, FloatRange::Linear { min: -1.0, max: 1.0 }).with_step_size(0.01).with_value_to_string(Arc::new(|v| format!("{:+.0}%", v * 100.0))),
+            midi_ch: IntParam::new("MIDI Channel", 0, IntRange::Linear { min: 0, max: 16 }).with_value_to_string(Arc::new(|v| if v == 0 { "Omni".to_string() } else { format!("Ch {v}") })),
             master: FloatParam::new("Master", -6.0, FloatRange::Linear { min: -60.0, max: 6.0 })
                 .with_unit(" dB")
                 .with_step_size(0.1)
@@ -1533,6 +1584,10 @@ impl Default for SynthParams {
             arp_swing: unit_param("Arp Swing", 0.0),
             arp_hold: BoolParam::new("Arp Hold", false),
             arp_pat: Arc::new(std::sync::Mutex::new(String::new())),
+            clips: Arc::new(std::sync::Mutex::new(String::new())),
+            clip_on: BoolParam::new("Clip On", false),
+            clip_sel: IntParam::new("Clip Slot", 1, IntRange::Linear { min: 1, max: 12 }),
+            clip_div: EnumParam::new("Clip Step", Div::D16),
         }
     }
 }

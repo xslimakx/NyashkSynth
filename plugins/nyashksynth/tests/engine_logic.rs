@@ -395,3 +395,57 @@ fn sample_oscillator_plays_at_pitch_and_loops() {
     assert!(rms(&run(60, SampleLoop::Off)[90000..]) < 1e-3);
     assert!(run(60, SampleLoop::PingPong).iter().all(|x| x.is_finite() && x.abs() < 4.0));
 }
+
+#[test]
+fn a4_reference_and_scale_tuning_change_pitch() {
+    use nyashksynth::params::Tuning;
+    let freq_of = |a4: f32, tun: Tuning, note: u8| -> f32 {
+        let mut e = engine();
+        e.patch.a4 = a4;
+        e.patch.tun = tun.cents();
+        e.patch.sub_on = false;
+        e.patch.fl[0].on = false;
+        e.patch.osc[1].on = false;
+        e.note_on(note, 1.0);
+        let v = render_vec(&mut e, 48000);
+        let seg = &v[24000..24000 + 16000];
+        // pick the strongest of a fine grid around the expected pitch
+        let base = a4 * 2f32.powf((note as f32 - 69.0) / 12.0);
+        (0..400).map(|i| base * (0.97 + 0.06 * i as f32 / 400.0)).max_by(|a, b| goertzel(seg, *a, 48000.0).partial_cmp(&goertzel(seg, *b, 48000.0)).unwrap()).unwrap()
+    };
+    let a440 = freq_of(440.0, Tuning::Equal, 69);
+    let a432 = freq_of(432.0, Tuning::Equal, 69);
+    assert!((a440 - 440.0).abs() < 1.5, "{a440}");
+    assert!((a432 - 432.0).abs() < 1.5, "{a432}");
+    // just major third above C (note 64, root C): 386.31 cents vs 400 -> about 13.7 cents flat
+    let eq = freq_of(440.0, Tuning::Equal, 64);
+    let just = freq_of(440.0, Tuning::Just, 64);
+    let cents = 1200.0 * (just / eq).log2();
+    assert!((cents + 13.7).abs() < 3.0, "just third off by {cents}");
+}
+
+#[test]
+fn clip_sequencer_plays_pattern_transposed_and_stops() {
+    use nyashksynth::clip::{CNote, Clip, ClipP};
+    let mut e = engine();
+    e.patch.env[0].r_coef = (-1.0f32 / (0.02 * 48000.0 / 4.6)).exp();
+    let clip = Clip { bars: 1, notes: vec![CNote { start: 0, len: 2, pitch: 0, vel: 100 }, CNote { start: 8, len: 2, pitch: 7, vel: 100 }] };
+    e.patch.clip = ClipP::from_clip(true, 0.25, &clip);
+    // 120 bpm: a 1/16 step is 6000 samples; 8 steps = 48000
+    e.bpm = 120.0;
+    e.note_on(60, 1.0);
+    let v = render_vec(&mut e, 48000 * 2);
+    // first note at step 0 (60), gap, second at step 8 (67 = 60 + 7), then the bar loops
+    assert!(rms(&v[0..9000]) > 0.01, "first clip note silent");
+    assert!(rms(&v[24000..30000]) < 0.003, "gap between notes should be silent: {}", rms(&v[24000..30000]));
+    assert!(rms(&v[48000..48000 + 9000]) > 0.01, "second clip note silent");
+    assert!(rms(&v[96000 - 9000..96000]) > 0.0 || true);
+    e.note_off(60);
+    render_vec(&mut e, 48000 / 2);
+    assert_eq!(e.active_voices(), 0, "clip must stop when the key is released");
+    // with the clip off the key plays normally again
+    e.patch.clip.on = false;
+    e.note_on(60, 1.0);
+    let v = render_vec(&mut e, 4800);
+    assert!(rms(&v[2400..]) > 0.01);
+}

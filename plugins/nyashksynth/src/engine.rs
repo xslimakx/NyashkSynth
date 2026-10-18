@@ -2,6 +2,7 @@
 //! LFOs and a modulation matrix.
 
 use crate::arp::{Arp, ArpP};
+use crate::clip::{ClipP, MAX_STEPS};
 use crate::fx::BqCoef;
 use crate::params::*;
 use crate::sample::{LfoCurve, NSample};
@@ -164,12 +165,17 @@ pub struct Patch {
     pub lfo_curve: [Option<Arc<LfoCurve>>; NLFO],
     pub slots: [SlotP; MOD_SLOTS],
     pub arp: ArpP,
+    pub clip: ClipP,
     pub macros: [f32; NMAC],
     pub vmode: VoiceMode,
     pub glide_ms: f32,
     pub bend: f32,
     pub poly: usize,
     pub tune: f32,
+    pub a4: f32,
+    pub tun: [f32; 12],
+    pub tun_root: i32,
+    pub vel_curve: f32,
 }
 
 fn osc_read(o: &OscParams, tbl: Arc<Table>, sample: Option<Arc<NSample>>) -> OscP {
@@ -272,6 +278,17 @@ impl Patch {
             lfo: std::array::from_fn(|i| lfo_read(&p.lfo[i])),
             lfo_curve,
             slots: std::array::from_fn(|i| SlotP { src: p.slot[i].src.value(), dst: p.slot[i].dst.value(), amount: p.slot[i].amount.value(), aux: p.slot[i].aux.value(), curve: p.slot[i].curve.value(), uni: p.slot[i].uni.value() }),
+            clip: {
+                let sel = (p.clip_sel.value().clamp(1, 12) - 1) as usize;
+                match p.clips.try_lock() {
+                    Ok(g) => crate::clip::ClipP::from_clip(p.clip_on.value(), p.clip_div.value().beats(), &crate::clip::Clip::decode(g.split('#').nth(sel).unwrap_or(""))),
+                    Err(_) => {
+                        let mut c = prev.map(|pp| pp.clip).unwrap_or_default();
+                        c.on = p.clip_on.value();
+                        c
+                    }
+                }
+            },
             arp: {
                 let (pat, plen) = match p.arp_pat.try_lock() {
                     Ok(g) => crate::arp::parse_pattern(&g),
@@ -285,6 +302,10 @@ impl Patch {
             bend: p.bend.value() as f32,
             poly: p.poly.value().clamp(1, VOICES as i32) as usize,
             tune: p.tune.value(),
+            a4: p.a4.value(),
+            tun: p.tuning.value().cents(),
+            tun_root: p.tun_root.value(),
+            vel_curve: p.vel_curve.value(),
         }
     }
 }
@@ -759,8 +780,9 @@ struct Ctx {
     tune: f32,
 }
 
-fn midi_freq(n: f32) -> f32 {
-    440.0 * 2f32.powf((n - 69.0) / 12.0)
+fn midi_freq(p: &Patch, n: f32) -> f32 {
+    let deg = ((n.round() as i32 - p.tun_root).rem_euclid(12)) as usize;
+    p.a4 * 2f32.powf((n - 69.0) / 12.0 + p.tun[deg] / 1200.0)
 }
 
 #[derive(Clone, Copy)]
@@ -1555,6 +1577,10 @@ pub struct Engine {
     counter: u64,
     rng: u32,
     arp: Arp,
+    clip_held: Vec<(u8, f32)>,
+    clip_timer: f64,
+    clip_step: usize,
+    clip_act: Vec<(u8, f64)>,
 }
 
 impl Engine {
@@ -1582,6 +1608,10 @@ impl Engine {
             counter: 0,
             rng: 0x1234_5678,
             arp: Arp::new(),
+            clip_held: Vec::with_capacity(64),
+            clip_timer: f64::INFINITY,
+            clip_step: 0,
+            clip_act: Vec::with_capacity(64),
         }
     }
 
@@ -1661,7 +1691,7 @@ impl Engine {
     }
 
     fn trigger(&mut self, idx: usize, note: u8, vel: f32) {
-        let tfreq = midi_freq(note as f32);
+        let tfreq = midi_freq(&self.patch, note as f32);
         let glide = self.patch.glide_ms > 0.6 && self.last_freq > 0.0;
         let start = if glide { self.last_freq } else { tfreq };
         let r1 = self.rand01();
@@ -1729,6 +1759,7 @@ impl Engine {
     // ---- note routing: sustain pedal -> arpeggiator -> voices
 
     pub fn note_on(&mut self, note: u8, vel: f32) {
+        let vel = vel.clamp(0.0, 1.0).powf(2f32.powf(-self.patch.vel_curve * 1.5));
         if (note as usize) < 128 {
             self.down[note as usize] = true;
         }
@@ -1737,7 +1768,14 @@ impl Engine {
             self.sustained.swap_remove(i);
             self.real_note_off(note);
         }
-        if self.patch.arp.on {
+        if self.patch.clip.on {
+            self.clip_held.retain(|(n, _)| *n != note);
+            self.clip_held.push((note, vel));
+            if self.clip_timer.is_infinite() {
+                self.clip_timer = 0.0;
+                self.clip_step = 0;
+            }
+        } else if self.patch.arp.on {
             let hold = self.patch.arp.hold;
             self.arp.press(note, vel, hold);
         } else {
@@ -1759,6 +1797,13 @@ impl Engine {
     }
 
     fn real_note_off(&mut self, note: u8) {
+        if self.patch.clip.on || !self.clip_held.is_empty() {
+            self.clip_held.retain(|(n, _)| *n != note);
+            if self.clip_held.is_empty() {
+                self.clip_stop();
+            }
+            return;
+        }
         if self.patch.arp.on {
             let hold = self.patch.arp.hold;
             self.arp.release(note, hold);
@@ -1778,7 +1823,7 @@ impl Engine {
             }
             let held = self.voices[0].active && self.voices[0].key_down;
             if self.patch.vmode == VoiceMode::Legato && held {
-                self.voices[0].tfreq = midi_freq(note as f32);
+                self.voices[0].tfreq = midi_freq(&self.patch, note as f32);
                 self.voices[0].note = note;
                 for i in 0..NENV {
                     if self.patch.env[i].relegato {
@@ -1807,7 +1852,7 @@ impl Engine {
         if self.patch.vmode != VoiceMode::Poly {
             self.stack.retain(|n| *n != note);
             if let Some(&top) = self.stack.last() {
-                self.voices[0].tfreq = midi_freq(top as f32);
+                self.voices[0].tfreq = midi_freq(&self.patch, top as f32);
                 self.voices[0].note = top;
                 self.last_freq = self.voices[0].tfreq;
             } else {
@@ -1857,6 +1902,78 @@ impl Engine {
     }
 
     // ---- arpeggiator
+
+    fn clip_stop(&mut self) {
+        let mut act = std::mem::take(&mut self.clip_act);
+        for (n, _) in act.drain(..) {
+            self.voice_note_off(n);
+        }
+        self.clip_act = act;
+        self.clip_held.clear();
+        self.clip_timer = f64::INFINITY;
+        self.clip_step = 0;
+    }
+
+    fn clip_fire(&mut self) {
+        let c = self.patch.clip;
+        let Some(&(root, kvel)) = self.clip_held.last() else {
+            self.clip_timer = f64::INFINITY;
+            return;
+        };
+        let step_len = ((self.fs as f64) * 60.0 / (self.bpm.max(20.0) as f64) * c.beats as f64).max(16.0);
+        let st = self.clip_step % c.steps.clamp(1, MAX_STEPS);
+        for k in 0..c.n {
+            let nt = c.notes[k];
+            if nt.start as usize != st {
+                continue;
+            }
+            let note = (root as i32 + nt.pitch as i32).clamp(0, 127) as u8;
+            if let Some(i) = self.clip_act.iter().position(|(n, _)| *n == note) {
+                self.clip_act.swap_remove(i);
+                self.voice_note_off(note);
+            }
+            if self.clip_act.len() < 120 {
+                self.voice_note_on(note, (nt.vel as f32 / 100.0 * kvel.max(0.3)).clamp(0.02, 1.0));
+                self.clip_act.push((note, (nt.len as f64 * step_len * 0.97).max(8.0)));
+            }
+        }
+        self.clip_step = self.clip_step.wrapping_add(1);
+        self.clip_timer += step_len;
+    }
+
+    fn process_clip(&mut self, l: &mut [f32], r: &mut [f32]) {
+        let n = l.len();
+        let mut i = 0;
+        while i < n {
+            if self.clip_timer <= 0.0 {
+                self.clip_fire();
+            }
+            let mut j = 0;
+            while j < self.clip_act.len() {
+                if self.clip_act[j].1 <= 0.0 {
+                    let (nt, _) = self.clip_act.swap_remove(j);
+                    self.voice_note_off(nt);
+                } else {
+                    j += 1;
+                }
+            }
+            let mut m = n - i;
+            if self.clip_timer.is_finite() {
+                m = m.min(self.clip_timer.ceil().max(1.0) as usize);
+            }
+            for (_, rem) in self.clip_act.iter() {
+                m = m.min(rem.ceil().max(1.0) as usize);
+            }
+            self.process_inner(&mut l[i..i + m], &mut r[i..i + m]);
+            if self.clip_timer.is_finite() {
+                self.clip_timer -= m as f64;
+            }
+            for (_, rem) in self.clip_act.iter_mut() {
+                *rem -= m as f64;
+            }
+            i += m;
+        }
+    }
 
     fn arp_stop(&mut self) {
         let mut pl = std::mem::take(&mut self.arp.playing);
@@ -1986,6 +2103,7 @@ impl Engine {
             let n = v.note;
             let legit = down.get(n as usize).copied().unwrap_or(false)
                 || sus.contains(&n)
+                || self.clip_act.iter().any(|(c, _)| *c == n)
                 || (arp_on && (self.arp.playing.contains(&n) || self.arp.held.iter().any(|(h, _)| *h == n)));
             if !legit {
                 Self::release(v);
@@ -1995,6 +2113,13 @@ impl Engine {
 
     pub fn process(&mut self, l: &mut [f32], r: &mut [f32]) {
         self.reconcile_notes();
+        if !self.patch.clip.on && !self.clip_held.is_empty() {
+            self.clip_stop();
+        }
+        if self.patch.clip.on {
+            self.process_clip(l, r);
+            return;
+        }
         if !self.patch.arp.on {
             if !self.arp.idle() || !self.arp.held.is_empty() {
                 self.arp_stop();

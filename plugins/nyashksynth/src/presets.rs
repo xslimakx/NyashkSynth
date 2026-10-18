@@ -681,13 +681,14 @@ pub struct Blobs {
     pub smp: [String; 3],
     pub noise: String,
     pub arp: String,
+    pub clips: String,
     pub lfo: [String; NLFO],
 }
 
 impl Blobs {
     pub fn from_params(p: &SynthParams) -> Blobs {
         let g = |m: &std::sync::Mutex<String>| m.lock().map(|x| x.clone()).unwrap_or_default();
-        Blobs { wave: [g(&p.a.wave), g(&p.b.wave), g(&p.c.wave)], smp: [g(&p.a.smp), g(&p.b.smp), g(&p.c.smp)], noise: g(&p.noise_sample), arp: g(&p.arp_pat), lfo: std::array::from_fn(|i| g(&p.lfo[i].draw)) }
+        Blobs { wave: [g(&p.a.wave), g(&p.b.wave), g(&p.c.wave)], smp: [g(&p.a.smp), g(&p.b.smp), g(&p.c.smp)], noise: g(&p.noise_sample), arp: g(&p.arp_pat), clips: g(&p.clips), lfo: std::array::from_fn(|i| g(&p.lfo[i].draw)) }
     }
 
     /// Store in the parameters and rebuild the shared audio-side data.
@@ -705,6 +706,7 @@ impl Blobs {
         set(&p.c.smp, &self.smp[2]);
         set(&p.noise_sample, &self.noise);
         set(&p.arp_pat, &self.arp);
+        set(&p.clips, &self.clips);
         for i in 0..NLFO {
             set(&p.lfo[i].draw, &self.lfo[i]);
         }
@@ -783,6 +785,7 @@ fn parse_file(txt: &str) -> (Vec<(String, f32)>, Blobs) {
                 "c_smp" => bl.smp[2] = v.to_string(),
                 "noise" => bl.noise = v.to_string(),
                 "arp" => bl.arp = v.to_string(),
+                "clips" => bl.clips = v.to_string(),
                 "lfo1" => bl.lfo[0] = v.to_string(),
                 "lfo2" => bl.lfo[1] = v.to_string(),
                 "lfo3" => bl.lfo[2] = v.to_string(),
@@ -851,6 +854,9 @@ pub fn save_user(params: &SynthParams, name: &str, cat: &str) -> Result<PathBuf,
         if !bl.smp[i].is_empty() {
             txt.push_str(&format!("@{k}_smp={}\n", bl.smp[i]));
         }
+    }
+    if !bl.clips.is_empty() {
+        txt.push_str(&format!("@clips={}\n", bl.clips));
     }
     if !bl.arp.is_empty() {
         txt.push_str(&format!("@arp={}\n", bl.arp));

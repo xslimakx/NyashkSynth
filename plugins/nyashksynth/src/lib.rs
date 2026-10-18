@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 pub mod arp;
+pub mod clip;
 pub mod engine;
 mod editor;
 mod browse;
@@ -371,6 +372,15 @@ impl Plugin for NyashkSynth {
             while let Some(ev) = next {
                 if ev.timing() as usize > pos {
                     break;
+                }
+                let mch = self.params.midi_ch.value();
+                let ev_ch = match ev {
+                    NoteEvent::NoteOn { channel, .. } | NoteEvent::NoteOff { channel, .. } | NoteEvent::MidiPitchBend { channel, .. } | NoteEvent::MidiChannelPressure { channel, .. } | NoteEvent::MidiCC { channel, .. } => Some(channel),
+                    _ => None,
+                };
+                if mch > 0 && ev_ch.map_or(false, |c| c as i32 != mch - 1) {
+                    next = ctx.next_event();
+                    continue;
                 }
                 match ev {
                     NoteEvent::NoteOn { note, velocity, .. } => {

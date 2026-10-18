@@ -60,7 +60,30 @@ Each oscillator can be switched between **WT** (wavetable) and **SMP** (sample) 
 
 Set **MODE = Pattern** in the ARP tab. 16 steps, each with on / rest, velocity, which held note it plays (1 = lowest, wraps round the chord) and a transposition in semitones. Right-click a step number to end the pattern there. The pattern is saved with presets and projects.
 
-## 4d. Undo / redo
+## 4d. Clip sequencer
+
+![Clip sequencer](img/manual_clip.png)
+
+Open the **CLIP** tab and switch **CLIP ON**. Hold a key: the selected clip plays and loops, transposed from the key you hold (the **KEY** row of the piano roll is that key). Releasing the key stops it.
+
+1. **CLIP ON** replaces the arpeggiator while it is on.
+2. **12 clip slots**; a dot marks slots that contain notes. Clips are saved with the preset.
+3. **BARS** (1-4) and **STEP** (grid size, 1/16 by default).
+4. Piano roll: click = add a note, drag right = longer, drag a note = move it (also up / down), right-click = delete, mouse wheel over a note = velocity (brighter = louder).
+5. Range is one octave below to 11 semitones above the held key.
+
+## 4e. Settings tab
+
+![Settings](img/manual_settings.png)
+
+1. **A4 reference** from 400 to 480 Hz with quick buttons for 432 / 440 / 442 / 444, and a fine tune in cents.
+2. **Scale tuning**: Equal, Just intonation, Pythagorean, Meantone 1/4, Werckmeister III, with a **root** note. The bars show the deviation from equal temperament in cents.
+3. **MIDI channel** (0 = omni), **velocity curve**, **pitch-bend range**, glide.
+4. **MIDI bindings**: every learned CC with its parameter name and an x to remove it.
+
+LFOs and envelopes can be dragged onto any knob straight from their title chips in the LFO / ENV tabs, like in Serum.
+
+## 4f. Undo / redo
 
 UNDO and REDO (header, or Ctrl+Z / Ctrl+Y) step through your parameter changes, including preset loads. Wavetable-editor edits have their own undo inside the editor.
 
@@ -76,5 +99,7 @@ UNDO and REDO (header, or Ctrl+Z / Ctrl+Y) step through your parameter changes, 
 | Sample oscillator (start / end / loop / ping-pong / crossfade) | done |
 | Arp pattern editor, undo / redo | done |
 | Multisample (SFZ) / Granular / Spectral oscillator modes | not yet |
-| Clip sequencer, 12-slot arp banks, oscillator mapping editor | not yet |
+| Clip sequencer (12 clips, piano roll) | done |
+| Tuning (A4, scales), MIDI channel, velocity curve | done |
+| Arp banks (12 slots), oscillator mapping editor | not yet |
 | Convolve, reverb types, preset tags and ratings | not yet |

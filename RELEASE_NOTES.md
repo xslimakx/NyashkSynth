@@ -1,3 +1,9 @@
+## NyashkSynth v2.6.0
+
+- **Clip sequencer**: 12 clips of 1-4 bars with a piano roll; a held key plays the clip transposed from that key.
+- **SETTINGS tab**: A4 reference (400-480 Hz), scale tunings (Just, Pythagorean, Meantone, Werckmeister III) with root, MIDI channel filter, velocity curve, learned-CC list.
+- LFO and envelope title chips can be dragged onto any knob.
+
 ## NyashkSynth v2.5.0
 
 Downloads: `NyashkSynth-Linux-VST3.zip`, `NyashkSynth-Windows-VST3.zip` (unzip and copy the whole `NyashkSynth.vst3` folder into your VST3 folder). Illustrated guide: `docs/MANUAL.md`.
