@@ -40,6 +40,7 @@ pub enum TblSrc {
 }
 
 pub struct Gui {
+    auto_loaded: bool,
     pub tab: usize,
     pub fx_sel: usize,
     pub fx_drag: Option<usize>,
@@ -169,6 +170,7 @@ impl Gui {
     fn new() -> Gui {
         files::ensure_dirs();
         Gui {
+            auto_loaded: false,
             tab: std::env::var("NYASHK_TAB").ok().and_then(|s| s.parse().ok()).unwrap_or(0),
             fx_sel: 0,
             fx_drag: None,
@@ -260,6 +262,15 @@ pub fn create(params: Arc<SynthParams>, meters: Arc<Meters>, shared: Arc<Shared>
                     st.open_edit(&shared, p, 0);
                 }
 
+                if let Ok(name) = std::env::var("NYASHK_PRESET") {
+                    // developer aid for screenshots: load a preset once, by name
+                    if !st.auto_loaded {
+                        st.auto_loaded = true;
+                        if let Some(rf) = st.presets.iter().find(|q| q.name == name).cloned() {
+                            let _ = presets::load(setter, p, &shared, &rf);
+                        }
+                    }
+                }
                 autotest(setter, p, &shared, st, &meters, now);
                 header(ui, setter, p, &shared, st, &meters, o, now);
 
@@ -1679,7 +1690,7 @@ fn randomize(setter: &ParamSetter, p: &SynthParams, shared: &Shared, seed: u64) 
             continue;
         }
         used.push((si, di));
-        let sign = if r.chance(0.3) { -1.0 } else { 1.0 };
+        let sign = if r.chance(0.3) && !matches!(dsts[di], D::Cutoff | D::FxFilterCut) { -1.0 } else { 1.0 };
         let amt = if pitch { r.range(0.02, 0.12) } else { r.range(0.12, 0.65) };
         set_e(setter, &p.slot[k].src, srcs[si]);
         set_e(setter, &p.slot[k].dst, dsts[di]);

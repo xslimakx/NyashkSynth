@@ -74,6 +74,7 @@ pub struct WavEdit {
     drag_orig: Option<(usize, usize, Vec<Vec<f32>>, Vec<f32>)>,
     multi_pending: bool,
     last_multi: f64,
+    multi_cost: f64,
 }
 
 fn fill_under(painter: &egui::Painter, pts: &[Pos2], bottom: f32, color: Color32) {
@@ -133,8 +134,33 @@ impl WavEdit {
             drag_orig: None,
             multi_pending: false,
             last_multi: 0.0,
+            multi_cost: 0.0,
         };
         w.anchor = w.frame;
+        if std::env::var("NYASHK_DEMO").is_ok() {
+            // developer aid for screenshots: a morphing table with a selected range
+            if let Ok(ex) = crate::formula::parse("sin(2*pi*x + w*6*sin(2*pi*x)) + w*sin(10*pi*x)/3") {
+                let frames: Vec<Vec<f32>> = (0..64)
+                    .map(|i| {
+                        let mut t = crate::formula::frame(&ex, i as f32 / 63.0, N);
+                        let pk = t.iter().fold(0.0f32, |a, b| a.max(b.abs())).max(1e-6);
+                        t.iter_mut().for_each(|v| *v *= 0.9 / pk);
+                        t
+                    })
+                    .collect();
+                w.tbl = Table::from_frames(&frames);
+                w.frame = 30;
+                w.anchor = 14;
+                w.sel = Some((14, 42));
+                w.scope = Scope::Sel;
+                w.ramp = Ramp::Middle;
+                w.soft = 0.5;
+                w.strength = 0.8;
+                w.vary = 0.25;
+                w.drift = 0.2;
+                w.name = "Demo Morph".into();
+            }
+        }
         w.reload();
         w
     }
@@ -280,7 +306,7 @@ impl WavEdit {
         self.set_time(t, now);
         if self.drag_orig.is_some() {
             self.multi_pending = true;
-            if now - self.last_multi > 0.1 {
+            if now - self.last_multi > (self.multi_cost * 3.0).max(0.1) {
                 self.apply_multi(now);
             }
         }
@@ -291,6 +317,7 @@ impl WavEdit {
             return;
         }
         self.multi_pending = false;
+        let t_start = std::time::Instant::now();
         let Some((lo, hi, orig, cur0)) = self.drag_orig.take() else { return };
         let delta: Vec<f32> = self.time.iter().zip(&cur0).map(|(a, b)| a - b).collect();
         for i in lo..=hi {
@@ -315,6 +342,7 @@ impl WavEdit {
         self.peaks_dirty = true;
         self.touch(now);
         self.last_multi = now;
+        self.multi_cost = t_start.elapsed().as_secs_f64();
     }
 
     fn run_formula(&mut self, now: f64) {
@@ -1247,5 +1275,112 @@ mod tests {
         assert!((w.weight(4, 0, 4) - 0.5).abs() < 1e-6);
         w.ramp = Ramp::Out;
         assert!((w.weight(0, 0, 4) - 0.5).abs() < 1e-6);
+    }
+}
+
+#[cfg(test)]
+mod more_tests {
+    use super::*;
+
+    fn mk(n: usize) -> WavEdit {
+        let frames: Vec<Vec<f32>> = (0..n).map(|i| (0..N).map(|k| ((k as f32 / N as f32 * std::f32::consts::TAU) * (1 + i % 5) as f32).sin() * 0.6).collect()).collect();
+        WavEdit::new(0, Table::from_frames(&frames), "t".into(), 0.0)
+    }
+
+    #[test]
+    fn insert_delete_selection_keep_ranges_valid() {
+        let mut w = mk(10);
+        w.sel = Some((3, 6));
+        w.scope = Scope::Sel;
+        // duplicate selection
+        let mut fr = w.tbl.to_frames();
+        let copy: Vec<Vec<f32>> = fr[3..=6].to_vec();
+        for (k, f) in copy.into_iter().enumerate() {
+            fr.insert(7 + k, f);
+        }
+        w.tbl = Table::from_frames(&fr);
+        w.reload();
+        assert_eq!(w.tbl.frames(), 14);
+        // selection beyond the table is clamped away, never panics
+        w.sel = Some((9, 40));
+        w.reload();
+        assert!(w.sel.map_or(true, |(a, b)| a < b && b < 14));
+        let (lo, hi) = w.scope_range();
+        assert!(hi < 14 && lo <= hi);
+    }
+
+    #[test]
+    fn morph_blends_between_ends_and_rejects_short_ranges() {
+        let mut w = mk(9);
+        w.scope = Scope::Sel;
+        w.sel = Some((0, 1));
+        assert!(!w.morph_range(1.0), "2 frames: nothing to morph");
+        w.sel = Some((0, 8));
+        let a = w.tbl.frame_time(0);
+        let b = w.tbl.frame_time(8);
+        assert!(w.morph_range(1.0));
+        let mid = w.tbl.frame_time(4);
+        // middle frame lies between the two ends (energy sanity) and is finite
+        assert!(mid.iter().all(|v| v.is_finite() && v.abs() < 2.0));
+        assert!((w.tbl.frame_time(0)[10] - a[10]).abs() < 1e-3);
+        assert!((w.tbl.frame_time(8)[10] - b[10]).abs() < 1e-3);
+        w.spectral = false;
+        assert!(w.morph_range(2.0));
+    }
+
+    #[test]
+    fn scope_ops_respect_range_and_undo_redo() {
+        let mut w = mk(8);
+        w.scope = Scope::Sel;
+        w.sel = Some((2, 5));
+        let before: Vec<Vec<f32>> = w.tbl.to_frames();
+        w.apply_time(1.0, |t| t.iter_mut().for_each(|v| *v = -*v));
+        let after = w.tbl.to_frames();
+        assert!((after[0][100] - before[0][100]).abs() < 1e-3, "outside the range stays");
+        assert!((after[3][100] + before[3][100]).abs() < 1e-2, "inside is inverted");
+        w.strength = 0.5;
+        w.apply_time(2.0, |t| t.iter_mut().for_each(|v| *v = 0.0));
+        assert!(w.tbl.frame_time(3)[100].abs() < before[3][100].abs());
+        // undo twice returns to the start
+        let u1 = w.undo.pop().unwrap();
+        w.tbl = u1;
+        let u2 = w.undo.pop().unwrap();
+        w.tbl = u2;
+        w.reload();
+        assert!((w.tbl.frame_time(3)[100] - before[3][100]).abs() < 1e-3);
+    }
+
+    #[test]
+    fn drawing_on_all_frames_is_fast_enough() {
+        let mut w = mk(256);
+        w.scope = Scope::All;
+        w.frame = 100;
+        w.reload();
+        w.begin_multi();
+        let mut t = w.time.clone();
+        t[50..300].iter_mut().for_each(|v| *v += 0.2);
+        let t0 = std::time::Instant::now();
+        w.commit_draw(t, 10.0);
+        w.apply_multi(10.0);
+        let ms = t0.elapsed().as_millis();
+        eprintln!("apply to 256 frames: {ms} ms");
+        assert!(ms < 1500);
+    }
+
+    #[test]
+    fn formula_scope_and_weights_never_nan() {
+        let mut w = mk(16);
+        w.scope = Scope::All;
+        w.ramp = Ramp::Edges;
+        w.soft = 1.0;
+        w.formula = "sin(2*pi*x*(1+floor(w*7)))".into();
+        w.run_formula(1.0);
+        assert!(w.formula_err.is_empty());
+        for f in w.tbl.to_frames() {
+            assert!(f.iter().all(|v| v.is_finite()));
+        }
+        w.formula = "garbage((".into();
+        w.run_formula(2.0);
+        assert!(!w.formula_err.is_empty());
     }
 }
