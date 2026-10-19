@@ -1,4 +1,8 @@
-# NyashkSynth v1.0.11
+# NyashkSynth v1.0.12
+
+- **Filter node no longer grows while you turn a knob under the graph:** the dot on the FILTER graph used to enlarge whenever the pointer was anywhere over the graph, e.g. when a knob (KEY, RES …) was dragged upwards. It now reacts only when the pointer is on the dot.
+
+# v1.0.11
 
 - **Alignment pass over every page:**
   - Drop-down boxes now fill exactly the space given to them (same width and height as the pills and boxes next to them); before they were 18 px too narrow and a few pixels off vertically.

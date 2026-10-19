@@ -1962,7 +1962,9 @@ fn filter_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui
         painter.line_segment([Pos2::new(xf(cut), d.top()), Pos2::new(xf(cut), d.bottom())], Stroke::new(1.0_f32, Color32::from_rgb(70, 70, 70)));
         // draggable node: x = cutoff, y = resonance
         let nc = Pos2::new(xf(cut).clamp(d.left() + 7.0, d.right() - 7.0), node_y(ty, fl.res.unmodulated_normalized_value(), cut, d));
-        let hot = ui.input(|i| i.pointer.hover_pos()).map_or(false, |pp| d.contains(pp));
+        // grows only while the pointer is really on the node (not while a knob below is being dragged upwards)
+        let busy = ui.ctx().dragged_id().map_or(false, |id| id != egui::Id::new(("filter_graph", fi)));
+        let hot = !busy && ui.input(|i| i.pointer.hover_pos()).map_or(false, |pp| (pp - nc).length() < 14.0);
         painter.circle_filled(nc, if hot { 7.0 } else { 5.5 }, Color32::BLACK);
         painter.circle_stroke(nc, if hot { 7.0 } else { 5.5 }, Stroke::new(1.6_f32, WHITE));
     }
