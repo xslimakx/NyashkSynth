@@ -55,6 +55,8 @@ pub struct Meters {
     pub cc_map: std::sync::Mutex<Vec<(u8, nih_plug::params::internals::ParamPtr)>>,
     /// last controller number that arrived: low byte = cc, upper bits = running counter
     pub last_cc: AtomicU32,
+    /// CC that drives the mod wheel (1 unless re-learned; stored as "cc=@modwheel" in `cc_map`)
+    pub wheel_cc: AtomicU32,
     /// on-screen wheels: value bits (f32), written by the GUI when the user touches them
     pub gui_bend: AtomicU32,
     pub gui_mod: AtomicU32,
@@ -86,6 +88,7 @@ impl Meters {
             live: (0..N_SRC).map(|_| AtomicU32::new(0)).collect(),
             cc_map: std::sync::Mutex::new(Vec::new()),
             last_cc: AtomicU32::new(0),
+            wheel_cc: AtomicU32::new(1),
             gui_bend: AtomicU32::new(f32::NAN.to_bits()),
             gui_mod: AtomicU32::new(f32::NAN.to_bits()),
             bend_val: AtomicU32::new(0),
@@ -318,13 +321,19 @@ pub fn rebuild_cc_map(params: &SynthParams, meters: &Meters) {
     let txt = params.cc_map.lock().map(|g| g.clone()).unwrap_or_default();
     let pm = params.param_map();
     let mut v = Vec::new();
+    let mut wheel = 1u32;
     for part in txt.split(';') {
         let Some((c, id)) = part.split_once('=') else { continue };
         let Ok(c) = c.trim().parse::<u8>() else { continue };
+        if id.trim() == "@modwheel" {
+            wheel = c as u32;
+            continue;
+        }
         if let Some((_, ptr, _)) = pm.iter().find(|(pid, _, _)| pid == id.trim()) {
             v.push((c, *ptr));
         }
     }
+    meters.wheel_cc.store(wheel, Ordering::Relaxed);
     if let Ok(mut g) = meters.cc_map.lock() {
         *g = v;
     }
@@ -521,8 +530,10 @@ impl Plugin for NyashkSynth {
                                 }
                             }
                         }
+                        if cc as u32 == self.meters.wheel_cc.load(Ordering::Relaxed) {
+                            self.engine.set_modwheel(value);
+                        }
                         match cc {
-                            1 => self.engine.set_modwheel(value),
                             64 => self.engine.set_sustain(value >= 0.5),
                             120 => {
                                 self.engine.sound_off();

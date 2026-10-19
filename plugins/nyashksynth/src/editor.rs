@@ -63,6 +63,9 @@ pub struct Gui {
     prev_cur: Vec<f32>,
     pub learn_on: bool,
     pub learn_target: Option<nih_plug::params::internals::ParamPtr>,
+    /// MIDI learn is waiting for a CC for the on-screen mod wheel
+    pub learn_wheel: bool,
+    pub take_wheel_unbind: bool,
     pub last_cc_seen: u32,
     pub pmap: Vec<(String, nih_plug::params::internals::ParamPtr)>,
     pub fx_drag: Option<usize>,
@@ -309,6 +312,8 @@ impl Gui {
             prev_cur: Vec::new(),
             learn_on: false,
             learn_target: None,
+            learn_wheel: false,
+            take_wheel_unbind: false,
             last_cc_seen: 0,
             pmap: Vec::new(),
             fx_drag: None,
@@ -541,7 +546,7 @@ pub fn create(params: Arc<SynthParams>, meters: Arc<Meters>, shared: Arc<Shared>
                 // ================================================= bottom strip: sources, macros, voice
                 strip(ui, setter, p, st, rect(14.0, 724.0, 1430.0, 76.0), now);
                 if p.show_wheels.value() {
-                    wheels_panel(ui, setter, p, &meters, rect(14.0, 806.0, 118.0, 54.0));
+                    wheels_panel(ui, setter, p, st, &meters, rect(14.0, 806.0, 118.0, 54.0));
                     keyboard(ui, &meters, rect(138.0, 808.0, 1306.0, 50.0));
                 } else {
                     keyboard(ui, &meters, rect(14.0, 808.0, 1430.0, 50.0));
@@ -724,6 +729,7 @@ fn header(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, s
     if pill_tip(ui, rect(968.0, 14.0, 92.0, 26.0), "MIDI LEARN", st.learn_on, "Bind a MIDI controller to any knob: switch this on, click a knob, then move a knob / fader on your keyboard.\nRight-click a bound knob to unbind it.") {
         st.learn_on = !st.learn_on;
         st.learn_target = None;
+        st.learn_wheel = false;
     }
     if pill_tip(ui, rect(1064.0, 14.0, 52.0, 26.0), "CLEAR", false, "Remove every MIDI binding") {
         if let Ok(mut g) = p.cc_map.lock() {
@@ -2559,7 +2565,7 @@ fn settings_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, meters: &Met
         }
     }
     ui.painter().text(Pos2::new(x0, kt + 66.0), Align2::LEFT_TOP, "Key lock moves every incoming note to the nearest note of the scale,\nso wrong keys can not happen (also feeds the arpeggiator and clips).", mono(8.5), DIM);
-    ui.painter().text(Pos2::new(x1, c.top() + 232.0), Align2::LEFT_TOP, "Transpose / octave: the OCT and SEMI spinners above.\nMod wheel = CC1, sustain = CC64; aftertouch and\npitch bend are always on.\nCtrl+Z / Ctrl+Y: undo / redo.\nRight-click a modulation ring: remove it.\nMIDI-learnable: every knob, slider and the OCT / SEMI\nspinners (switch on MIDI LEARN, click it, move a CC).", mono(8.5), DIM);
+    ui.painter().text(Pos2::new(x1, c.top() + 232.0), Align2::LEFT_TOP, "Transpose / octave: the OCT and SEMI spinners above.\nMod wheel = CC1 (MIDI LEARN can re-assign it), sustain = CC64;\naftertouch and pitch bend are always on.\nCtrl+Z / Ctrl+Y: undo / redo.\nRight-click a modulation ring: remove it.\nMIDI-learnable: every knob, slider and the OCT / SEMI\nspinners (switch on MIDI LEARN, click it, move a CC).", mono(8.5), DIM);
     // ---------------- MIDI bindings list
     let x2 = c.left() + 704.0;
     head(ui, x2, "MIDI BINDINGS (learned CCs)");
@@ -2575,7 +2581,7 @@ fn settings_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, meters: &Met
     for (k, (cc, id)) in entries.iter().take(28).enumerate() {
         let (colx, row) = (x2 + 340.0 * (k / 14) as f32, k % 14);
         let y = c.top() + 24.0 + 21.0 * row as f32;
-        let name = st.pmap.iter().find(|(pid, _)| pid == id).map(|(_, ptr)| unsafe { ptr.name().to_string() }).unwrap_or_else(|| id.clone());
+        let name = st.pmap.iter().find(|(pid, _)| pid == id).map(|(_, ptr)| unsafe { ptr.name().to_string() }).unwrap_or_else(|| if id == "@modwheel" { "Mod wheel".to_string() } else { id.clone() });
         let name: String = if name.chars().count() > 30 { name.chars().take(29).collect::<String>() + "~" } else { name };
         ui.painter().text(Pos2::new(colx, y + 9.0), Align2::LEFT_CENTER, format!("CC {cc:<3} -> {name}"), mono(9.5), WHITE);
         if pill_tip(ui, Rect::from_min_size(Pos2::new(colx + 300.0, y), Vec2::new(22.0, 19.0)), "x", false, "Remove this binding") {
@@ -3249,6 +3255,14 @@ fn learn_end(p: &SynthParams, st: &mut Gui, meters: &Meters, now: f64) {
     };
     if let Some(ptr) = click {
         st.learn_target = Some(ptr);
+        st.learn_wheel = false;
+    }
+    if st.take_wheel_unbind {
+        st.take_wheel_unbind = false;
+        let mut e = entries(p);
+        e.retain(|(_, i)| i != "@modwheel");
+        write(e);
+        st.say(now, "Mod wheel: back to CC 1".to_string());
     }
     if let Some(ptr) = unbind {
         if let Some(id) = id_of(st, ptr) {
@@ -3262,7 +3276,14 @@ fn learn_end(p: &SynthParams, st: &mut Gui, meters: &Meters, now: f64) {
     if lc != st.last_cc_seen {
         st.last_cc_seen = lc;
         let cc = (lc & 255) as u8;
-        if st.learn_on && cc != 64 && cc < 120 {
+        if st.learn_on && st.learn_wheel && cc != 64 && cc < 120 {
+            st.learn_wheel = false;
+            let mut e = entries(p);
+            e.retain(|(_, i)| i != "@modwheel");
+            e.push((cc, "@modwheel".to_string()));
+            write(e);
+            st.say(now, format!("Mod wheel bound to CC {cc}"));
+        } else if st.learn_on && cc != 64 && cc < 120 {
             if let Some(ptr) = st.learn_target.take() {
                 if let Some(id) = id_of(st, ptr) {
                     let mut e = entries(p);
@@ -3329,20 +3350,23 @@ fn spinner(ui: &mut Ui, setter: &ParamSetter, prm: &IntParam, r: Rect, id: &str,
 }
 
 /// One vertical wheel. `pos` is the displayed position 0..1 (bottom..top); dragging writes 0..1 into `out`.
-fn wheel(ui: &mut Ui, r: Rect, id: &str, pos: f32, out: &std::sync::atomic::AtomicU32, spring: Option<f32>, tip: &str) {
+fn wheel(ui: &mut Ui, r: Rect, id: &str, pos: f32, out: &std::sync::atomic::AtomicU32, spring: Option<f32>, tip: &str, learning: bool) -> egui::Response {
     let resp = ui.interact(r, egui::Id::new(id), Sense::click_and_drag()).on_hover_text(tip);
-    if resp.dragged() || resp.drag_started() {
+    if learning {
+        // MIDI learn mode: clicks pick the wheel instead of moving it
+    } else if resp.dragged() || resp.drag_started() {
         if let Some(pt) = resp.interact_pointer_pos() {
             let v = ((r.bottom() - 4.0 - pt.y) / (r.height() - 8.0)).clamp(0.0, 1.0);
             out.store(v.to_bits(), std::sync::atomic::Ordering::Relaxed);
         }
     }
-    if resp.drag_stopped() {
+    if learning {
+    } else if resp.drag_stopped() {
         if let Some(c) = spring {
             out.store(c.to_bits(), std::sync::atomic::Ordering::Relaxed);
         }
     }
-    if resp.double_clicked() {
+    if !learning && resp.double_clicked() {
         out.store(spring.unwrap_or(0.0).to_bits(), std::sync::atomic::Ordering::Relaxed);
     }
     let pn = ui.painter();
@@ -3355,9 +3379,10 @@ fn wheel(ui: &mut Ui, r: Rect, id: &str, pos: f32, out: &std::sync::atomic::Atom
     }
     let y = r.bottom() - 4.0 - (r.height() - 8.0) * pos.clamp(0.0, 1.0);
     pn.rect_filled(Rect::from_center_size(Pos2::new(r.center().x, y), Vec2::new(r.width() - 4.0, 6.0)), CornerRadius::same(2), WHITE);
+    resp
 }
 
-fn wheels_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, meters: &Meters, r: Rect) {
+fn wheels_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, meters: &Meters, r: Rect) {
     let lab = |ui: &mut Ui, x: f32, y: f32, t: &str| {
         ui.painter().text(Pos2::new(x, y), Align2::LEFT_CENTER, t, mono(8.5), DIM);
     };
@@ -3367,8 +3392,32 @@ fn wheels_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, meters: &Met
     spinner(ui, setter, &p.kb_transpose, Rect::from_min_size(Pos2::new(r.left() + 28.0, r.top() + 29.0), Vec2::new(44.0, 22.0)), "kb_semi", "Transpose in semitones (affects MIDI input and the on-screen keys)");
     let bend = f32::from_bits(meters.bend_val.load(std::sync::atomic::Ordering::Relaxed));
     let modw = f32::from_bits(meters.mod_val.load(std::sync::atomic::Ordering::Relaxed));
-    wheel(ui, Rect::from_min_size(Pos2::new(r.left() + 78.0, r.top()), Vec2::new(18.0, r.height())), "wheel_bend", bend * 0.5 + 0.5, &meters.gui_bend, Some(0.5), "Pitch wheel (springs back)");
-    wheel(ui, Rect::from_min_size(Pos2::new(r.left() + 100.0, r.top()), Vec2::new(18.0, r.height())), "wheel_mod", modw, &meters.gui_mod, None, "Mod wheel (stays where you leave it)");
+    wheel(ui, Rect::from_min_size(Pos2::new(r.left() + 78.0, r.top()), Vec2::new(18.0, r.height())), "wheel_bend", bend * 0.5 + 0.5, &meters.gui_bend, Some(0.5), "Pitch wheel (follows your keyboard's pitch bend, springs back).\nPitch bend is a fixed MIDI message, it cannot be re-assigned.", false);
+    let mr = Rect::from_min_size(Pos2::new(r.left() + 100.0, r.top()), Vec2::new(18.0, r.height()));
+    let wcc = meters.wheel_cc.load(std::sync::atomic::Ordering::Relaxed);
+    let tip = format!("Mod wheel (follows CC {wcc}, stays where you leave it).\nMIDI LEARN: click it, then move any control on your keyboard to use that CC instead.\nRight-click while learning: back to CC 1.");
+    let resp = wheel(ui, mr, "wheel_mod", modw, &meters.gui_mod, None, &tip, st.learn_on);
+    if st.learn_on {
+        if resp.clicked() {
+            st.learn_wheel = true;
+            st.learn_target = None;
+        }
+        if resp.secondary_clicked() {
+            st.take_wheel_unbind = true;
+        }
+        let t = ui.input(|i| i.time);
+        let (w, col) = if st.learn_wheel { (2.5_f32, WHITE) } else { (1.0_f32, Color32::from_rgb(90, 90, 90)) };
+        let ph = if st.learn_wheel { ((t * 5.0).sin() * 0.5 + 0.5) as f32 * 2.0 } else { 0.0 };
+        ui.painter().rect_stroke(mr.expand(2.0 + ph), CornerRadius::same(5), Stroke::new(w, col), StrokeKind::Outside);
+        if st.learn_wheel {
+            ui.ctx().request_repaint();
+        }
+    }
+    if wcc != 1 {
+        let tag = Rect::from_center_size(Pos2::new(mr.center().x, mr.top() - 1.0), Vec2::new(34.0, 11.0));
+        ui.painter().rect_filled(tag, CornerRadius::same(3), WHITE);
+        ui.painter().text(tag.center(), Align2::CENTER_CENTER, format!("CC{wcc}"), mono(8.0), Color32::BLACK);
+    }
 }
 
 fn keyboard(ui: &mut Ui, meters: &Meters, r: Rect) {

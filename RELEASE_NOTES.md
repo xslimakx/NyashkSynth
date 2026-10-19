@@ -1,4 +1,9 @@
-# NyashkSynth v1.0.5
+# NyashkSynth v1.0.6
+
+- **Mod wheel can be MIDI-learned:** MIDI LEARN, click the on-screen mod wheel, move any control on your keyboard; that CC then drives the wheel (a `CCn` tag shows it, right-click while learning goes back to CC 1). Useful when a controller has no mod wheel. Saved with the plugin state, listed in SETTINGS > MIDI bindings, removed by CLEAR.
+- Pitch wheel follows your keyboard's pitch bend (a fixed MIDI message, not re-assignable).
+
+# v1.0.5
 
 - **MIDI knobs now bind in VST3 hosts (Bitwig, FL Studio …):** the plugin used to declare "basic" MIDI, so hosts never sent it controller (CC) messages and MIDI LEARN saw nothing. It now asks for full MIDI CCs.
 - **Preset browser star folders:** the list had only "4+ stars"; now there is a folder for every rating (5, 4, 3, 2, 1 stars) next to Favorites.
