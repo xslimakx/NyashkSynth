@@ -748,13 +748,13 @@ fn header(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, s
         };
         painter.text(Pos2::new(o.x + 1124.0, o.y + 27.0), Align2::LEFT_CENTER, txt, mono(10.0), if st.learn_on { WHITE } else { DIM });
     }
-    painter.text(Pos2::new(o.x + 1320.0, o.y + 27.0), Align2::LEFT_CENTER, "MASTER", mono(10.0), DIM);
-    h_slider(ui, setter, &p.master, rect(1380.0, 20.0, 64.0, 14.0), "master_slider", false, "Master volume");
+    painter.text(Pos2::new(o.x + 1296.0, o.y + 35.0), Align2::LEFT_CENTER, "MASTER", mono(10.0), DIM);
+    h_slider(ui, setter, &p.master, rect(1359.0, 19.0, 78.0, 14.0), "master_slider", false, "Master volume");
     {
         // type a value: click the number (or drag it), Enter to confirm
         let mut v = p.master.value();
         let dv = egui::DragValue::new(&mut v).range(-60.0..=6.0).speed(0.1).fixed_decimals(1).suffix(" dB");
-        let resp = ui.put(rect(1372.0, 35.0, 80.0, 16.0), dv).on_hover_text("Master volume in dB: click and type a value");
+        let resp = ui.put(rect(1352.0, 35.0, 92.0, 16.0), dv).on_hover_text("Master volume in dB: click and type a value");
         if resp.drag_started() || resp.gained_focus() {
             setter.begin_set_parameter(&p.master);
         }

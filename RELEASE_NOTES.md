@@ -1,4 +1,8 @@
-# NyashkSynth v1.0.8
+# NyashkSynth v1.0.9
+
+- **MASTER header aligned:** the slider and the dB box now share one column and end at the page edge (the box used to stick out to the right and sit off-centre under the slider).
+
+# v1.0.8
 
 - **Wheels show their values:** under the pitch wheel the current bend in semitones, under the mod wheel the value 0-127; both wheels have a level fill and a tooltip that explains them (the mod wheel only acts once the `WHEEL` chip is dragged onto a knob).
 
