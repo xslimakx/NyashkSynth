@@ -29,8 +29,9 @@ The mod-source chips, macros, voice settings, keyboard and wheels stay visible o
 6. **TOOLS** (under SUB / NOISE): INIT, RANDOM (a whole new patch), COPY and **HYBRID** (mix the current sound with another preset).
 7. **Mod sources**: drag a chip onto any knob; drag vertically on the knob to set the depth. Right-click the modulation ring to remove it. Besides envelopes, LFOs, macros, velocity, key, wheel, aftertouch and random there are `OSC A/B/C`, `FILT 1/2` (outputs) and `LANE` (clip automation).
 8. **8 macros**: assign them like any other source.
-9. **OCT / SEMI spinners and wheels**: click the arrows, drag, use the mouse wheel; double-click resets. They transpose both MIDI input and the on-screen keys. The pitch wheel springs back, the mod wheel stays where you leave it; both follow your hardware wheels.
-10. **Master**: drag, or double-click and type a dB value.
+9. **Master**: drag, or double-click and type a dB value.
+
+The on-screen OCT / SEMI spinners and pitch / mod wheels are hidden by default (your MIDI keyboard has its own); switch them on with `WHEELS` in SETTINGS. They transpose both MIDI input and the on-screen keys. The pitch wheel springs back, the mod wheel stays where you leave it; both follow your hardware wheels.
 
 ## 2. Effects
 
@@ -126,7 +127,9 @@ Open the **SEQ** page, go to the CLIP SEQUENCER panel and switch **CLIP ON**. Ho
 3. **KEY LOCK**: choose a scale and a root; every incoming note snaps to the nearest scale note (also feeds the arpeggiator and clips, and the STEP tuning mode of the oscillators).
 4. **MIDI channel** (0 = omni), **velocity curve**, **pitch-bend range**, glide.
 5. **MIDI OUT**: send arpeggiator and clip notes to the host.
-6. **MIDI bindings**: every learned CC with its parameter name and an x to remove it.
+6. **WHEELS**: show or hide the on-screen wheels and OCT / SEMI next to the keyboard.
+7. **KEYBOARD OCT / SEMI**: octave and semitone shift of incoming notes and the on-screen keys.
+8. **MIDI bindings**: every learned CC with its parameter name and an x to remove it.
 
 LFOs and envelopes can be dragged onto any knob straight from their title chips in the LFO / ENV tabs, like in Serum.
 

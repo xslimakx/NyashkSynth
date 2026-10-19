@@ -1,3 +1,9 @@
+# v1.0.3
+
+- **On-screen wheels and OCT / SEMI are hidden by default**, so the keyboard gets the full width. SETTINGS > MIDI / PLAY has a `WHEELS: HIDDEN / SHOWN` switch, and OCT / SEMI spinners now also live there.
+- **Docs:** manual and screenshots updated for the new layout.
+- **Interface alignment pass:** the FILTER title no longer collides with the 1 / 2 tabs, SUB knobs sit on an even grid, the INV.LEGATO pills are no longer clipped, LFO panels use the free space (taller scope, SYNC / TRIG / 1-SHOT lined up with the knob row), the bottom strip fits the window (TUNE was cut off) and its voice knobs are evenly spaced.
+
 # v1.0.2
 
 - **Step tuning mode** for oscillators (click the label under SEMI): moves by steps of the KEY LOCK scale.

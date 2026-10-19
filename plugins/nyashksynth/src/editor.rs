@@ -507,8 +507,12 @@ pub fn create(params: Arc<SynthParams>, meters: Arc<Meters>, shared: Arc<Shared>
 
                 // ================================================= bottom strip: sources, macros, voice
                 strip(ui, setter, p, st, rect(14.0, 724.0, 1430.0, 76.0), now);
-                wheels_panel(ui, setter, p, &meters, rect(14.0, 806.0, 118.0, 54.0));
-                keyboard(ui, &meters, rect(138.0, 808.0, 1306.0, 50.0));
+                if p.show_wheels.value() {
+                    wheels_panel(ui, setter, p, &meters, rect(14.0, 806.0, 118.0, 54.0));
+                    keyboard(ui, &meters, rect(138.0, 808.0, 1306.0, 50.0));
+                } else {
+                    keyboard(ui, &meters, rect(14.0, 808.0, 1430.0, 50.0));
+                }
 
                 // ================================================= overlays
                 learn_end(p, st, &meters, now);
@@ -1762,8 +1766,8 @@ fn filter_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui
     panel(ui, r, "04", "FILTER");
     for k in 0..2 {
         let on = if k == 0 { p.f1.fl_on.value() } else { p.f2.fl_on.value() };
-        let lbl = format!("{}{}", k + 1, if on { "" } else { "-" });
-        if pill_tip(ui, Rect::from_min_size(Pos2::new(r.left() + 84.0 + 28.0 * k as f32, r.top() + 5.0), Vec2::new(26.0, 24.0)), &lbl, fi == k, "Edit filter 1 / filter 2") {
+        let lbl = format!("{}{}", k + 1, if on { "" } else { "\u{b7}" });
+        if pill_tip(ui, Rect::from_min_size(Pos2::new(r.left() + 112.0 + 30.0 * k as f32, r.top() + 5.0), Vec2::new(28.0, 24.0)), &lbl, fi == k, "Edit filter 1 / filter 2") {
             st.filt_sel = k;
         }
     }
@@ -1771,7 +1775,7 @@ fn filter_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui
     if pill_tip(ui, Rect::from_min_size(Pos2::new(r.right() - 108.0, r.top() + 6.0), Vec2::new(48.0, 22.0)), "SER", p.fl_serial.value(), "Series: filter 1 feeds filter 2 (off = two parallel filters, sources are routed with the ROUTE buttons)") {
         set_b(setter, &p.fl_serial, !p.fl_serial.value());
     }
-    enum_combo(ui, setter, &fl.fl_type, &format!("filter_type{fi}"), Rect::from_min_size(Pos2::new(r.left() + 144.0, r.top() + 5.0), Vec2::new(r.width() - 260.0, 24.0)));
+    enum_combo(ui, setter, &fl.fl_type, &format!("filter_type{fi}"), Rect::from_min_size(Pos2::new(r.left() + 176.0, r.top() + 5.0), Vec2::new(r.width() - 176.0 - 118.0, 24.0)));
     let d = Rect::from_min_size(Pos2::new(r.left() + 12.0, r.top() + 36.0), Vec2::new(r.width() - 24.0, 150.0));
     let is_custom = fl.fl_type.value() == FilterType::Custom;
     // drag in the graph: left / right = cutoff, up / down = resonance
@@ -1878,11 +1882,11 @@ fn sub_noise_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, _shared: 
     let y = r.top();
     ui.painter().text(Pos2::new(x + 14.0, y + 44.0), Align2::LEFT_CENTER, "SUB", mono(10.5), WHITE);
     on_pill(ui, setter, &p.sub_on, Rect::from_min_size(Pos2::new(x + 52.0, y + 33.0), Vec2::new(40.0, 22.0)), "Sub oscillator on/off");
-    enum_combo(ui, setter, &p.sub_wave, "sub_wave", Rect::from_min_size(Pos2::new(x + 100.0, y + 32.0), Vec2::new(100.0, 24.0)));
-    knob_s(ui, setter, &p.sub_oct, "OCT", cell(x + 206.0, y + 28.0, 46.0), "Sub octave offset", false);
+    enum_combo(ui, setter, &p.sub_wave, "sub_wave", Rect::from_min_size(Pos2::new(x + 100.0, y + 32.0), Vec2::new(70.0, 24.0)));
+    knob_s(ui, setter, &p.sub_oct, "OCT", cell(x + 176.0, y + 28.0, 58.0), "Sub octave offset", false);
     mdst(ModDst::SubLevel);
-    knob_s(ui, setter, &p.sub_level, "LEVEL", cell(x + 250.0, y + 28.0, 46.0), "Sub level", false);
-    knob_s(ui, setter, &p.sub_pan, "PAN", cell(x + 296.0, y + 28.0, 46.0), "Sub stereo position", true);
+    knob_s(ui, setter, &p.sub_level, "LEVEL", cell(x + 234.0, y + 28.0, 58.0), "Sub level", false);
+    knob_s(ui, setter, &p.sub_pan, "PAN", cell(x + 292.0, y + 28.0, 58.0), "Sub stereo position", true);
     ui.painter().hline(x + 12.0..=r.right() - 12.0, y + 98.0, Stroke::new(1.0_f32, LINE));
     ui.painter().text(Pos2::new(x + 14.0, y + 116.0), Align2::LEFT_CENTER, "NOISE", mono(10.5), WHITE);
     enum_combo(ui, setter, &p.noise_type, "noise_type", Rect::from_min_size(Pos2::new(x + 70.0, y + 104.0), Vec2::new(130.0, 24.0)));
@@ -2091,7 +2095,7 @@ fn env_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, c: 
             ui.painter().text(Pos2::new(x + 58.0, c.top() + 6.0), Align2::LEFT_CENTER, "(AMP)", mono(9.5), DIM);
         }
         let _ = name;
-        if pill_tip(ui, Rect::from_min_size(Pos2::new(x + w - 74.0, c.top() - 3.0), Vec2::new(74.0, 18.0)), "INV.LEGATO", e.relegato.value(), "Restart this envelope on every note even in Legato mode (Serum: Invert Legato)") {
+        if pill_tip(ui, Rect::from_min_size(Pos2::new(x + w - 92.0, c.top() - 3.0), Vec2::new(92.0, 18.0)), "INV.LEGATO", e.relegato.value(), "Restart this envelope on every note even in Legato mode (Serum: Invert Legato)") {
             set_b(setter, &e.relegato, !e.relegato.value());
         }
         env_curve(ui, setter, e, Rect::from_min_size(Pos2::new(x, c.top() + 16.0), Vec2::new(w, 86.0)), &format!("envcurve{i}"));
@@ -2388,6 +2392,17 @@ fn settings_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, meters: &Met
             set_b(setter, &p.midi_out, !on);
         }
     }
+    {
+        let on = p.show_wheels.value();
+        if pill_tip(ui, Rect::from_min_size(Pos2::new(x1 + 120.0, c.top() + 132.0), Vec2::new(150.0, 24.0)), if on { "WHEELS: SHOWN" } else { "WHEELS: HIDDEN" }, on, "Show the on-screen OCT / SEMI spinners and pitch / mod wheels left of the keyboard. Off = the keyboard gets the full width (your MIDI keyboard has its own).") {
+            set_b(setter, &p.show_wheels, !on);
+        }
+        ui.painter().text(Pos2::new(x1, c.top() + 208.0), Align2::LEFT_CENTER, "KEYBOARD", mono(9.5), DIM);
+        ui.painter().text(Pos2::new(x1 + 74.0, c.top() + 208.0), Align2::LEFT_CENTER, "OCT", mono(9.5), DIM);
+        spinner(ui, setter, &p.kb_octave, Rect::from_min_size(Pos2::new(x1 + 104.0, c.top() + 197.0), Vec2::new(54.0, 22.0)), "kb_oct_s", "Keyboard octave shift (affects MIDI input and the on-screen keys)");
+        ui.painter().text(Pos2::new(x1 + 172.0, c.top() + 208.0), Align2::LEFT_CENTER, "SEMI", mono(9.5), DIM);
+        spinner(ui, setter, &p.kb_transpose, Rect::from_min_size(Pos2::new(x1 + 206.0, c.top() + 197.0), Vec2::new(54.0, 22.0)), "kb_semi_s", "Transpose in semitones (affects MIDI input and the on-screen keys)");
+    }
     // key lock
     let kt = c.top() + 250.0;
     ui.painter().text(Pos2::new(x0, kt - 14.0), Align2::LEFT_CENTER, "KEY LOCK", mono(10.5), WHITE);
@@ -2400,7 +2415,7 @@ fn settings_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, meters: &Met
         }
     }
     ui.painter().text(Pos2::new(x0, kt + 66.0), Align2::LEFT_TOP, "Key lock moves every incoming note to the nearest note of the scale,\nso wrong keys can not happen (also feeds the arpeggiator and clips).", mono(8.5), DIM);
-    ui.painter().text(Pos2::new(x1, c.top() + 168.0), Align2::LEFT_TOP, "Transpose / octave: use the OCT and SEMI spinners left of the keyboard.\nMod wheel = CC1, sustain = CC64, aftertouch and pitch bend are always on.\nCtrl+Z / Ctrl+Y: undo / redo.  Right-click a knob\nmodulation ring: remove it.", mono(8.5), DIM);
+    ui.painter().text(Pos2::new(x1, c.top() + 232.0), Align2::LEFT_TOP, "Transpose / octave: the OCT and SEMI spinners above.\nMod wheel = CC1, sustain = CC64, aftertouch and pitch bend are always on.\nCtrl+Z / Ctrl+Y: undo / redo.  Right-click a knob\nmodulation ring: remove it.", mono(8.5), DIM);
     // ---------------- MIDI bindings list
     let x2 = c.left() + 704.0;
     head(ui, x2, "MIDI BINDINGS (learned CCs)");
@@ -2484,7 +2499,7 @@ fn lfo_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, 
         let lnow = ui.input(|i| i.time);
         source_chip(ui, setter, p, st, Rect::from_min_size(Pos2::new(x, c.top() - 1.0), Vec2::new(48.0, 24.0)), &format!("LFO {}", i + 1), lfo_src(i), "Drag this onto any knob", lnow);
         enum_combo(ui, setter, &l.shape, &format!("lfoshape{i}"), Rect::from_min_size(Pos2::new(x + 52.0, c.top() - 1.0), Vec2::new(w - 52.0, 24.0)));
-        let d = Rect::from_min_size(Pos2::new(x, c.top() + 28.0), Vec2::new(w, 66.0));
+        let d = Rect::from_min_size(Pos2::new(x, c.top() + 28.0), Vec2::new(w, 92.0));
         let shape = l.shape.value();
         let curve = shared.lfo[i].get();
         if shape == LfoShape::Custom {
@@ -2549,7 +2564,7 @@ fn lfo_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, 
                 shared.lfo[i].set(Some(Arc::new(cv)));
             }
         }
-        let ky = c.top() + 98.0;
+        let ky = c.top() + 128.0;
         let kw = w / 3.0;
         if l.sync.value() {
             ui.painter().text(Pos2::new(x + kw * 0.5, ky + 7.0), Align2::CENTER_CENTER, "RATE", mono(9.5), DIM);
@@ -2559,18 +2574,18 @@ fn lfo_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, 
         }
         knob_s(ui, setter, &l.rise, "RISE", cell(x + kw, ky, kw), "Fade-in time (needs TRIG)", false);
         knob_s(ui, setter, &l.smooth, "SMOOTH", cell(x + kw * 2.0, ky, kw), "Smooths the LFO output", false);
-        let ky2 = ky + 70.0;
+        let ky2 = ky + 74.0;
         knob_s(ui, setter, &l.delay, "DELAY", cell(x, ky2, kw), "Wait this long after the note starts before the LFO begins (needs TRIG)", false);
         knob_s(ui, setter, &l.phase, "PHASE", cell(x + kw, ky2, kw), "Start phase of the LFO", false);
         let pw = kw - 2.0;
         let px = x + kw * 2.0 + 1.0;
-        if pill_tip(ui, Rect::from_min_size(Pos2::new(px, ky2 + 2.0), Vec2::new(pw, 20.0)), "SYNC", l.sync.value(), "Lock the rate to the host tempo") {
+        if pill_tip(ui, Rect::from_min_size(Pos2::new(px, ky2 + 4.0), Vec2::new(pw, 18.0)), "SYNC", l.sync.value(), "Lock the rate to the host tempo") {
             set_b(setter, &l.sync, !l.sync.value());
         }
-        if pill_tip(ui, Rect::from_min_size(Pos2::new(px, ky2 + 24.0), Vec2::new(pw, 20.0)), "TRIG", l.trig.value(), "Restart the LFO on every note (off = free running, shared by all notes)") {
+        if pill_tip(ui, Rect::from_min_size(Pos2::new(px, ky2 + 24.0), Vec2::new(pw, 18.0)), "TRIG", l.trig.value(), "Restart the LFO on every note (off = free running, shared by all notes)") {
             set_b(setter, &l.trig, !l.trig.value());
         }
-        if pill_tip(ui, Rect::from_min_size(Pos2::new(px, ky2 + 46.0), Vec2::new(pw, 20.0)), "1-SHOT", l.oneshot.value(), "Play a single cycle and hold the end value (needs TRIG)") {
+        if pill_tip(ui, Rect::from_min_size(Pos2::new(px, ky2 + 44.0), Vec2::new(pw, 18.0)), "1-SHOT", l.oneshot.value(), "Play a single cycle and hold the end value (needs TRIG)") {
             set_b(setter, &l.oneshot, !l.oneshot.value());
         }
     }
@@ -2881,7 +2896,7 @@ fn strip(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, r: Re
         ("WHEEL", ModSrc::ModWheel, "Mod wheel (CC1)"),
         ("RANDOM", ModSrc::Random, "Random value per note"),
     ];
-    let cw = 46.0;
+    let cw = 44.0;
     for (n, (label, src, tip)) in chips.iter().enumerate() {
         let (row, col) = (n / 16, n % 16);
         let rr = Rect::from_min_size(Pos2::new(r.left() + 12.0 + (cw + 3.0) * col as f32, r.top() + 22.0 + 26.0 * row as f32), Vec2::new(cw, 22.0));
@@ -2899,10 +2914,10 @@ fn strip(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, r: Re
     ui.painter().vline(vx - 4.0, r.top() + 8.0..=r.bottom() - 8.0, Stroke::new(1.0_f32, LINE));
     ui.painter().text(Pos2::new(vx + 4.0, r.top() + 10.0), Align2::LEFT_CENTER, "VOICE", mono(9.5), DIM);
     enum_combo(ui, setter, &p.vmode, "vmode", Rect::from_min_size(Pos2::new(vx + 4.0, r.top() + 22.0), Vec2::new(84.0, 24.0)));
-    knob_s(ui, setter, &p.glide, "GLIDE", cell(vx + 92.0, r.top() + 14.0, 48.0), "Portamento time", false);
-    knob_s(ui, setter, &p.bend, "BEND", cell(vx + 140.0, r.top() + 14.0, 44.0), "Pitch-bend range in semitones", false);
-    knob_s(ui, setter, &p.poly, "VOICES", cell(vx + 184.0, r.top() + 14.0, 48.0), "Maximum number of simultaneous notes", false);
-    knob_s(ui, setter, &p.tune, "TUNE", cell(vx + 230.0, r.top() + 14.0, 44.0), "Master tune in cents", true);
+    knob_s(ui, setter, &p.glide, "GLIDE", cell(vx + 92.0, r.top() + 14.0, 46.0), "Portamento time", false);
+    knob_s(ui, setter, &p.bend, "BEND", cell(vx + 138.0, r.top() + 14.0, 46.0), "Pitch-bend range in semitones", false);
+    knob_s(ui, setter, &p.poly, "VOICES", cell(vx + 184.0, r.top() + 14.0, 46.0), "Maximum number of simultaneous notes", false);
+    knob_s(ui, setter, &p.tune, "TUNE", cell(vx + 230.0, r.top() + 14.0, 46.0), "Master tune in cents", true);
 }
 
 #[allow(clippy::too_many_arguments)]
