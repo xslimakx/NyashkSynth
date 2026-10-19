@@ -1,60 +1,20 @@
-# NyashkSynth v1.0.12
+# NyashkSynth v1.0.3
 
-- **Filter node no longer grows while you turn a knob under the graph:** the dot on the FILTER graph used to enlarge whenever the pointer was anywhere over the graph, e.g. when a knob (KEY, RES …) was dragged upwards. It now reacts only when the pointer is on the dot.
+**MIDI**
+- MIDI knobs now bind in VST3 hosts (Bitwig, FL Studio ...): the plugin now asks the host for full MIDI CCs, so MIDI LEARN sees your controller.
+- Every knob, slider and the OCT / SEMI spinners are MIDI-learnable; a bound control shows a `CC` tag, right-click unbinds. The on-screen wheels follow your keyboard (pitch bend and CC 1) and are not re-assignable.
 
-# v1.0.11
+**Interface**
+- OCT / SEMI spinners and the pitch / mod wheels are back left of the keyboard (on by default, `WHEELS` in SETTINGS can hide them); the wheels show their values (bend in semitones, mod 0-127).
+- FX tab rebuilt: graph, signal flow and spectrum no longer overlap, every effect has a live visualisation, effects without a graph give the room to a taller spectrum.
+- Filter "Points (EQ)" mode and the FX filter have draggable nodes like the EQ; the node only grows when the pointer is on it.
+- Alignment pass over every page: drop-downs fill exactly their space, oscillator knob grid spans the panel, UNI MODE on the same rows as the knobs, SUB knobs on the NOISE grid, MASTER header lined up, MATRIX rows use the page height.
+- Preset browser: a star folder for every rating (5, 4, 3, 2, 1) next to Favorites.
+- Names, categories, tags and search accept any language and symbols (Ukrainian, crosses, stars ...): a DejaVu Sans font is built in, CJK uses a system font when present; AltGr types on Windows.
 
-- **Alignment pass over every page:**
-  - Drop-down boxes now fill exactly the space given to them (same width and height as the pills and boxes next to them); before they were 18 px too narrow and a few pixels off vertically.
-  - Oscillator knob grid spans the whole panel; UNI MODE sits on the same rows as the other knobs (value box + caption).
-  - SUB knobs use the same 5-column grid as the NOISE knobs; the TOOLS buttons and the filter ROUTE pills end on the panel's right edge.
-  - FX page: effects without their own graph (Hyper, Dist, Flanger, Phaser, Chorus, Bode, Utility) give the extra room to the signal flow and a taller output spectrum; Delay has no gap when LINK hides TIME R; graph, spectrum and effect chips share one left/right edge.
-  - MASTER label and volume box lined up.
-- Header, wheels and combos re-checked on SOUND / MOD / MATRIX / FX / SEQ / SETTINGS and the editors.
-
-# v1.0.10
-
-- **Any language and symbols in names:** preset names, categories, tags and search can be typed in Ukrainian (or any alphabet) and with symbols such as crosses and stars. A DejaVu Sans font is built in (Latin, Cyrillic, Greek, Hebrew, Arabic, dingbats, many symbols); Chinese / Japanese / Korean use a font of your system when present. Ctrl+V pastes any text. Preset files keep these names (only characters that file systems forbid are replaced).
-- AltGr characters now type on Windows.
-
-# v1.0.9
-
-- **MASTER header aligned:** the slider and the dB box now share one column and end at the page edge (the box used to stick out to the right and sit off-centre under the slider).
-
-# v1.0.8
-
-- **Wheels show their values:** under the pitch wheel the current bend in semitones, under the mod wheel the value 0-127; both wheels have a level fill and a tooltip that explains them (the mod wheel only acts once the `WHEEL` chip is dragged onto a knob).
-
-# NyashkSynth v1.0.7
-
-- **Wheels back to standard:** the on-screen pitch and mod wheels cannot be MIDI-learned any more (v1.0.6 allowed it for the mod wheel). They simply follow your keyboard: pitch bend moves the pitch wheel, CC 1 moves the mod wheel. A wheel binding saved by v1.0.6 is dropped automatically.
-
-# v1.0.6 (withdrawn)
-
-- Mod wheel MIDI-learn; removed again in 1.0.7.
-
-# v1.0.5
-
-- **MIDI knobs now bind in VST3 hosts (Bitwig, FL Studio …):** the plugin used to declare "basic" MIDI, so hosts never sent it controller (CC) messages and MIDI LEARN saw nothing. It now asks for full MIDI CCs.
-- **Preset browser star folders:** the list had only "4+ stars"; now there is a folder for every rating (5, 4, 3, 2, 1 stars) next to Favorites.
-- **FX tab rebuilt.** Graph, signal flow and spectrum no longer overlap; BUS / split knobs sit in the header line. Every effect has a live visualisation (compressor curve, delay taps, reverb decay, EQ with spectrum).
-- **Filter points like the EQ:** the FILTER "Points (EQ)" mode and the FX filter have draggable nodes (frequency / gain, scroll = Q); point GAIN / WIDTH are modulation targets.
-- Combo boxes truncate instead of overflowing; MULTISAMPLE region editor, matrix rows, preset label and toasts re-laid out.
-- **MIDI learn everywhere:** spinners and sliders show the learn ring and `CC` tag; right-click unbinds.
-- **Engine fixes (~30 from a full code review):** granular with 1 grain, serial filter routing, LFO smoothing, clip / arpeggiator stop on all-notes-off, fresh envelope on voice steal, sub pan modulation, DC / NaN guards, key-lock / transpose note refcount (no stuck notes), SFZ `<global>/<master>/<group>` inheritance, preset parsing of non-finite values, disabled mod slots no longer drive anything.
-- 4 new regression tests (33 engine tests); full suite, pluginval strictness 5 and GUI fuzzing pass.
-
-# NyashkSynth v1.0.4
-
-- **OCT / SEMI spinners and pitch / mod wheels are back left of the keyboard (on by default)**, like Serum. `WHEELS` in SETTINGS can still hide them.
-- **OCT and SEMI can now be MIDI-learned** (MIDI LEARN, click the spinner, press your keyboard's transpose control); a bound spinner shows its `CC` tag.
-- Interface pass over every page: SUB / NOISE knobs on one grid, VOICE strip (GLIDE / BEND / VOICES / TUNE) no longer overlaps, FX BUS 2 / split knobs moved into the header line, MATRIX rows use the full page height.
-
-# v1.0.3
-
-- **On-screen wheels and OCT / SEMI are hidden by default**, so the keyboard gets the full width. SETTINGS > MIDI / PLAY has a `WHEELS: HIDDEN / SHOWN` switch, and OCT / SEMI spinners now also live there.
-- **Docs:** manual and screenshots updated for the new layout.
-- **Interface alignment pass:** the FILTER title no longer collides with the 1 / 2 tabs, SUB knobs sit on an even grid, the INV.LEGATO pills are no longer clipped, LFO panels use the free space (taller scope, SYNC / TRIG / 1-SHOT lined up with the knob row), the bottom strip fits the window (TUNE was cut off) and its voice knobs are evenly spaced.
+**Engine and fixes** (~30 from a full code review)
+- Granular with 1 grain, serial filter routing, LFO smoothing, arpeggiator / clip stop on all-notes-off, fresh envelope on voice steal, sub pan modulation, DC / NaN guards, key-lock / transpose note refcount (no stuck notes), SFZ `<global>/<master>/<group>` inheritance, preset parsing of non-finite values, disabled mod slots no longer drive anything.
+- 4 new regression tests; full suite, pluginval (strictness 5) and GUI fuzzing pass.
 
 # v1.0.2
 
