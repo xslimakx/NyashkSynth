@@ -63,6 +63,11 @@ pub struct Gui {
     pub overlay: Overlay,
     presets: Vec<PresetRef>,
     favs: Vec<String>,
+    spec: Vec<f32>,
+    spec_fs: f32,
+    meta: presets::Meta,
+    tag_edit: String,
+    tag_for: String,
     pb: BState,
     save_name: String,
     save_cat: String,
@@ -92,10 +97,10 @@ pub fn osc(p: &SynthParams, o: usize) -> &OscParams {
 pub const OSC_NAMES: [&str; 3] = ["A", "B", "C"];
 
 fn scan_tables() -> Vec<(BItem, TblSrc)> {
-    let mut v: Vec<(BItem, TblSrc)> = NAMES.iter().enumerate().map(|(i, n)| (BItem { name: n.to_string(), cat: "Factory".into(), fav: false, user: false }, TblSrc::Builtin(i))).collect();
+    let mut v: Vec<(BItem, TblSrc)> = NAMES.iter().enumerate().map(|(i, n)| (BItem { name: n.to_string(), cat: "Factory".into(), fav: false, user: false, rating: 0, tags: vec![] }, TblSrc::Builtin(i))).collect();
     if let Some(d) = files::tables_dir() {
         for e in files::scan(&d, &["wav"]) {
-            v.push((BItem { name: e.name, cat: e.cat, fav: false, user: true }, TblSrc::File(e.path)));
+            v.push((BItem { name: e.name, cat: e.cat, fav: false, user: true, rating: 0, tags: vec![] }, TblSrc::File(e.path)));
         }
     }
     v
@@ -166,7 +171,9 @@ fn load_osc_sample(setter: &ParamSetter, p: &SynthParams, shared: &Shared, o: us
     }
     shared.smp[o].set(Some(Arc::new(s)));
     let op = osc(p, o);
-    set_e(setter, &op.mode, OscMode::Sample);
+    if op.mode.value() == OscMode::Wavetable {
+        set_e(setter, &op.mode, OscMode::Sample);
+    }
     set_f(setter, &op.s_start, 0.0);
     set_f(setter, &op.s_end, 1.0);
     Ok(name)
@@ -231,6 +238,11 @@ impl Gui {
             },
             presets: presets::list_all(),
             favs: presets::load_favs(),
+            spec: Vec::new(),
+            spec_fs: 48000.0,
+            meta: presets::load_meta(),
+            tag_edit: String::new(),
+            tag_for: String::new(),
             pb: BState::default(),
             save_name: String::new(),
             save_cat: String::new(),
@@ -301,6 +313,7 @@ pub fn create(params: Arc<SynthParams>, meters: Arc<Meters>, shared: Arc<Shared>
             meters.gui_beat.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             begin_frame(&params2, meters.live_sources());
             learn_begin(p, st);
+            update_spectrum(st, &meters);
             egui::CentralPanel::default().frame(egui::Frame::NONE.fill(BG)).show(ctx, |ui| {
                 let full = ui.max_rect();
                 let o_real = full.min;
@@ -327,6 +340,9 @@ pub fn create(params: Arc<SynthParams>, meters: Arc<Meters>, shared: Arc<Shared>
                     if !st.smp_dev {
                         st.smp_dev = true;
                         let _ = load_osc_sample(setter, p, &shared, 0, std::path::Path::new(&path));
+                        if std::env::var("NYASHK_GRAN").is_ok() {
+                            set_e(setter, &p.a.mode, OscMode::Granular);
+                        }
                     }
                 }
                 if std::env::var("NYASHK_ARPPAT").is_ok() && !st.arp_dev {
@@ -339,6 +355,12 @@ pub fn create(params: Arc<SynthParams>, meters: Arc<Meters>, shared: Arc<Shared>
                         *g = "2|0,2,0,100;2,1,7,80;4,2,12,100;6,1,5,70;8,3,3,100;11,1,10,60;12,2,-5,90;16,2,0,100;18,2,4,80;20,4,7,100;26,2,12,70;28,3,-12,100".to_string();
                     }
                     set_b(setter, &p.clip_on, true);
+                }
+                if let Some(n) = std::env::var("NYASHK_PLAY").ok().and_then(|v| v.parse::<usize>().ok()) {
+                    // developer aid for screenshots: hold an on-screen key
+                    if let Some(k) = meters.gui_keys.get(n) {
+                        k.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
                 }
                 autotest(setter, p, &shared, st, &meters, now);
                 header(ui, setter, p, &shared, st, &meters, o_real, now);
@@ -374,6 +396,23 @@ pub fn create(params: Arc<SynthParams>, meters: Arc<Meters>, shared: Arc<Shared>
                     3 => {
                         let c = page_panel("EFFECTS", rect(14.0, 62.0, 1430.0, 654.0));
                         fxui::fx_tab(ui, setter, p, st, c);
+                        let sr = rect(24.0, 62.0 + 316.0, 1410.0, 322.0);
+                        painter.rect_filled(sr, CornerRadius::same(4), Color32::from_rgb(8, 8, 8));
+                        painter.rect_stroke(sr, CornerRadius::same(4), Stroke::new(1.0_f32, LINE), StrokeKind::Inside);
+                        let inner = sr.shrink2(Vec2::new(40.0, 14.0));
+                        let sp = painter.with_clip_rect(sr);
+                        for db in [-60.0f32, -40.0, -20.0, 0.0] {
+                            let y = inner.bottom() - inner.height() * (db + 80.0) / 80.0;
+                            sp.line_segment([Pos2::new(inner.left(), y), Pos2::new(inner.right(), y)], Stroke::new(1.0_f32, Color32::from_rgb(24, 24, 24)));
+                            sp.text(Pos2::new(inner.left() - 6.0, y), Align2::RIGHT_CENTER, format!("{db:.0}"), mono(8.5), DIM);
+                        }
+                        for (f, t) in [(50.0f32, "50"), (100.0, "100"), (200.0, "200"), (500.0, "500"), (1000.0, "1k"), (2000.0, "2k"), (5000.0, "5k"), (10000.0, "10k")] {
+                            let x = inner.left() + inner.width() * (f / 20.0).ln() / 1000.0f32.ln();
+                            sp.line_segment([Pos2::new(x, inner.top()), Pos2::new(x, inner.bottom())], Stroke::new(1.0_f32, Color32::from_rgb(24, 24, 24)));
+                            sp.text(Pos2::new(x, inner.bottom() + 8.0), Align2::CENTER_CENTER, t, mono(8.5), DIM);
+                        }
+                        draw_spectrum(&sp, inner, &st.spec, st.spec_fs, -80.0, Color32::from_rgb(200, 200, 200));
+                        sp.text(Pos2::new(sr.left() + 10.0, sr.top() + 10.0), Align2::LEFT_CENTER, "OUTPUT SPECTRUM", mono(9.5), DIM);
                     }
                     4 => {
                         let c = page_panel("ARPEGGIATOR", rect(14.0, 62.0, 1430.0, 322.0));
@@ -648,7 +687,7 @@ fn drop_files(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Share
                     Ok(n) => msgs.push(format!("noise sample {n} loaded")),
                     Err(e) => msgs.push(format!("noise failed: {e}")),
                 }
-            } else if let Some(so) = [(area_a, 0usize), (area_b, 1), (area_c, 2)].iter().find(|(a, i)| a.contains(pos) && osc(p, *i).mode.value() == OscMode::Sample).map(|(_, i)| *i) {
+            } else if let Some(so) = [(area_a, 0usize), (area_b, 1), (area_c, 2)].iter().find(|(a, i)| a.contains(pos) && osc(p, *i).mode.value() != OscMode::Wavetable).map(|(_, i)| *i) {
                 if let Some(dir) = files::noises_dir() {
                     let _ = std::fs::create_dir_all(&dir);
                     let d = dir.join(path.file_name().unwrap_or_default());
@@ -730,7 +769,10 @@ fn preset_overlay(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &S
     let items: Vec<BItem> = st
         .presets
         .iter()
-        .map(|r| BItem { name: r.name.clone(), cat: r.cat.clone(), fav: st.favs.contains(&r.key()), user: r.is_user() })
+        .map(|r| {
+            let (rating, tags) = st.meta.get(&r.key()).cloned().unwrap_or((0, vec![]));
+            BItem { name: r.name.clone(), cat: r.cat.clone(), fav: st.favs.contains(&r.key()), user: r.is_user(), rating, tags }
+        })
         .collect();
     let sel = st.presets.iter().position(|r| r.name == cur_name);
     let act = browse::browser(ui, area, "PRESETS", &items, sel, &mut st.pb, true, "presets");
@@ -774,7 +816,25 @@ fn preset_overlay(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &S
         st.rescan();
         st.say(now, "folders rescanned");
     }
-    ui.painter().text(Pos2::new(f.left(), y + 40.0), Align2::LEFT_CENTER, "Click a preset to load it. Up / Down keys step through the list. The star marks favorites.", mono(9.5), DIM);
+    ui.painter().text(Pos2::new(f.left(), y + 40.0), Align2::LEFT_CENTER, "Click: load. Up / Down: step. Stars: rating (left), favorite (right).", mono(9.5), DIM);
+    if let Some(r) = selr.as_ref() {
+        let key = r.key();
+        if st.tag_for != key {
+            st.tag_for = key.clone();
+            st.tag_edit = st.meta.get(&key).map(|m| m.1.join(", ")).unwrap_or_default();
+        }
+        ui.painter().text(Pos2::new(f.left() + 560.0, y + 40.0), Align2::LEFT_CENTER, "TAGS", mono(10.0), DIM);
+        let tr = Rect::from_min_size(Pos2::new(f.left() + 600.0, y + 28.0), Vec2::new(300.0, 24.0));
+        let te = egui::TextEdit::singleline(&mut st.tag_edit).font(mono(12.0)).hint_text("bass, dark, wobble").desired_width(tr.width()).margin(egui::Margin::symmetric(6, 4));
+        ui.put(tr, te);
+        if pill_tip(ui, Rect::from_min_size(Pos2::new(tr.right() + 8.0, y + 28.0), Vec2::new(64.0, 24.0)), "SET", false, "Store these comma separated tags for the selected preset") {
+            let tags: Vec<String> = st.tag_edit.split(',').map(|x| x.trim().to_lowercase()).filter(|x| !x.is_empty()).collect();
+            let e = st.meta.entry(key).or_insert((0, vec![]));
+            e.1 = tags;
+            presets::save_meta(&st.meta);
+            st.say(now, "tags saved");
+        }
+    }
     match act {
         BAct::Pick(i) => {
             if let Some(r) = st.presets.get(i).cloned() {
@@ -796,6 +856,14 @@ fn preset_overlay(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &S
                 presets::save_favs(&st.favs);
             }
         }
+        BAct::Rate(i, v) => {
+            if let Some(r) = st.presets.get(i) {
+                let k = r.key();
+                let e = st.meta.entry(k).or_insert((0, vec![]));
+                e.0 = v;
+                presets::save_meta(&st.meta);
+            }
+        }
         BAct::Close => st.overlay = Overlay::None,
         BAct::None => {}
     }
@@ -803,7 +871,7 @@ fn preset_overlay(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &S
 
 #[allow(clippy::too_many_arguments)]
 fn table_overlay(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, st: &mut Gui, area: Rect, oi: usize, now: f64) {
-    let items: Vec<BItem> = st.tables.iter().map(|(b, _)| BItem { name: b.name.clone(), cat: b.cat.clone(), fav: false, user: b.user }).collect();
+    let items: Vec<BItem> = st.tables.iter().map(|(b, _)| BItem { name: b.name.clone(), cat: b.cat.clone(), fav: false, user: b.user, rating: 0, tags: vec![] }).collect();
     let cur = wave_name(p, oi);
     let sel = st.tables.iter().position(|(b, _)| b.name == cur);
     let act = browse::browser(ui, area, &format!("WAVETABLES  -  OSC {}", OSC_NAMES[oi.min(2)]), &items, sel, &mut st.tbs, false, "tables");
@@ -842,7 +910,7 @@ fn table_overlay(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Sh
 }
 
 fn noise_overlay(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, st: &mut Gui, area: Rect, now: f64) {
-    let items: Vec<BItem> = st.noises.iter().map(|e| BItem { name: e.name.clone(), cat: e.cat.clone(), fav: false, user: true }).collect();
+    let items: Vec<BItem> = st.noises.iter().map(|e| BItem { name: e.name.clone(), cat: e.cat.clone(), fav: false, user: true, rating: 0, tags: vec![] }).collect();
     let cur = p.noise_sample.lock().map(|g| crate::sample::encoded_name(&g)).unwrap_or_default();
     let sel = st.noises.iter().position(|e| e.name == cur);
     let act = browse::browser(ui, area, "NOISE / SAMPLES", &items, sel, &mut st.nbs, false, "noises");
@@ -961,10 +1029,10 @@ fn osc_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared
     let name = OSC_NAMES[o];
     panel(ui, r, ["01", "02", "03"][o], &format!("OSC {name}"));
     on_pill(ui, setter, &op.on, Rect::from_min_size(Pos2::new(r.right() - 56.0, r.top() + 6.0), Vec2::new(44.0, 22.0)), "Oscillator on/off");
-    let sm = op.mode.value() == OscMode::Sample;
-    for (k, (lbl, want)) in [("WT", OscMode::Wavetable), ("SMP", OscMode::Sample)].iter().enumerate() {
-        let pr = Rect::from_min_size(Pos2::new(r.right() - 160.0 + k as f32 * 48.0, r.top() + 6.0), Vec2::new(44.0, 22.0));
-        if pill_tip(ui, pr, lbl, op.mode.value() == *want, if k == 0 { "Wavetable oscillator" } else { "Sample oscillator: plays a .wav at the played pitch with start / end / loop" }) {
+    let sm = op.mode.value() != OscMode::Wavetable;
+    for (k, (lbl, want)) in [("WT", OscMode::Wavetable), ("SMP", OscMode::Sample), ("GRN", OscMode::Granular)].iter().enumerate() {
+        let pr = Rect::from_min_size(Pos2::new(r.right() - 208.0 + k as f32 * 48.0, r.top() + 6.0), Vec2::new(44.0, 22.0));
+        if pill_tip(ui, pr, lbl, op.mode.value() == *want, ["Wavetable oscillator", "Sample oscillator: plays a .wav at the played pitch with start / end / loop", "Granular oscillator: a cloud of short grains read from a .wav"][k]) {
             set_e(setter, &op.mode, *want);
         }
     }
@@ -1019,7 +1087,13 @@ fn osc_knobs(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, r: Rect, o: usi
     let y0 = r.top() + 142.0;
     let dy = 66.0;
     mdst(pos_d);
-    if sm {
+    if sm && op.mode.value() == OscMode::Granular {
+        knob_s(ui, setter, &op.s_start, "POS", cell(x0, y0, w), "Where in the sample the grains are taken from (modulatable: scan through it)", false);
+        mdst(wrp_d);
+        knob_s(ui, setter, &op.g_size, "SIZE", cell(x0 + w, y0, w), "Grain length (modulatable)", false);
+        mdst([ModDst::AWarp2, ModDst::BWarp2, ModDst::CWarp2][o]);
+        knob_s(ui, setter, &op.g_dens, "DENSITY", cell(x0 + w * 2.0, y0, w), "Grains per second, up to 256 (modulatable)", false);
+    } else if sm {
         knob_s(ui, setter, &op.s_start, "START", cell(x0, y0, w), "Sample start point (modulatable)", false);
         mdst(wrp_d);
         knob_s(ui, setter, &op.s_end, "END", cell(x0 + w, y0, w), "Sample end / loop end point (modulatable)", false);
@@ -1050,6 +1124,9 @@ fn osc_knobs(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, r: Rect, o: usi
     knob_s(ui, setter, &op.spread, "SPREAD", cell(x0 + w, y2, w), "Stereo width of the unison voices", false);
     if sm {
         knob_s(ui, setter, &op.s_root, "ROOT", cell(x0 + w * 2.0, y2, w), "Semitone offset of the sample's own pitch: the sample plays at its original speed on middle C + this", true);
+        if op.mode.value() == OscMode::Granular {
+            knob_s(ui, setter, &op.g_spray, "SPRAY", cell(x0 + w * 3.0, y2, w), "Random spread of the grain positions around POS", false);
+        }
     } else {
         knob_s(ui, setter, &op.phase, "PHASE", cell(x0 + w * 2.0, y2, w), "Start phase", false);
         knob_s(ui, setter, &op.rand, "RAND", cell(x0 + w * 3.0, y2, w), "Random start phase", false);
@@ -1063,12 +1140,13 @@ fn sample_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Sha
     let op = osc(p, o);
     let data = shared.smp[o].get();
     let resp = ui.interact(disp, egui::Id::new(("smpdisp", o)), Sense::click_and_drag()).on_hover_text("Drag the markers to set the start and end of the sample.\nDrop a .wav here to load it.");
-    let (s0, s1) = (op.s_start.value(), op.s_end.value());
+    let gran = op.mode.value() == OscMode::Granular;
+    let (s0, s1) = if gran { (op.s_start.value(), op.s_start.value()) } else { (op.s_start.value(), op.s_end.value()) };
     let key = egui::Id::new(("smpdrag", o));
     if resp.drag_started() {
         if let Some(pt) = resp.interact_pointer_pos() {
             let x = (pt.x - disp.left()) / disp.width();
-            let which = if (x - s0).abs() <= (x - s1).abs() { 0u8 } else { 1u8 };
+            let which = if gran || (x - s0).abs() <= (x - s1).abs() { 0u8 } else { 1u8 };
             ui.data_mut(|d| d.insert_temp(key, which));
         }
     }
@@ -1076,7 +1154,7 @@ fn sample_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Sha
         if let (Some(pt), Some(which)) = (resp.interact_pointer_pos(), ui.data(|d| d.get_temp::<u8>(key))) {
             let x = ((pt.x - disp.left()) / disp.width()).clamp(0.0, 1.0);
             if which == 0 {
-                set_f(setter, &op.s_start, x.min(s1 - 0.005));
+                set_f(setter, &op.s_start, if gran { x } else { x.min(s1 - 0.005) });
             } else {
                 set_f(setter, &op.s_end, x.max(s0 + 0.005));
             }
@@ -1087,7 +1165,13 @@ fn sample_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Sha
     painter.line_segment([Pos2::new(disp.left(), disp.center().y), Pos2::new(disp.right(), disp.center().y)], Stroke::new(1.0_f32, Color32::from_rgb(28, 28, 28)));
     let xa = disp.left() + 2.0 + (disp.width() - 4.0) * s0;
     let xb = disp.left() + 2.0 + (disp.width() - 4.0) * s1;
-    painter.rect_filled(Rect::from_min_max(Pos2::new(xa, disp.top()), Pos2::new(xb, disp.bottom())), CornerRadius::ZERO, Color32::from_rgb(20, 20, 20));
+    if gran {
+        let sp = op.g_spray.value() * 0.5;
+        let (ga, gb) = (disp.left() + 2.0 + (disp.width() - 4.0) * (s0 - sp).max(0.0), disp.left() + 2.0 + (disp.width() - 4.0) * (s0 + sp).min(1.0));
+        painter.rect_filled(Rect::from_min_max(Pos2::new(ga, disp.top()), Pos2::new(gb, disp.bottom())), CornerRadius::ZERO, Color32::from_rgb(26, 26, 26));
+    } else {
+        painter.rect_filled(Rect::from_min_max(Pos2::new(xa, disp.top()), Pos2::new(xb, disp.bottom())), CornerRadius::ZERO, Color32::from_rgb(20, 20, 20));
+    }
     let name = match &data {
         Some(sm) => {
             let cols = (disp.width() - 4.0) as usize;
@@ -1105,7 +1189,7 @@ fn sample_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Sha
                     i += step;
                 }
                 let x = disp.left() + 2.0 + c as f32;
-                let inside = x >= xa && x <= xb;
+                let inside = gran || (x >= xa && x <= xb);
                 painter.line_segment([Pos2::new(x, disp.center().y - hi * amp), Pos2::new(x, disp.center().y - lo * amp - 1.0)], Stroke::new(1.0_f32, if inside { WHITE } else { Color32::from_rgb(70, 70, 70) }));
             }
             sm.name.clone()
@@ -1115,7 +1199,7 @@ fn sample_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Sha
             String::new()
         }
     };
-    for x in [xa, xb] {
+    for x in (if gran { vec![xa] } else { vec![xa, xb] }) {
         painter.line_segment([Pos2::new(x, disp.top()), Pos2::new(x, disp.bottom())], Stroke::new(1.5_f32, WHITE));
     }
     let shown: String = if name.chars().count() > 26 { name.chars().take(25).collect::<String>() + "~" } else { name };
@@ -1127,8 +1211,12 @@ fn sample_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Sha
         st.smp_target = Some(o);
         st.overlay = Overlay::Noises;
     }
-    enum_combo(ui, setter, &op.s_loop, &format!("smploop{o}"), Rect::from_min_size(Pos2::new(rx, ty + 28.0), Vec2::new(122.0, 24.0)));
-    ui.painter().text(Pos2::new(rx + 61.0, ty + 70.0), Align2::CENTER_CENTER, "Plays at its original\npitch on middle C", mono(8.5), DIM);
+    if gran {
+        ui.painter().text(Pos2::new(rx + 61.0, ty + 56.0), Align2::CENTER_CENTER, "Grains play at the\nkey pitch. Modulate\nPOS to scan the\nsample.", mono(8.5), DIM);
+    } else {
+        enum_combo(ui, setter, &op.s_loop, &format!("smploop{o}"), Rect::from_min_size(Pos2::new(rx, ty + 28.0), Vec2::new(122.0, 24.0)));
+        ui.painter().text(Pos2::new(rx + 61.0, ty + 70.0), Align2::CENTER_CENTER, "Plays at its original\npitch on middle C", mono(8.5), DIM);
+    }
 }
 
 /// Returns true when the display was clicked (open the editor).
@@ -1466,6 +1554,7 @@ fn filter_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui
     }
     dark_box(ui, d);
     let painter = ui.painter().with_clip_rect(d.shrink(1.0));
+    draw_spectrum(&painter, d.shrink(1.0), &st.spec, st.spec_fs, -80.0, Color32::from_rgb(46, 46, 46));
     let (lo, hi) = (20.0f32, 20000.0f32);
     let xf = |f: f32| d.left() + d.width() * ((f / lo).ln() / (hi / lo).ln());
     for f in [100.0f32, 1000.0, 10000.0] {
@@ -2453,6 +2542,54 @@ fn undo_redo(setter: &ParamSetter, st: &mut Gui, undo: bool) {
     }
     st.snap = target.clone();
     st.prev_cur = target;
+}
+
+// ===================================================================== spectrum
+
+fn update_spectrum(st: &mut Gui, meters: &Meters) {
+    use crate::spectrum::*;
+    let snap = meters.spec_snapshot();
+    let new = magnitudes_db(&snap);
+    st.spec_fs = meters.fs.load(std::sync::atomic::Ordering::Relaxed).max(8000) as f32;
+    if st.spec.len() != new.len() {
+        st.spec = vec![-120.0; new.len()];
+    }
+    for (s, n) in st.spec.iter_mut().zip(new.iter()) {
+        // rises at once, falls slowly
+        *s = if *n > *s { *n } else { (*s - 2.5).max(*n).max(-120.0) };
+    }
+}
+
+/// Filled log-frequency spectrum inside `r` (20 Hz .. 20 kHz, `floor`..0 dB).
+fn draw_spectrum(painter: &egui::Painter, r: Rect, spec: &[f32], fs: f32, floor: f32, col: Color32) {
+    if spec.is_empty() {
+        return;
+    }
+    let w = r.width().floor() as usize;
+    let bins = spec.len();
+    let hz_per_bin = fs / (2.0 * bins as f32);
+    for x in 0..w {
+        let f0 = 20.0 * (1000.0f32).powf(x as f32 / w as f32);
+        let f1 = 20.0 * (1000.0f32).powf((x + 1) as f32 / w as f32);
+        let (b0, b1) = ((f0 / hz_per_bin) as usize, ((f1 / hz_per_bin).ceil() as usize).max((f0 / hz_per_bin) as usize + 1));
+        let mut m = -120.0f32;
+        if b1 - b0 <= 1 {
+            // narrower than one bin: interpolate so the low end is not blocky
+            let pos = 0.5 * (f0 + f1) / hz_per_bin;
+            let i = (pos as usize).min(bins - 2);
+            let fr = (pos - i as f32).clamp(0.0, 1.0);
+            m = spec[i] + (spec[i + 1] - spec[i]) * fr;
+        } else {
+            for b in b0.min(bins - 1)..b1.min(bins) {
+                m = m.max(spec[b]);
+            }
+        }
+        let h = ((m - floor) / -floor).clamp(0.0, 1.0) * r.height();
+        if h > 0.5 {
+            let px = r.left() + x as f32 + 0.5;
+            painter.line_segment([Pos2::new(px, r.bottom()), Pos2::new(px, r.bottom() - h)], Stroke::new(1.0_f32, col));
+        }
+    }
 }
 
 // ===================================================================== MIDI learn

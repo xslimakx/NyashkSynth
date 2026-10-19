@@ -75,6 +75,16 @@ Each oscillator can be switched between **WT** (wavetable) and **SMP** (sample) 
 4. **ROOT** shifts the pitch the sample was recorded at. A sample plays at its original speed on middle C, follows the keyboard, OCT / SEMI / FINE and unison.
 5. Sample oscillators go through the same filters, envelopes and FX as wavetable ones.
 
+## 4b2. Granular oscillator
+
+![Granular](img/manual_granular.png)
+
+Press **GRN** next to ON. The oscillator plays a cloud of short grains read from a loaded sample.
+
+* **POS** where in the sample the grains start; modulate it with an LFO or envelope to scan through the sample. The marker on the waveform shows it (drag it), the shaded band is the **SPRAY** range.
+* **SIZE** grain length (5-500 ms), **DENSITY** grains per second (up to 256), **SPRAY** random spread of the grain positions.
+* Grains play at the key pitch (ROOT shifts it). Overall level is kept steady when you raise density.
+
 ## 4c. Arpeggiator pattern editor
 
 ![Arp pattern](img/manual_arp.png)
@@ -104,7 +114,19 @@ Open the **SEQ** page, go to the CLIP SEQUENCER panel and switch **CLIP ON**. Ho
 
 LFOs and envelopes can be dragged onto any knob straight from their title chips in the LFO / ENV tabs, like in Serum.
 
-## 4f. Undo / redo
+## 4f. Spectrum analyser
+
+![FX page with spectrum](img/manual_fx.png)
+
+The FX page shows a live output spectrum (20 Hz - 20 kHz, log scale). A dim copy of the same spectrum also runs behind the filter graph, so you can see what you are cutting.
+
+## 4g. Preset browser: stars and tags
+
+![Preset browser](img/manual_presets.png)
+
+Click the stars on the left of a row to rate a preset (click the same star again to clear it). Select a preset, type comma separated tags in the TAGS box and press SET. The list on the left gets a "4+ stars" entry and one entry per tag; the search box also matches tags. Ratings and tags live in `meta.txt` next to your presets, so they are not lost when presets are re-installed.
+
+## 4h. Undo / redo
 
 UNDO and REDO (header, or Ctrl+Z / Ctrl+Y) step through your parameter changes, including preset loads. Wavetable-editor edits have their own undo inside the editor.
 
@@ -119,7 +141,8 @@ UNDO and REDO (header, or Ctrl+Z / Ctrl+Y) step through your parameter changes, 
 | MIDI learn, transpose, wheels | done |
 | Sample oscillator (start / end / loop / ping-pong / crossfade) | done |
 | Arp pattern editor, undo / redo | done |
-| Multisample (SFZ) / Granular / Spectral oscillator modes | not yet |
+| Granular oscillator, spectrum analyser, preset stars and tags | done |
+| Multisample (SFZ) / Spectral oscillator modes | not yet |
 | Clip sequencer (12 clips, piano roll) | done |
 | Serum-style pages (SOUND / MOD / MATRIX / FX / SEQ / SETTINGS) | done |
 | Tuning (A4, scales), MIDI channel, velocity curve | done |

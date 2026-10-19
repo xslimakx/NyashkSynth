@@ -449,3 +449,35 @@ fn clip_sequencer_plays_pattern_transposed_and_stops() {
     let v = render_vec(&mut e, 4800);
     assert!(rms(&v[2400..]) > 0.01);
 }
+
+#[test]
+fn granular_oscillator_makes_a_cloud_at_pitch() {
+    use nyashksynth::params::OscMode;
+    use nyashksynth::sample::NSample;
+    use std::sync::Arc;
+    let f0 = 261.6256f32;
+    let data: Vec<f32> = (0..44100).map(|i| (std::f32::consts::TAU * f0 * i as f32 / 44100.0).sin() * 0.8).collect();
+    let run = |note: u8, dens: f32| {
+        let mut e = engine();
+        e.patch.sub_on = false;
+        e.patch.fl[0].on = false;
+        e.patch.osc[1].on = false;
+        e.patch.osc[0].mode = OscMode::Granular;
+        e.patch.osc[0].g_dens = dens;
+        e.patch.osc[0].g_size = 60.0;
+        e.patch.osc[0].g_spray = 0.2;
+        e.patch.osc[0].sample = Some(Arc::new(NSample { name: "t".into(), data: data.clone() }));
+        e.note_on(note, 1.0);
+        render_vec(&mut e, 48000)
+    };
+    let v = run(60, 40.0);
+    assert!(v.iter().all(|x| x.is_finite() && x.abs() < 4.0));
+    let seg = &v[24000..24000 + 16000];
+    assert!(rms(seg) > 0.01, "granular silent");
+    assert!(goertzel(seg, f0, 48000.0) > goertzel(seg, f0 * 1.5, 48000.0) * 6.0, "grains not at key pitch");
+    let v2 = run(72, 40.0);
+    let seg2 = &v2[24000..24000 + 16000];
+    assert!(goertzel(seg2, f0 * 2.0, 48000.0) > goertzel(seg2, f0, 48000.0) * 6.0, "octave up wrong");
+    // very dense clouds stay level-controlled
+    assert!(rms(&run(60, 250.0)[24000..]) < 1.0);
+}

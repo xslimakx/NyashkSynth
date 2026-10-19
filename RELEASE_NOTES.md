@@ -1,3 +1,9 @@
+## NyashkSynth v2.8.0
+
+- **Granular oscillator mode** (GRN): position, grain size, density (up to 256 grains/s), spray; works on a loaded sample.
+- **Spectrum analyser** on the FX page and behind the filter graph.
+- **Preset ratings (stars) and tags** in the preset browser, "4+ stars" filter, tag filters and tag search.
+
 ## NyashkSynth v2.7.0
 
 - **Pages like Serum**: SOUND, MOD, MATRIX, FX, SEQ, SETTINGS instead of one small tab block. All 8 LFOs are visible together, the matrix shows all 16 routes, arp and clip sequencer share the SEQ page. Window is a little taller (1458 x 902).

@@ -553,6 +553,8 @@ pub enum OscMode {
     Wavetable,
     #[name = "Sample"]
     Sample,
+    #[name = "Granular"]
+    Granular,
 }
 
 #[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
@@ -1185,6 +1187,12 @@ pub struct OscParams {
     pub s_xfade: FloatParam,
     #[id = "sr"]
     pub s_root: IntParam,
+    #[id = "gs"]
+    pub g_size: FloatParam,
+    #[id = "gd"]
+    pub g_dens: FloatParam,
+    #[id = "gy"]
+    pub g_spray: FloatParam,
 }
 
 impl OscParams {
@@ -1219,6 +1227,9 @@ impl OscParams {
             s_loop: EnumParam::new("Sample Loop", SampleLoop::Loop),
             s_xfade: unit_param("Loop Crossfade", 0.0),
             s_root: IntParam::new("Sample Root", 0, IntRange::Linear { min: -36, max: 36 }),
+            g_size: FloatParam::new("Grain Size", 80.0, FloatRange::Skewed { min: 5.0, max: 500.0, factor: FloatRange::skew_factor(-1.0) }).with_unit(" ms").with_step_size(0.1),
+            g_dens: FloatParam::new("Grain Density", 30.0, FloatRange::Skewed { min: 1.0, max: 256.0, factor: FloatRange::skew_factor(-1.0) }).with_unit(" /s").with_step_size(0.1),
+            g_spray: unit_param("Grain Spray", 0.1),
         }
     }
 }

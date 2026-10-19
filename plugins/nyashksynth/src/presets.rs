@@ -909,8 +909,57 @@ pub fn save_favs(f: &[String]) {
     }
 }
 
+// ---------------------------------------------------------------- ratings and tags
+
+/// Rating (0-5) and tags per preset key (`Category/Name`), stored in `meta.txt` next to the library.
+pub type Meta = std::collections::BTreeMap<String, (u8, Vec<String>)>;
+
+fn meta_path() -> Option<PathBuf> {
+    files::base_dir().map(|b| b.join("meta.txt"))
+}
+
+pub fn parse_meta(t: &str) -> Meta {
+    let mut m = Meta::new();
+    for l in t.lines() {
+        let mut it = l.splitn(3, '\t');
+        let (Some(k), Some(r)) = (it.next(), it.next()) else { continue };
+        let tags: Vec<String> = it.next().unwrap_or("").split(',').map(|x| x.trim().to_lowercase()).filter(|x| !x.is_empty()).collect();
+        m.insert(k.to_string(), (r.trim().parse::<u8>().unwrap_or(0).min(5), tags));
+    }
+    m
+}
+
+pub fn encode_meta(m: &Meta) -> String {
+    m.iter().filter(|(_, (r, t))| *r > 0 || !t.is_empty()).map(|(k, (r, t))| format!("{k}\t{r}\t{}", t.join(","))).collect::<Vec<_>>().join("\n")
+}
+
+pub fn load_meta() -> Meta {
+    meta_path().and_then(|p| std::fs::read_to_string(p).ok()).map(|t| parse_meta(&t)).unwrap_or_default()
+}
+
+pub fn save_meta(m: &Meta) {
+    if let Some(p) = meta_path() {
+        if let Some(d) = p.parent() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        let _ = std::fs::write(p, encode_meta(m));
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn meta_roundtrip() {
+        let mut m = Meta::new();
+        m.insert("Bass/Wob".into(), (4, vec!["dark".into(), "wobble".into()]));
+        m.insert("Lead/X".into(), (0, vec![]));
+        let back = parse_meta(&encode_meta(&m));
+        assert_eq!(back.get("Bass/Wob"), Some(&(4, vec!["dark".to_string(), "wobble".to_string()])));
+        assert!(back.get("Lead/X").is_none(), "empty entries are dropped");
+    }
+
     use super::*;
 
     #[test]

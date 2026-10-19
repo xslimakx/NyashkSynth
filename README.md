@@ -24,7 +24,7 @@ A Serum-style wavetable synthesizer in the same black-and-white Nyashk design.
 
 | | |
 |---|---|
-| **Oscillators** | 3 oscillators (A/B/C), each wavetable or **sample** (start / end / loop / ping-pong) with a built-in table library, **warp ×2 per oscillator (22 modes)**, unison (up to 16 voices, 4 modes), sub oscillator and noise (with sample loading) |
+| **Oscillators** | 3 oscillators (A/B/C), each wavetable, **sample** (start / end / loop / ping-pong) or **granular** with a built-in table library, **warp ×2 per oscillator (22 modes)**, unison (up to 16 voices, 4 modes), sub oscillator and noise (with sample loading) |
 | **Wavetable editor** | Draw, edit harmonics (amp/phase), formula generator (`sin(x*tau)*…`), spectral and time ops, **multi-frame editing** (select a range of frames and draw/process them together, with strength, fade, soft edges, vary and drift), frame morphing, undo/redo, import and export of `.wav` tables |
 | **Filter** | **two filters** (series or parallel) with 16 classic types (LP/HP/Band/Notch, Ladder, shelves, combs, phaser, formant) plus **Custom (points)**: up to 8 draggable EQ-style points (bell, shelves, HP/LP, notch, band) placed right on the response graph; routing per source |
 | **Envelopes / LFOs** | 4 envelopes with bendable slopes and invert-legato, 8 LFOs (12 shapes incl. Lorenz/Rössler chaos, drawable curve, delay, one-shot, tempo sync) |
@@ -32,6 +32,7 @@ A Serum-style wavetable synthesizer in the same black-and-white Nyashk design.
 | **Effects** | Hyper/Dimension, Distortion, Flanger, Phaser, Chorus, Delay, Compressor, Reverb, EQ, Filter, **Bode** frequency shifter, **Utility**: reorderable chain, **two FX buses** with series / parallel / low-high / mid-side routing |
 | **Arpeggiator** | 7 patterns + **16-step Pattern editor**, 18 rates incl. triplets/dotted, gate, swing, octaves, hold |
 | **Sequencing** | **Clip sequencer**: 12 clips with piano roll, transposed from the held key |
+| **Browser** | categories, search, favorites, **star ratings and tags** |
 | **Layout** | Serum-style pages: SOUND / MOD / MATRIX / FX / SEQ / SETTINGS |
 | **Workflow** | Undo / redo (Ctrl+Z / Ctrl+Y), SETTINGS tab (A4 / scale tuning, MIDI channel, velocity curve) |
 | **MIDI** | **MIDI learn** on every knob, OCT/SEMI transpose spinners, pitch and mod wheels |

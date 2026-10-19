@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 pub mod arp;
 pub mod clip;
+pub mod spectrum;
 pub mod engine;
 mod editor;
 mod browse;
@@ -35,6 +36,10 @@ pub struct Meters {
     /// decimated copy of the output for the oscilloscope
     pub scope: Vec<AtomicU32>,
     pub scope_w: AtomicU32,
+    /// full-rate mono copy of the last output samples for the spectrum analyser
+    pub spec: Vec<AtomicU32>,
+    pub spec_w: AtomicU32,
+    pub fs: AtomicU32,
     /// keys pressed with the mouse on the on-screen keyboard
     pub gui_keys: Vec<std::sync::atomic::AtomicBool>,
     /// incremented by every GUI frame (lets the audio thread release mouse keys if the GUI vanishes)
@@ -64,6 +69,9 @@ impl Meters {
             voices: AtomicU32::new(0),
             scope: (0..SCOPE_LEN).map(|_| AtomicU32::new(0)).collect(),
             scope_w: AtomicU32::new(0),
+            spec: (0..spectrum::SPEC_N).map(|_| AtomicU32::new(0)).collect(),
+            spec_w: AtomicU32::new(0),
+            fs: AtomicU32::new(48000),
             gui_keys: (0..128).map(|_| std::sync::atomic::AtomicBool::new(false)).collect(),
             gui_beat: AtomicU32::new(0),
             panic: std::sync::atomic::AtomicBool::new(false),
@@ -78,6 +86,12 @@ impl Meters {
         }
     }
     /// Latest scope samples, oldest first.
+    /// Latest output samples for the spectrum analyser, oldest first.
+    pub fn spec_snapshot(&self) -> Vec<f32> {
+        let w = self.spec_w.load(Ordering::Relaxed) as usize % spectrum::SPEC_N;
+        (0..spectrum::SPEC_N).map(|i| f32::from_bits(self.spec[(w + i) % spectrum::SPEC_N].load(Ordering::Relaxed))).collect()
+    }
+
     pub fn scope_snapshot(&self) -> Vec<f32> {
         let w = self.scope_w.load(Ordering::Relaxed) as usize % SCOPE_LEN;
         (0..SCOPE_LEN).map(|i| f32::from_bits(self.scope[(w + i) % SCOPE_LEN].load(Ordering::Relaxed))).collect()
@@ -119,13 +133,14 @@ pub struct NyashkSynth {
     beat_age: usize,
     dec_n: u32,
     dec_acc: f32,
+    spec_pos: usize,
 }
 
 impl Default for NyashkSynth {
     fn default() -> Self {
         let params = Arc::new(SynthParams::default());
         let patch = Patch::read(&params, 44100.0);
-        Self { engine: Engine::new(44100.0, patch), fx: FxRack::new(44100.0), params, meters: Arc::new(Meters::new()), shared: Arc::new(shared::Shared::new()), fs: 44100.0, peak_hold: 0.0, fx_mod_s: [0.0; 12], gui_prev: [false; 128], tmap: std::array::from_fn(|i| i as u8), cc_count: 1, gui_bend_prev: f32::NAN.to_bits(), gui_mod_prev: f32::NAN.to_bits(), beat_last: 0, beat_age: 0, dec_n: 0, dec_acc: 0.0 }
+        Self { engine: Engine::new(44100.0, patch), fx: FxRack::new(44100.0), params, meters: Arc::new(Meters::new()), shared: Arc::new(shared::Shared::new()), fs: 44100.0, peak_hold: 0.0, fx_mod_s: [0.0; 12], gui_prev: [false; 128], tmap: std::array::from_fn(|i| i as u8), cc_count: 1, gui_bend_prev: f32::NAN.to_bits(), gui_mod_prev: f32::NAN.to_bits(), beat_last: 0, beat_age: 0, dec_n: 0, dec_acc: 0.0, spec_pos: 0 }
     }
 }
 
@@ -282,6 +297,7 @@ impl Plugin for NyashkSynth {
 
     fn initialize(&mut self, _layout: &AudioIOLayout, cfg: &BufferConfig, _ctx: &mut impl InitContext<Self>) -> bool {
         self.fs = cfg.sample_rate;
+        self.meters.fs.store(cfg.sample_rate as u32, Ordering::Relaxed);
         self.shared.sync_from_params(&self.params);
         let patch = Patch::read_with(&self.params, self.fs, Some(&self.shared), None);
         self.engine = Engine::new(self.fs, patch);
@@ -457,6 +473,11 @@ impl Plugin for NyashkSynth {
             l_all[i] = l;
             r_all[i] = r;
             pk = pk.max(l.abs()).max(r.abs());
+            {
+                let w = self.spec_pos;
+                self.meters.spec[w].store((0.5 * (l + r)).to_bits(), Ordering::Relaxed);
+                self.spec_pos = (w + 1) % spectrum::SPEC_N;
+            }
             self.dec_acc += 0.5 * (l + r);
             self.dec_n += 1;
             if self.dec_n >= 4 {
@@ -467,6 +488,7 @@ impl Plugin for NyashkSynth {
                 self.dec_acc = 0.0;
             }
         }
+        self.meters.spec_w.store(self.spec_pos as u32, Ordering::Relaxed);
         let live = self.engine.live_sources();
         for (i, v) in live.iter().enumerate() {
             self.meters.live[i].store(v.to_bits(), Ordering::Relaxed);

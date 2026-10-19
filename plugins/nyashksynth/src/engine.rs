@@ -46,6 +46,9 @@ pub struct OscP {
     pub s_loop: SampleLoop,
     pub s_xfade: f32,
     pub s_root: f32,
+    pub g_size: f32,
+    pub g_dens: f32,
+    pub g_spray: f32,
     pub sample: Option<Arc<NSample>>,
 }
 
@@ -186,6 +189,9 @@ fn osc_read(o: &OscParams, tbl: Arc<Table>, sample: Option<Arc<NSample>>) -> Osc
         s_loop: o.s_loop.value(),
         s_xfade: o.s_xfade.value(),
         s_root: o.s_root.value() as f32,
+        g_size: o.g_size.value(),
+        g_dens: o.g_dens.value(),
+        g_spray: o.g_spray.value(),
         sample,
         on: o.on.value(),
         tbl,
@@ -720,6 +726,8 @@ struct Voice {
     env: [Env; NENV],
     ph: [[f32; MAX_UNI]; 3],
     sp: [[f32; MAX_UNI]; 3],
+    grains: [[Grain; GN]; 3],
+    gtimer: [f32; 3],
     sdir: [[f32; MAX_UNI]; 3],
     sub_ph: f32,
     rnd: u32,
@@ -751,6 +759,8 @@ impl Voice {
             env: [Env::default(); NENV],
             ph: [[0.0; MAX_UNI]; 3],
             sp: [[0.0; MAX_UNI]; 3],
+            grains: [[Grain::default(); GN]; 3],
+            gtimer: [0.0; 3],
             sdir: [[1.0; MAX_UNI]; 3],
             sub_ph: 0.0,
             rnd: 1,
@@ -785,6 +795,17 @@ fn midi_freq(p: &Patch, n: f32) -> f32 {
     p.a4 * 2f32.powf((n - 69.0) / 12.0 + p.tun[deg] / 1200.0)
 }
 
+/// Grains per voice and oscillator in Granular mode.
+const GN: usize = 48;
+
+#[derive(Clone, Copy, Default)]
+struct Grain {
+    pos: f32,
+    age: f32,
+    len: f32,
+    inc: f32,
+}
+
 #[derive(Clone, Copy)]
 struct OscRun {
     on: bool,
@@ -797,6 +818,12 @@ struct OscRun {
     wmode2: WarpMode,
     warp2: f32,
     smp: bool,
+    grn: bool,
+    g_len: f32,
+    g_rate: f32,
+    g_spray: f32,
+    g_pos: f32,
+    g_norm: f32,
     s0: f32,
     s1: f32,
     sloop: SampleLoop,
@@ -809,7 +836,7 @@ struct OscRun {
 
 impl OscRun {
     fn off() -> Self {
-        Self { on: false, mip: 0, pos: 0.0, f0: 0, ff: 0.0, wmode: WarpMode::Off, warp: 0.0, wmode2: WarpMode::Off, warp2: 0.0, smp: false, s0: 0.0, s1: 1.0, sloop: SampleLoop::Loop, sxf: 0.0, n: 1, inc: [0.0; MAX_UNI], gl: [0.0; MAX_UNI], gr: [0.0; MAX_UNI] }
+        Self { on: false, mip: 0, pos: 0.0, f0: 0, ff: 0.0, wmode: WarpMode::Off, warp: 0.0, wmode2: WarpMode::Off, warp2: 0.0, smp: false, grn: false, g_len: 1.0, g_rate: 0.0, g_spray: 0.0, g_pos: 0.0, g_norm: 1.0, s0: 0.0, s1: 1.0, sloop: SampleLoop::Loop, sxf: 0.0, n: 1, inc: [0.0; MAX_UNI], gl: [0.0; MAX_UNI], gr: [0.0; MAX_UNI] }
     }
 }
 
@@ -1179,8 +1206,19 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
         let base = v.freq * c.tune * 2f32.powf(semis / 12.0);
         let r = &mut run[o];
         r.on = true;
-        let smp_len = if op.mode == OscMode::Sample { op.sample.as_ref().map_or(0, |x| x.data.len()) } else { 0 };
-        if op.mode == OscMode::Sample {
+        let smp_len = if op.mode != OscMode::Wavetable { op.sample.as_ref().map_or(0, |x| x.data.len()) } else { 0 };
+        if op.mode == OscMode::Granular && smp_len >= 16 {
+            r.grn = true;
+            let len = smp_len as f32;
+            r.g_pos = (op.s_start + md[pos_i]).clamp(0.0, 1.0) * len;
+            r.g_len = ((op.g_size + md[wrp_i] * 400.0).clamp(5.0, 500.0) * 0.001 * fs).max(32.0);
+            let dens = (op.g_dens * (1.0 + md[[23, 24, 43][o]] * 4.0)).clamp(1.0, 256.0);
+            r.g_rate = dens / fs;
+            r.g_spray = op.g_spray;
+            let overlap = (dens * r.g_len / fs).max(1.0);
+            r.g_norm = 1.0 / overlap.sqrt();
+            r.n = 1;
+        } else if op.mode != OscMode::Wavetable {
             if smp_len < 16 {
                 r.on = false;
                 continue;
@@ -1220,7 +1258,7 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
                 f = base * 2f32.powf((STACK_ST[j % 16] + off * cents_max / 100.0) / 12.0);
             }
             fmax = fmax.max(f);
-            r.inc[j] = if r.smp { (f / 261.6256 * 2f32.powf(-op.s_root / 12.0) * crate::sample::SAMPLE_RATE as f32 / fs).clamp(0.0, 16.0) } else { (f / fs).clamp(0.0, 0.49) };
+            r.inc[j] = if r.smp || r.grn { (f / 261.6256 * 2f32.powf(-op.s_root / 12.0) * crate::sample::SAMPLE_RATE as f32 / fs).clamp(0.0, 16.0) } else { (f / fs).clamp(0.0, 0.49) };
             let lin = if n == 1 { 0.0 } else { j as f32 / (n - 1) as f32 * 2.0 - 1.0 };
             let w = 1.0 - (1.0 - blend) * 0.75 * lin.abs();
             ws[j] = w;
@@ -1236,7 +1274,7 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
             r.gl[j] *= g;
             r.gr[j] *= g;
         }
-        if !r.smp {
+        if !r.smp && !r.grn {
             r.mip = op.tbl.mip_for(fmax * warp_bandwidth(r.wmode, r.warp) * warp_bandwidth(r.wmode2, r.warp2), fs);
         }
     }
@@ -1287,6 +1325,48 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
         for o in 0..3 {
             let r = &run[o];
             if !r.on {
+                continue;
+            }
+            if r.grn {
+                let data = &p.osc[o].sample.as_ref().unwrap().data;
+                let n = data.len() as f32;
+                v.gtimer[o] += r.g_rate;
+                while v.gtimer[o] >= 1.0 {
+                    v.gtimer[o] -= 1.0;
+                    v.rnd ^= v.rnd << 13;
+                    v.rnd ^= v.rnd >> 17;
+                    v.rnd ^= v.rnd << 5;
+                    let rn = (v.rnd as f32 / u32::MAX as f32) * 2.0 - 1.0;
+                    if let Some(g) = v.grains[o].iter_mut().find(|g| g.len <= 0.0) {
+                        g.pos = (r.g_pos + rn * r.g_spray * 0.5 * n).rem_euclid(n - 2.0);
+                        g.age = 0.0;
+                        g.len = r.g_len;
+                        g.inc = r.inc[0];
+                    }
+                }
+                let mut acc = 0.0f32;
+                for g in v.grains[o].iter_mut() {
+                    if g.len <= 0.0 {
+                        continue;
+                    }
+                    let ph = g.age / g.len;
+                    let win = 0.5 - 0.5 * (std::f32::consts::TAU * ph).cos();
+                    let i = g.pos as usize;
+                    let f = g.pos - i as f32;
+                    let a = data[i.min(data.len() - 1)];
+                    let b = data[(i + 1).min(data.len() - 1)];
+                    acc += (a + (b - a) * f) * win;
+                    g.pos += g.inc;
+                    if g.pos >= n - 1.0 {
+                        g.pos -= n - 2.0;
+                    }
+                    g.age += 1.0;
+                    if g.age >= g.len {
+                        g.len = 0.0;
+                    }
+                }
+                let x = acc * r.g_norm;
+                sig[o] = [x * r.gl[0], x * r.gr[0]];
                 continue;
             }
             if r.smp {
@@ -1736,6 +1816,8 @@ impl Engine {
             }
         }
         v.sub_ph = 0.0;
+        v.grains = [[Grain::default(); GN]; 3];
+        v.gtimer = [0.0; 3];
         for (i, e) in v.env.iter_mut().enumerate() {
             e.start(&patch.env[i]);
         }

@@ -9,6 +9,8 @@ pub struct BItem {
     pub cat: String,
     pub fav: bool,
     pub user: bool,
+    pub rating: u8,
+    pub tags: Vec<String>,
 }
 
 #[derive(Default)]
@@ -23,10 +25,12 @@ pub enum BAct {
     None,
     Pick(usize),
     Fav(usize),
+    Rate(usize, u8),
     Close,
 }
 
 pub const FAV_CAT: &str = "\u{2605} Favorites";
+pub const TOP_CAT: &str = "\u{2605} 4+ stars";
 
 /// Rectangle of the footer area (below the lists) for caller-drawn controls.
 pub fn footer(rect: Rect) -> Rect {
@@ -62,10 +66,20 @@ pub fn browser(ui: &mut Ui, rect: Rect, title: &str, items: &[BItem], sel: Optio
     let mut cat_rows: Vec<(String, String)> = vec![(String::new(), format!("ALL  ({})", items.len()))];
     if allow_fav {
         cat_rows.push((FAV_CAT.to_string(), format!("{}  ({})", FAV_CAT, items.iter().filter(|i| i.fav).count())));
+        cat_rows.push((TOP_CAT.to_string(), format!("{}  ({})", TOP_CAT, items.iter().filter(|i| i.rating >= 4).count())));
     }
     for c in cats {
         let n = items.iter().filter(|i| i.cat == c).count();
         cat_rows.push((c.clone(), format!("{}  ({})", c, n)));
+    }
+    if allow_fav {
+        let mut tags: Vec<String> = items.iter().flat_map(|i| i.tags.iter().cloned()).collect();
+        tags.sort();
+        tags.dedup();
+        for t in tags {
+            let n = items.iter().filter(|i| i.tags.contains(&t)).count();
+            cat_rows.push((format!("#{t}"), format!("# {t}  ({n})")));
+        }
     }
     let cpt = ui.painter().with_clip_rect(cat_r.shrink(1.0));
     let row_h = 24.0;
@@ -103,7 +117,7 @@ pub fn browser(ui: &mut Ui, rect: Rect, title: &str, items: &[BItem], sel: Optio
         .iter()
         .enumerate()
         .filter(|(_, it)| {
-            (st.cat.is_empty() || (st.cat == FAV_CAT && it.fav) || it.cat == st.cat) && (q.is_empty() || it.name.to_lowercase().contains(&q) || it.cat.to_lowercase().contains(&q))
+            (st.cat.is_empty() || (st.cat == FAV_CAT && it.fav) || (st.cat == TOP_CAT && it.rating >= 4) || (st.cat.starts_with('#') && it.tags.iter().any(|t| *t == st.cat[1..])) || it.cat == st.cat) && (q.is_empty() || it.name.to_lowercase().contains(&q) || it.cat.to_lowercase().contains(&q) || it.tags.iter().any(|t| t.contains(&q)))
         })
         .map(|(i, _)| i)
         .collect();
@@ -148,6 +162,27 @@ pub fn browser(ui: &mut Ui, rect: Rect, title: &str, items: &[BItem], sel: Optio
         }
         let fg = if on { Color32::BLACK } else { WHITE };
         lpt.text(Pos2::new(rr.left() + 10.0, rr.center().y), Align2::LEFT_CENTER, &it.name, mono(12.0), fg);
+        if allow_fav {
+            // five clickable stars, then tags
+            let mut rated: Option<u8> = None;
+            for k in 0..5u8 {
+                let sr = Rect::from_center_size(Pos2::new(rr.right() - 244.0 + 12.0 * k as f32, rr.center().y), Vec2::new(12.0, 18.0));
+                let r = ui.interact(sr.intersect(list_r), egui::Id::new(("brate", id, i, k)), Sense::click());
+                let filled = k < it.rating;
+                lpt.text(sr.center(), Align2::CENTER_CENTER, if filled { "\u{2605}" } else { "\u{2606}" }, mono(9.5), if filled { if on { Color32::BLACK } else { WHITE } } else if r.hovered() { WHITE } else if on { Color32::from_rgb(120, 120, 120) } else { MID });
+                if r.clicked() {
+                    rated = Some(if it.rating == k + 1 { 0 } else { k + 1 });
+                }
+            }
+            if let Some(v) = rated {
+                act = BAct::Rate(i, v);
+                continue;
+            }
+            if !it.tags.is_empty() {
+                let t = it.tags.iter().take(3).map(|t| format!("#{t}")).collect::<Vec<_>>().join(" ");
+                lpt.text(Pos2::new(rr.right() - 262.0, rr.center().y), Align2::RIGHT_CENTER, t, mono(9.0), if on { Color32::from_rgb(70, 70, 70) } else { DIM });
+            }
+        }
         if st.cat.is_empty() || st.cat == FAV_CAT {
             lpt.text(Pos2::new(rr.right() - 70.0, rr.center().y), Align2::RIGHT_CENTER, &it.cat, mono(9.5), if on { Color32::from_rgb(60, 60, 60) } else { DIM });
         }
