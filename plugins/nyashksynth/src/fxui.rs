@@ -28,6 +28,17 @@ fn kn<P: Param>(ui: &mut Ui, setter: &ParamSetter, prm: &P, label: &str, x: f32,
     knob_s(ui, setter, prm, label, cell(x, y, 62.0), tip, false);
 }
 
+/// Effects that draw their own graph (delay taps, compressor curve, reverb decay, EQ, filter); the others leave the
+/// signal flow and the spectrum more room.
+pub fn fx_has_graph(m: usize) -> bool {
+    matches!(m, 5..=9)
+}
+
+/// Offset of the SIGNAL FLOW row from the top of the page area.
+pub fn flow_offset(m: usize) -> f32 {
+    if fx_has_graph(m) { 282.0 } else { 140.0 }
+}
+
 pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, c: Rect) {
     let bus = st.fx_bus.min(1);
     let b = p.bank(bus);
@@ -239,13 +250,15 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
                     kn(ui, setter, &b.dl_time_r, "TIME R", x0 + w, y0, "Delay time (right)");
                 }
             }
+            // no gap where TIME R is hidden while the channels are linked
+            let c0 = if b.dl_link.value() { 1.0 } else { 2.0 };
             md(ModDst::FxDelayFb);
-            kn(ui, setter, &b.dl_fb, "FEEDBACK", x0 + w * 2.0, y0, "Feedback");
-            kn(ui, setter, &b.dl_lp, "LOW PASS", x0 + w * 3.0, y0, "Dampens repeats (high cut)");
-            kn(ui, setter, &b.dl_hp, "HIGH PASS", x0 + w * 4.0, y0, "Removes lows from repeats");
-            kn(ui, setter, &b.dl_width, "WIDTH", x0 + w * 5.0, y0, "Stereo width of the repeats");
+            kn(ui, setter, &b.dl_fb, "FEEDBACK", x0 + w * (c0 + 0.0), y0, "Feedback");
+            kn(ui, setter, &b.dl_lp, "LOW PASS", x0 + w * (c0 + 1.0), y0, "Dampens repeats (high cut)");
+            kn(ui, setter, &b.dl_hp, "HIGH PASS", x0 + w * (c0 + 2.0), y0, "Removes lows from repeats");
+            kn(ui, setter, &b.dl_width, "WIDTH", x0 + w * (c0 + 3.0), y0, "Stereo width of the repeats");
             md(ModDst::FxDelayMix);
-            kn(ui, setter, &b.dl_mix, "MIX", x0 + w * 6.0, y0, "Dry / wet");
+            kn(ui, setter, &b.dl_mix, "MIX", x0 + w * (c0 + 4.0), y0, "Dry / wet");
             sync_pill(ui, &b.dl_sync, x0, y0 + 74.0);
             if pill_tip(ui, Rect::from_min_size(Pos2::new(x0 + 60.0, y0 + 74.0), Vec2::new(54.0, 22.0)), "LINK", b.dl_link.value(), "Left and right use the same time") {
                 set_b(setter, &b.dl_link, !b.dl_link.value());
@@ -256,7 +269,7 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
             if pill_tip(ui, Rect::from_min_size(Pos2::new(x0 + 206.0, y0 + 74.0), Vec2::new(44.0, 22.0)), "HQ", b.dl_hq.value(), "High quality: cubic interpolation and smooth time changes (tape-like glides)") {
                 set_b(setter, &b.dl_hq, !b.dl_hq.value());
             }
-            let g = Rect::from_min_size(Pos2::new(x0, y0 + 110.0), Vec2::new(d.width() - 4.0, d.top() + 260.0 - (y0 + 110.0)));
+            let g = Rect::from_min_size(Pos2::new(x0, y0 + 110.0), Vec2::new(d.width(), d.top() + 260.0 - (y0 + 110.0)));
             delay_taps(ui, g, &fp);
         }
         6 => {
@@ -274,7 +287,7 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
                 kn(ui, setter, &b.cp_f2, "MID/HI", x0 + w * 7.0, y0, "Crossover 2");
             }
             // static curve (input level -> output level)
-            let g = Rect::from_min_size(Pos2::new(x0, y0 + 110.0), Vec2::new(d.width() - 4.0, d.top() + 260.0 - (y0 + 110.0)));
+            let g = Rect::from_min_size(Pos2::new(x0, y0 + 110.0), Vec2::new(d.width(), d.top() + 260.0 - (y0 + 110.0)));
             comp_curve(ui, g, &fp);
         }
         7 => {
@@ -299,7 +312,7 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
                     ui.painter().text(Pos2::new(x0 + 2.0, y0 + 112.0), Align2::LEFT_CENTER, "No impulse response loaded: pick a .wav to hear it.", mono(9.5), DIM);
                 }
             }
-            let g = Rect::from_min_size(Pos2::new(x0, y0 + 124.0), Vec2::new(d.width() - 4.0, d.top() + 260.0 - (y0 + 124.0)));
+            let g = Rect::from_min_size(Pos2::new(x0, y0 + 124.0), Vec2::new(d.width(), d.top() + 260.0 - (y0 + 124.0)));
             reverb_decay(ui, g, &fp);
         }
         8 => {
@@ -310,7 +323,7 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
             kn(ui, setter, &b.eq_mg, "MID dB", x0 + w * 4.0, y0, "Mid gain");
             kn(ui, setter, &b.eq_hf, "HIGH F", x0 + w * 5.0, y0, "High shelf frequency");
             kn(ui, setter, &b.eq_hg, "HIGH dB", x0 + w * 6.0, y0, "High shelf gain");
-            let g = Rect::from_min_size(Pos2::new(x0, y0 + 80.0), Vec2::new(d.width() - 4.0, d.top() + 260.0 - (y0 + 80.0)));
+            let g = Rect::from_min_size(Pos2::new(x0, y0 + 80.0), Vec2::new(d.width(), d.top() + 260.0 - (y0 + 80.0)));
             graph(ui, g, |f| eq_response_db(&fp, f, 48000.0), (-18.0, 18.0), Some((&st.spec, st.spec_fs)));
             eq_nodes(ui, setter, b, g);
         }
@@ -340,7 +353,7 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
             kn(ui, setter, &b.ff_res, "RES", x0 + w * 3.0, y0, "Resonance");
             kn(ui, setter, &b.ff_drive, "DRIVE", x0 + w * 4.0, y0, "Drive");
             kn(ui, setter, &b.ff_mix, "MIX", x0 + w * 5.0, y0, "Dry / wet");
-            let g = Rect::from_min_size(Pos2::new(x0, y0 + 80.0), Vec2::new(d.width() - 4.0, d.top() + 260.0 - (y0 + 80.0)));
+            let g = Rect::from_min_size(Pos2::new(x0, y0 + 80.0), Vec2::new(d.width(), d.top() + 260.0 - (y0 + 80.0)));
             let (fc, q, ty) = (fp.ff_cut, 0.5 + fp.ff_res * 9.0, fp.ff_type);
             graph(
                 ui,
@@ -366,7 +379,7 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
     }
 
     // ---- signal flow of the selected bus (fills the lower part of the page)
-    let fy = d.top() + 282.0;
+    let fy = d.top() + flow_offset(m);
     ui.painter().text(Pos2::new(d.left() + 2.0, fy - 6.0), Align2::LEFT_CENTER, format!("SIGNAL FLOW  BUS {}", bus + 1), mono(9.0), DIM);
     let bw = (d.width() - 70.0 - 11.0 * 14.0) / 12.0;
     let by = fy + 6.0;

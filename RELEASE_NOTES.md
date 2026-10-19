@@ -1,4 +1,14 @@
-# NyashkSynth v1.0.10
+# NyashkSynth v1.0.11
+
+- **Alignment pass over every page:**
+  - Drop-down boxes now fill exactly the space given to them (same width and height as the pills and boxes next to them); before they were 18 px too narrow and a few pixels off vertically.
+  - Oscillator knob grid spans the whole panel; UNI MODE sits on the same rows as the other knobs (value box + caption).
+  - SUB knobs use the same 5-column grid as the NOISE knobs; the TOOLS buttons and the filter ROUTE pills end on the panel's right edge.
+  - FX page: effects without their own graph (Hyper, Dist, Flanger, Phaser, Chorus, Bode, Utility) give the extra room to the signal flow and a taller output spectrum; Delay has no gap when LINK hides TIME R; graph, spectrum and effect chips share one left/right edge.
+  - MASTER label and volume box lined up.
+- Header, wheels and combos re-checked on SOUND / MOD / MATRIX / FX / SEQ / SETTINGS and the editors.
+
+# v1.0.10
 
 - **Any language and symbols in names:** preset names, categories, tags and search can be typed in Ukrainian (or any alphabet) and with symbols such as crosses and stars. A DejaVu Sans font is built in (Latin, Cyrillic, Greek, Hebrew, Arabic, dingbats, many symbols); Chinese / Japanese / Korean use a font of your system when present. Ctrl+V pastes any text. Preset files keep these names (only characters that file systems forbid are replaced).
 - AltGr characters now type on Windows.

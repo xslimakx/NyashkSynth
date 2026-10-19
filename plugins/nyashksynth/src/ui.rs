@@ -510,14 +510,20 @@ pub fn pill_tip(ui: &mut Ui, rect: Rect, text: &str, on: bool, tip: &str) -> boo
 }
 
 pub fn enum_combo<E: Enum + PartialEq + 'static>(ui: &mut Ui, setter: &ParamSetter, p: &EnumParam<E>, id: &str, rect: Rect) {
+    enum_combo_sz(ui, setter, p, id, rect, 12.0);
+}
+
+pub fn enum_combo_sz<E: Enum + PartialEq + 'static>(ui: &mut Ui, setter: &ParamSetter, p: &EnumParam<E>, id: &str, rect: Rect, fs: f32) {
     let names = E::variants();
     let idx = p.value().to_index();
     ui.allocate_new_ui(UiBuilder::new().max_rect(rect), |ui| {
+        // the button fills the whole rect (same height and width as the pills and boxes next to it)
+        ui.spacing_mut().interact_size.y = rect.height();
         egui::ComboBox::from_id_salt(id)
             .height(380.0)
-            .width(rect.width() - 18.0)
+            .width(rect.width())
             .truncate()
-            .selected_text(egui::RichText::new(names[idx]).font(mono(12.0)))
+            .selected_text(egui::RichText::new(names[idx]).font(mono(fs)))
             .show_ui(ui, |ui| {
                 for (i, n) in names.iter().enumerate() {
                     if ui.selectable_label(i == idx, egui::RichText::new(*n).font(mono(12.0))).clicked() {

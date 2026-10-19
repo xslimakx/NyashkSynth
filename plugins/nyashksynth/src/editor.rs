@@ -509,7 +509,7 @@ pub fn create(params: Arc<SynthParams>, meters: Arc<Meters>, shared: Arc<Shared>
                     3 => {
                         let c = page_panel("EFFECTS", rect(14.0, 62.0, 1430.0, 654.0));
                         fxui::fx_tab(ui, setter, p, st, c);
-                        let sr = Rect::from_min_max(Pos2::new(c.left() + 10.0, c.top() + 376.0), Pos2::new(c.right() - 10.0, c.bottom() - 6.0));
+                        let sr = Rect::from_min_max(Pos2::new(c.left(), c.top() + 94.0 + fxui::flow_offset(st.fx_sel)), Pos2::new(c.right(), c.bottom() - 6.0));
                         painter.rect_filled(sr, CornerRadius::same(4), Color32::from_rgb(8, 8, 8));
                         painter.rect_stroke(sr, CornerRadius::same(4), Stroke::new(1.0_f32, LINE), StrokeKind::Inside);
                         let inner = sr.shrink2(Vec2::new(40.0, 14.0));
@@ -525,7 +525,7 @@ pub fn create(params: Arc<SynthParams>, meters: Arc<Meters>, shared: Arc<Shared>
                             sp.text(Pos2::new(x, inner.bottom() + 8.0), Align2::CENTER_CENTER, t, mono(8.5), DIM);
                         }
                         draw_spectrum(&sp, inner, &st.spec, st.spec_fs, -80.0, Color32::from_rgb(200, 200, 200));
-                        sp.text(Pos2::new(sr.left() + 10.0, sr.top() + 10.0), Align2::LEFT_CENTER, "OUTPUT SPECTRUM", mono(9.5), DIM);
+                        sp.text(Pos2::new(sr.right() - 10.0, sr.top() + 10.0), Align2::RIGHT_CENTER, "OUTPUT SPECTRUM", mono(9.5), DIM);
                     }
                     4 => {
                         let c = page_panel("ARPEGGIATOR", rect(14.0, 62.0, 1430.0, 322.0));
@@ -749,7 +749,7 @@ fn header(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, s
         };
         painter.text(Pos2::new(o.x + 1124.0, o.y + 27.0), Align2::LEFT_CENTER, txt, mono(10.0), if st.learn_on { WHITE } else { DIM });
     }
-    painter.text(Pos2::new(o.x + 1296.0, o.y + 35.0), Align2::LEFT_CENTER, "MASTER", mono(10.0), DIM);
+    painter.text(Pos2::new(o.x + 1296.0, o.y + 26.0), Align2::LEFT_CENTER, "MASTER", mono(10.0), DIM);
     h_slider(ui, setter, &p.master, rect(1359.0, 19.0, 78.0, 14.0), "master_slider", false, "Master volume");
     {
         // type a value: click the number (or drag it), Enter to confirm
@@ -1298,8 +1298,8 @@ fn osc_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared
 fn osc_knobs(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, r: Rect, o: usize, sm: bool) {
     let op = osc(p, o);
     let (pos_d, wrp_d, lvl_d, pan_d, bl_d, pit_d) = match o { 0 => (ModDst::APos, ModDst::AWarp, ModDst::ALevel, ModDst::APan, ModDst::ABlend, ModDst::APitch), 1 => (ModDst::BPos, ModDst::BWarp, ModDst::BLevel, ModDst::BPan, ModDst::BBlend, ModDst::BPitch), _ => (ModDst::CPos, ModDst::CWarp, ModDst::CLevel, ModDst::CPan, ModDst::CBlend, ModDst::CPitch) };
-    let w = 62.0;
-    let x0 = r.left() + 12.0;
+    let w = ((r.width() - 24.0) / 5.0).floor();
+    let x0 = r.left() + 12.0 + ((r.width() - 24.0) - w * 5.0) * 0.5;
     let y0 = r.top() + 142.0;
     let dy = 66.0;
     mdst(pos_d);
@@ -1375,8 +1375,9 @@ fn osc_knobs(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, r: Rect, o: usi
         knob_s(ui, setter, &op.phase, "PHASE", cell(x0 + w * 2.0, y2, w), "Start phase", false);
         knob_s(ui, setter, &op.rand, "RAND", cell(x0 + w * 3.0, y2, w), "Random start phase", false);
     }
-    ui.painter().text(Pos2::new(x0 + w * 4.0 + w * 0.5, y2 + 6.0), Align2::CENTER_CENTER, "UNI MODE", mono(9.0), DIM);
-    enum_combo(ui, setter, &op.uni_mode, &format!("unimode{o}"), Rect::from_min_size(Pos2::new(x0 + w * 4.0 - 6.0, y2 + 16.0), Vec2::new(w + 10.0, 24.0)));
+    // same rows as the value boxes (box centre y2+43) and labels (y2+57) of the knobs next to it
+    enum_combo_sz(ui, setter, &op.uni_mode, &format!("unimode{o}"), Rect::from_min_size(Pos2::new(x0 + w * 4.0 + 1.0, y2 + 32.0), Vec2::new(w + 3.0, 22.0)), 10.5);
+    ui.painter().text(Pos2::new(x0 + w * 4.0 + w * 0.5, y2 + 57.0), Align2::CENTER_CENTER, "UNI MODE", mono(9.5), DIM);
 }
 
 /// Multisample mode: key map of the loaded instrument, LOAD SFZ button, loop mode.
@@ -2006,8 +2007,9 @@ fn filter_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui
         ("SUB", &fl.fl_sub, "Send the sub oscillator through this filter"),
         ("NOISE", &fl.fl_noise, "Send the noise through this filter"),
     ];
+    let pitch = (r.width() - 12.0 - 62.0 + 4.0) / 5.0; // fills the row up to the graph's right edge
     for (i, (nm, bp, tip)) in items.iter().enumerate() {
-        if pill_tip(ui, Rect::from_min_size(Pos2::new(r.left() + 62.0 + 58.0 * i as f32, ry), Vec2::new(54.0, 22.0)), nm, bp.value(), tip) {
+        if pill_tip(ui, Rect::from_min_size(Pos2::new(r.left() + 62.0 + pitch * i as f32, ry), Vec2::new(pitch - 4.0, 22.0)), nm, bp.value(), tip) {
             set_b(setter, bp, !bp.value());
         }
     }
@@ -2021,10 +2023,11 @@ fn sub_noise_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, _shared: 
     let x = r.left();
     let y = r.top();
     ui.painter().text(Pos2::new(x + 14.0, y + 44.0), Align2::LEFT_CENTER, "SUB", mono(10.5), WHITE);
-    on_pill(ui, setter, &p.sub_on, Rect::from_min_size(Pos2::new(x + 52.0, y + 33.0), Vec2::new(40.0, 22.0)), "Sub oscillator on/off");
-    enum_combo(ui, setter, &p.sub_wave, "sub_wave", Rect::from_min_size(Pos2::new(x + 98.0, y + 32.0), Vec2::new(66.0, 24.0)));
-    let kw = 56.0;
-    let k0 = r.right() - 12.0 - kw * 3.0;
+    on_pill(ui, setter, &p.sub_on, Rect::from_min_size(Pos2::new(x + 50.0, y + 33.0), Vec2::new(38.0, 22.0)), "Sub oscillator on/off");
+    enum_combo_sz(ui, setter, &p.sub_wave, "sub_wave", Rect::from_min_size(Pos2::new(x + 94.0, y + 33.0), Vec2::new(62.0, 22.0)), 10.5);
+    // same 5-column grid as the NOISE knobs below: SUB uses the right three columns
+    let kw = ((r.width() - 24.0) / 5.0).floor();
+    let k0 = r.left() + 12.0 + kw * 2.0;
     knob_s(ui, setter, &p.sub_oct, "OCT", cell(k0, y + 28.0, kw), "Sub octave offset", false);
     mdst(ModDst::SubLevel);
     knob_s(ui, setter, &p.sub_level, "LEVEL", cell(k0 + kw, y + 28.0, kw), "Sub level", false);
@@ -2081,7 +2084,7 @@ fn sub_noise_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, _shared: 
     if pill_tip(ui, Rect::from_min_size(Pos2::new(x + 216.0, by), Vec2::new(56.0, 22.0)), "COPY", st.copy_menu, "Copy one oscillator (with its wavetable) to another") {
         st.copy_menu = !st.copy_menu;
     }
-    if pill_tip(ui, Rect::from_min_size(Pos2::new(x + 276.0, by), Vec2::new(64.0, 22.0)), "HYBRID", false, "Mix the current sound with a random preset: every section (oscillator, filter, LFO, effect...) comes from one or the other") {
+    if pill_tip(ui, Rect::from_min_size(Pos2::new(x + 276.0, by), Vec2::new(r.width() - 12.0 - 276.0, 22.0)), "HYBRID", false, "Mix the current sound with a random preset: every section (oscillator, filter, LFO, effect...) comes from one or the other") {
         if st.presets.is_empty() {
             st.presets = presets::list_all();
         }
