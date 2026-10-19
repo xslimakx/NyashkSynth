@@ -118,15 +118,15 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
         enum_combo(ui, setter, &p.fx_route, "fx_route", Rect::from_min_size(Pos2::new(bx + 190.0, d.top() - 3.0), Vec2::new(150.0, 22.0)));
         match p.fx_route.value() {
             FxRoute::SplitLh => {
-                knob_s(ui, setter, &p.fx_split, "SPLIT", cell(bx + 346.0, d.top() - 16.0, 52.0), "Crossover: lows go to bus 1, highs to bus 2", false);
+                knob_s(ui, setter, &p.fx_split, "SPLIT", cell(bx + 346.0, d.top() + 6.0, 52.0), "Crossover: lows go to bus 1, highs to bus 2", false);
             }
             FxRoute::SplitLmh => {
-                knob_s(ui, setter, &p.fx_split, "LOW/MID", cell(bx + 346.0, d.top() - 16.0, 52.0), "Low / mid crossover. Lows go to bus 1", false);
-                knob_s(ui, setter, &p.fx_split2, "MID/HI", cell(bx + 402.0, d.top() - 16.0, 52.0), "Mid / high crossover. Mids go to bus 2, highs stay dry", false);
+                knob_s(ui, setter, &p.fx_split, "LOW/MID", cell(bx + 346.0, d.top() + 6.0, 52.0), "Low / mid crossover. Lows go to bus 1", false);
+                knob_s(ui, setter, &p.fx_split2, "MID/HI", cell(bx + 402.0, d.top() + 6.0, 52.0), "Mid / high crossover. Mids go to bus 2, highs stay dry", false);
             }
             _ => {}
         }
-        knob_s(ui, setter, &p.fx2_level, "BUS 2", cell(bx + 458.0, d.top() - 16.0, 52.0), "Level of bus 2 in the mix", false);
+        knob_s(ui, setter, &p.fx2_level, "BUS 2", cell(bx + 458.0, d.top() + 6.0, 52.0), "Level of bus 2 in the mix", false);
     }
     let on_p = on_param(b, m);
     if pill_tip(ui, Rect::from_min_size(Pos2::new(d.left() + 160.0, d.top() - 3.0), Vec2::new(44.0, 22.0)), if on_p.value() { "ON" } else { "OFF" }, on_p.value(), "Module on/off") {

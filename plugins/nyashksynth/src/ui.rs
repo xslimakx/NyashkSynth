@@ -195,6 +195,37 @@ pub fn knob_s<P: Param>(ui: &mut Ui, setter: &ParamSetter, p: &P, label: &str, c
     knob_impl(ui, setter, p, label, cell, tooltip, bipolar, 13.0, true)
 }
 
+/// MIDI-learn support for widgets that are not knobs (the OCT / SEMI spinners): in learn mode a click picks the
+/// parameter, a right-click unbinds it, and a ring + CC tag is drawn. Returns true while learn mode is on
+/// (the caller then leaves the value alone).
+pub fn learn_widget(ui: &Ui, ptr: ParamPtr, resp: &egui::Response, r: Rect) -> bool {
+    let (learn_on, is_target, bound_cc) = MC.with(|m| {
+        let m = m.borrow();
+        (m.learn_on, m.learn_target == Some(ptr), m.bound.iter().find(|(q, _)| *q == ptr).map(|(_, c)| *c))
+    });
+    if learn_on {
+        if resp.clicked() {
+            MC.with(|m| m.borrow_mut().learn_click = Some(ptr));
+        }
+        if resp.secondary_clicked() {
+            MC.with(|m| m.borrow_mut().learn_unbind = Some(ptr));
+        }
+        let t = ui.input(|i| i.time);
+        let (w, col) = if is_target { (2.5_f32, WHITE) } else { (1.0_f32, Color32::from_rgb(90, 90, 90)) };
+        let ph = if is_target { ((t * 5.0).sin() * 0.5 + 0.5) as f32 * 2.0 } else { 0.0 };
+        ui.painter().rect_stroke(r.expand(2.0 + ph), CornerRadius::same(5), Stroke::new(w, col), StrokeKind::Outside);
+        if is_target {
+            ui.ctx().request_repaint();
+        }
+    }
+    if let Some(cc) = bound_cc {
+        let tag = Rect::from_center_size(Pos2::new(r.center().x, r.top() - 1.0), Vec2::new(34.0, 11.0));
+        ui.painter().rect_filled(tag, CornerRadius::same(3), WHITE);
+        ui.painter().text(tag.center(), Align2::CENTER_CENTER, format!("CC{cc}"), mono(8.0), Color32::BLACK);
+    }
+    learn_on
+}
+
 #[allow(clippy::too_many_arguments)]
 fn knob_impl<P: Param>(ui: &mut Ui, setter: &ParamSetter, p: &P, label: &str, cell: Rect, tooltip: &str, bipolar: bool, r: f32, compact: bool) -> KnobEv {
     let c = Pos2::new(cell.center().x, cell.top() + r + 3.0);

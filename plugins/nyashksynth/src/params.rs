@@ -1711,7 +1711,7 @@ pub struct SynthParams {
     pub clip_on: BoolParam,
     #[id = "mout"]
     pub midi_out: BoolParam,
-    #[id = "swh"]
+    #[id = "wheels"]
     pub show_wheels: BoolParam,
     #[id = "clp_sl"]
     pub clip_sel: IntParam,
@@ -1824,7 +1824,7 @@ impl Default for SynthParams {
             clips: Arc::new(std::sync::Mutex::new(String::new())),
             clip_on: BoolParam::new("Clip On", false),
             midi_out: BoolParam::new("MIDI Out", false),
-            show_wheels: BoolParam::new("Show Wheels", false).non_automatable(),
+            show_wheels: BoolParam::new("Show Wheels", true).non_automatable(),
             clip_sel: IntParam::new("Clip Slot", 1, IntRange::Linear { min: 1, max: 12 }),
             clip_div: EnumParam::new("Clip Step", Div::D16),
             clip_swing: unit_param("Clip Swing", 0.0),

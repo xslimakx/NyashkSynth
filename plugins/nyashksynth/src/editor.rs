@@ -1882,11 +1882,13 @@ fn sub_noise_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, _shared: 
     let y = r.top();
     ui.painter().text(Pos2::new(x + 14.0, y + 44.0), Align2::LEFT_CENTER, "SUB", mono(10.5), WHITE);
     on_pill(ui, setter, &p.sub_on, Rect::from_min_size(Pos2::new(x + 52.0, y + 33.0), Vec2::new(40.0, 22.0)), "Sub oscillator on/off");
-    enum_combo(ui, setter, &p.sub_wave, "sub_wave", Rect::from_min_size(Pos2::new(x + 100.0, y + 32.0), Vec2::new(70.0, 24.0)));
-    knob_s(ui, setter, &p.sub_oct, "OCT", cell(x + 176.0, y + 28.0, 58.0), "Sub octave offset", false);
+    enum_combo(ui, setter, &p.sub_wave, "sub_wave", Rect::from_min_size(Pos2::new(x + 98.0, y + 32.0), Vec2::new(66.0, 24.0)));
+    let kw = 56.0;
+    let k0 = r.right() - 12.0 - kw * 3.0;
+    knob_s(ui, setter, &p.sub_oct, "OCT", cell(k0, y + 28.0, kw), "Sub octave offset", false);
     mdst(ModDst::SubLevel);
-    knob_s(ui, setter, &p.sub_level, "LEVEL", cell(x + 234.0, y + 28.0, 58.0), "Sub level", false);
-    knob_s(ui, setter, &p.sub_pan, "PAN", cell(x + 292.0, y + 28.0, 58.0), "Sub stereo position", true);
+    knob_s(ui, setter, &p.sub_level, "LEVEL", cell(k0 + kw, y + 28.0, kw), "Sub level", false);
+    knob_s(ui, setter, &p.sub_pan, "PAN", cell(k0 + kw * 2.0, y + 28.0, kw), "Sub stereo position", true);
     ui.painter().hline(x + 12.0..=r.right() - 12.0, y + 98.0, Stroke::new(1.0_f32, LINE));
     ui.painter().text(Pos2::new(x + 14.0, y + 116.0), Align2::LEFT_CENTER, "NOISE", mono(10.5), WHITE);
     enum_combo(ui, setter, &p.noise_type, "noise_type", Rect::from_min_size(Pos2::new(x + 70.0, y + 104.0), Vec2::new(130.0, 24.0)));
@@ -1903,7 +1905,7 @@ fn sub_noise_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, _shared: 
         st.overlay = Overlay::Noises;
     }
     let ky = y + 134.0;
-    let w = 62.0;
+    let w = ((r.width() - 24.0) / 5.0).floor();
     let kx = x + 12.0;
     mdst(ModDst::NoiseLevel);
     knob_s(ui, setter, &p.noise_level, "LEVEL", cell(kx, ky, w), "Noise level", false);
@@ -2603,18 +2605,17 @@ fn matrix_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
             ui.painter().text(Pos2::new(cl + x, hy), Align2::LEFT_CENTER, t, mono(9.5), DIM);
         }
     }
-    let rh = 40.0;
+    let rh = ((c.height() - 24.0) / 8.0).min(64.0).floor();
     for r16 in 0..16 {
         let col = r16 / 8;
         let r = r16 % 8;
         let c = Rect::from_min_size(Pos2::new(c.left() + (colw + 24.0) * col as f32, c.top()), Vec2::new(colw, c.height()));
         let i = r16;
         let s = &p.slot[i];
-        let y = c.top() + 14.0 + rh * r as f32;
+        let y0 = c.top() + 14.0 + rh * r as f32;
+        let y = y0 + ((rh - 26.0) * 0.5).floor();
         let active = s.src.value() != ModSrc::None && s.dst.value() != ModDst::None;
-        if active {
-            ui.painter().rect_filled(Rect::from_min_size(Pos2::new(c.left(), y - 1.0), Vec2::new(c.width(), rh - 2.0)), CornerRadius::same(4), Color32::from_rgb(16, 16, 16));
-        }
+        ui.painter().rect_filled(Rect::from_min_size(Pos2::new(c.left() - 3.0, y0), Vec2::new(c.width() + 6.0, rh - 4.0)), CornerRadius::same(4), if active { Color32::from_rgb(22, 22, 22) } else { Color32::from_rgb(14, 14, 14) });
         if pill_tip(ui, Rect::from_min_size(Pos2::new(c.left(), y + 1.0), Vec2::new(24.0, 21.0)), &format!("{}", i + 1), s.on.value(), "Slot on / bypassed (click to toggle). Bypassed slots keep their settings but make no sound change.") {
             set_b(setter, &s.on, !s.on.value());
         }
@@ -2907,17 +2908,19 @@ fn strip(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, r: Re
     ui.painter().vline(mx - 4.0, r.top() + 8.0..=r.bottom() - 8.0, Stroke::new(1.0_f32, LINE));
     ui.painter().text(Pos2::new(mx + 4.0, r.top() + 10.0), Align2::LEFT_CENTER, "MACROS", mono(9.5), DIM);
     for (i, m) in p.macros().iter().enumerate() {
-        knob_s(ui, setter, *m, &format!("M{}", i + 1), cell(mx + 44.0 * i as f32, r.top() + 14.0, 44.0), "Macro: assign it with the MACRO chips, then use this knob to move everything at once", false);
+        knob_s(ui, setter, *m, &format!("M{}", i + 1), cell(mx + 42.0 * i as f32, r.top() + 14.0, 42.0), "Macro: assign it with the MACRO chips, then use this knob to move everything at once", false);
     }
     // voice
-    let vx = mx + 44.0 * 8.0 + 10.0;
+    let vx = mx + 42.0 * 8.0 + 10.0;
     ui.painter().vline(vx - 4.0, r.top() + 8.0..=r.bottom() - 8.0, Stroke::new(1.0_f32, LINE));
     ui.painter().text(Pos2::new(vx + 4.0, r.top() + 10.0), Align2::LEFT_CENTER, "VOICE", mono(9.5), DIM);
-    enum_combo(ui, setter, &p.vmode, "vmode", Rect::from_min_size(Pos2::new(vx + 4.0, r.top() + 22.0), Vec2::new(84.0, 24.0)));
-    knob_s(ui, setter, &p.glide, "GLIDE", cell(vx + 92.0, r.top() + 14.0, 46.0), "Portamento time", false);
-    knob_s(ui, setter, &p.bend, "BEND", cell(vx + 138.0, r.top() + 14.0, 46.0), "Pitch-bend range in semitones", false);
-    knob_s(ui, setter, &p.poly, "VOICES", cell(vx + 184.0, r.top() + 14.0, 46.0), "Maximum number of simultaneous notes", false);
-    knob_s(ui, setter, &p.tune, "TUNE", cell(vx + 230.0, r.top() + 14.0, 46.0), "Master tune in cents", true);
+    enum_combo(ui, setter, &p.vmode, "vmode", Rect::from_min_size(Pos2::new(vx + 4.0, r.top() + 22.0), Vec2::new(76.0, 24.0)));
+    let kw = 52.0;
+    let k0 = vx + 84.0;
+    knob_s(ui, setter, &p.glide, "GLIDE", cell(k0, r.top() + 14.0, kw), "Portamento time", false);
+    knob_s(ui, setter, &p.bend, "BEND", cell(k0 + kw, r.top() + 14.0, kw), "Pitch-bend range in semitones", false);
+    knob_s(ui, setter, &p.poly, "VOICES", cell(k0 + kw * 2.0, r.top() + 14.0, kw), "Maximum number of simultaneous notes", false);
+    knob_s(ui, setter, &p.tune, "TUNE", cell(k0 + kw * 3.0, r.top() + 14.0, kw), "Master tune in cents", true);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3136,12 +3139,15 @@ fn spinner(ui: &mut Ui, setter: &ParamSetter, prm: &IntParam, r: Rect, id: &str,
     let resp = ui.interact(r, egui::Id::new(id), Sense::click_and_drag()).on_hover_text(tip);
     let v = prm.value();
     let mut nv = v;
-    if resp.clicked() {
+    let learning = crate::ui::learn_widget(ui, prm.as_ptr(), &resp, r);
+    if learning {
+        // MIDI learn mode: clicks pick the parameter instead of changing it
+    } else if resp.clicked() {
         if let Some(pt) = resp.interact_pointer_pos() {
             nv = if pt.y < r.center().y { v + 1 } else { v - 1 };
         }
     }
-    if resp.dragged() {
+    if !learning && resp.dragged() {
         let key = egui::Id::new(("spin_acc", id));
         let acc = ui.data(|d| d.get_temp::<f32>(key)).unwrap_or(0.0) - resp.drag_delta().y / 9.0;
         let whole = acc.trunc();
@@ -3151,7 +3157,7 @@ fn spinner(ui: &mut Ui, setter: &ParamSetter, prm: &IntParam, r: Rect, id: &str,
     if resp.drag_stopped() {
         ui.data_mut(|d| d.remove::<f32>(egui::Id::new(("spin_acc", id))));
     }
-    if resp.hovered() {
+    if !learning && resp.hovered() {
         let sc = ui.input(|i| i.smooth_scroll_delta.y);
         if sc != 0.0 {
             let key = egui::Id::new(("spin_wh", id));
@@ -3161,7 +3167,7 @@ fn spinner(ui: &mut Ui, setter: &ParamSetter, prm: &IntParam, r: Rect, id: &str,
             nv = v + whole as i32;
         }
     }
-    if resp.double_clicked() {
+    if !learning && resp.double_clicked() {
         nv = 0;
     }
     if nv != v {

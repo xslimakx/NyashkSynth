@@ -35,7 +35,7 @@ A Serum-style wavetable synthesizer in the same black-and-white Nyashk design.
 | **Browser** | categories, search, favorites, **star ratings and tags** |
 | **Layout** | Serum-style pages: SOUND / MOD / MATRIX / FX / SEQ / SETTINGS |
 | **Workflow** | Undo / redo (Ctrl+Z / Ctrl+Y), SETTINGS tab (A4 / scale tuning, MIDI channel, velocity curve) |
-| **MIDI** | **MIDI learn** on every knob, OCT/SEMI transpose spinners, pitch and mod wheels |
+| **MIDI** | **MIDI learn** on every knob, OCT/SEMI transpose spinners (also MIDI-learnable), pitch and mod wheels (can be hidden) |
 | **Performance** | Poly / Mono / Legato, glide, sustain pedal, mod wheel, pitch bend, aftertouch, on-screen keyboard, oscilloscope |
 | **Presets** | 72 factory presets in categories (built into the plugin, can be hidden but not deleted), user presets / tables / noises as plain files you can drop into folders, `.nypack` preset packs (export / import), HYBRID (mix two presets) and RANDOM (a full new patch) |
 

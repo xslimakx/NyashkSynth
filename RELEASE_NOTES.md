@@ -1,3 +1,9 @@
+# NyashkSynth v1.0.4
+
+- **OCT / SEMI spinners and pitch / mod wheels are back left of the keyboard (on by default)**, like Serum. `WHEELS` in SETTINGS can still hide them.
+- **OCT and SEMI can now be MIDI-learned** (MIDI LEARN, click the spinner, press your keyboard's transpose control); a bound spinner shows its `CC` tag.
+- Interface pass over every page: SUB / NOISE knobs on one grid, VOICE strip (GLIDE / BEND / VOICES / TUNE) no longer overlaps, FX BUS 2 / split knobs moved into the header line, MATRIX rows use the full page height.
+
 # v1.0.3
 
 - **On-screen wheels and OCT / SEMI are hidden by default**, so the keyboard gets the full width. SETTINGS > MIDI / PLAY has a `WHEELS: HIDDEN / SHOWN` switch, and OCT / SEMI spinners now also live there.
