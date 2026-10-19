@@ -1,4 +1,9 @@
-# NyashkSynth v1.0.9
+# NyashkSynth v1.0.10
+
+- **Any language and symbols in names:** preset names, categories, tags and search can be typed in Ukrainian (or any alphabet) and with symbols such as crosses and stars. A DejaVu Sans font is built in (Latin, Cyrillic, Greek, Hebrew, Arabic, dingbats, many symbols); Chinese / Japanese / Korean use a font of your system when present. Ctrl+V pastes any text. Preset files keep these names (only characters that file systems forbid are replaced).
+- AltGr characters now type on Windows.
+
+# v1.0.9
 
 - **MASTER header aligned:** the slider and the dB box now share one column and end at the page edge (the box used to stick out to the right and sit off-centre under the slider).
 

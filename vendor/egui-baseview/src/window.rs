@@ -624,7 +624,9 @@ where
                             }
                         }
                     } else if let keyboard_types::Key::Character(written) = &event.key {
-                        if !self.egui_input.modifiers.ctrl && !self.egui_input.modifiers.command {
+                        let m = self.egui_input.modifiers;
+                        // AltGr arrives as Ctrl+Alt on Windows: it still types characters
+                        if (!m.ctrl && !m.command) || (m.ctrl && m.alt) {
                             self.egui_input
                                 .events
                                 .push(egui::Event::Text(written.clone()));

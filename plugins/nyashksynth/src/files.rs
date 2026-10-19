@@ -78,8 +78,15 @@ fn walk(root: &Path, dir: &Path, exts: &[&str], depth: usize, out: &mut Vec<Entr
 }
 
 pub fn clean_name(name: &str) -> String {
-    let s: String = name.trim().chars().map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' || c == '_' || c == '.' || c == '(' || c == ')' { c } else { '_' }).collect();
-    s.trim().trim_matches('.').to_string()
+    let s: String = name.trim().chars().map(|c| if c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' | '#' | ';' | '=' | '\u{200b}'..='\u{200f}') { '_' } else { c }).collect();
+    let s = s.trim().trim_matches('.').trim().to_string();
+    // reserved device names on Windows
+    let up = s.to_ascii_uppercase();
+    if matches!(up.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "COM1" | "COM2" | "COM3" | "COM4" | "LPT1" | "LPT2" | "LPT3") {
+        format!("{s}_")
+    } else {
+        s
+    }
 }
 
 /// Open a folder in the system file manager.
@@ -93,4 +100,15 @@ pub fn open_folder(p: &Path) {
         "xdg-open"
     };
     let _ = std::process::Command::new(cmd).arg(p).spawn();
+}
+
+#[cfg(test)]
+mod clean_name_tests {
+    use super::clean_name;
+    #[test]
+    fn keeps_unicode_and_symbols() {
+        assert_eq!(clean_name("Мій бас ✝ 日本語 ★"), "Мій бас ✝ 日本語 ★");
+        assert_eq!(clean_name("a/b:c*d"), "a_b_c_d");
+        assert_eq!(clean_name("CON"), "CON_");
+    }
 }

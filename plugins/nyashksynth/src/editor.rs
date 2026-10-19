@@ -330,7 +330,7 @@ impl Gui {
             tag_edit: String::new(),
             tag_for: String::new(),
             pb: BState::default(),
-            save_name: String::new(),
+            save_name: std::env::var("NYASHK_SAVENAME").unwrap_or_default(),
             save_cat: String::new(),
             last_scan: 0.0,
             tables: scan_tables(),
@@ -398,6 +398,7 @@ pub fn create(params: Arc<SynthParams>, meters: Arc<Meters>, shared: Arc<Shared>
             v.selection.bg_fill = Color32::from_rgb(64, 64, 64);
             v.selection.stroke = Stroke::new(1.0_f32, WHITE);
             ctx.set_visuals(v);
+            install_fonts(ctx);
         },
         move |ctx, setter, st| {
             ctx.request_repaint_after(Duration::from_millis(40));
@@ -3214,6 +3215,48 @@ pub fn draw_spectrum(painter: &egui::Painter, r: Rect, spec: &[f32], fs: f32, fl
             painter.line_segment([Pos2::new(px, r.bottom()), Pos2::new(px, r.bottom() - h)], Stroke::new(1.0_f32, col));
         }
     }
+}
+
+// ===================================================================== fonts
+
+/// Extra fonts so names and notes can be typed in any language and with symbols: DejaVu Sans is built in
+/// (Latin, Cyrillic, Greek, Hebrew, Arabic, many symbols and dingbats such as crosses and stars), and a CJK /
+/// symbol font of the system is added when one exists.
+fn install_fonts(ctx: &egui::Context) {
+    use egui::{FontData, FontFamily};
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert("dejavu".into(), std::sync::Arc::new(FontData::from_static(include_bytes!("fonts/DejaVuSans.ttf"))));
+    let mut extra: Vec<String> = vec!["dejavu".into()];
+    let sys = [
+        ("C:\\Windows\\Fonts\\seguisym.ttf", "sys_sym"),
+        ("C:\\Windows\\Fonts\\msyh.ttc", "sys_cjk1"),
+        ("C:\\Windows\\Fonts\\YuGothM.ttc", "sys_cjk2"),
+        ("C:\\Windows\\Fonts\\malgun.ttf", "sys_cjk3"),
+        ("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", "sys_cjk4"),
+        ("/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc", "sys_cjk5"),
+        ("/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc", "sys_cjk6"),
+        ("/usr/share/fonts/TTF/NotoSansCJK-Regular.ttc", "sys_cjk7"),
+        ("/System/Library/Fonts/PingFang.ttc", "sys_cjk8"),
+        ("/System/Library/Fonts/Apple Symbols.ttf", "sys_sym2"),
+    ];
+    for (path, key) in sys {
+        if let Ok(bytes) = std::fs::read(path) {
+            if bytes.len() < 64 * 1024 * 1024 {
+                fonts.font_data.insert(key.into(), std::sync::Arc::new(FontData::from_owned(bytes)));
+                extra.push(key.into());
+            }
+        }
+    }
+    for fam in [FontFamily::Monospace, FontFamily::Proportional] {
+        if let Some(list) = fonts.families.get_mut(&fam) {
+            // after the primary font, before the emoji fall-backs
+            let at = list.len().min(2);
+            for (k, name) in extra.iter().enumerate() {
+                list.insert(at + k, name.clone());
+            }
+        }
+    }
+    ctx.set_fonts(fonts);
 }
 
 // ===================================================================== MIDI learn
