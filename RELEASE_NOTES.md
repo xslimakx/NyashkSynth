@@ -1,4 +1,4 @@
-# v3.5.0
+# v1.0.2
 
 - **Step tuning mode** for oscillators (click the label under SEMI): moves by steps of the KEY LOCK scale.
 - **More modulation sources:** `FILT 1` and `FILT 2` (filter outputs).
@@ -6,10 +6,8 @@
 - **DC blocker** in the engine (5 Hz): pulse waves and distortion no longer leave an offset (Square Pulse Lead had 4 % DC).
 - **Fix:** the harmonic editor of the wavetable editor could crash when a drag continued after switching zoom or between the amplitude and phase panes.
 - **Factory presets:** HIDE / RESTORE buttons in the preset browser (they are built into the plugin, so they cannot be deleted).
-- **Docs:** README and MANUAL brought up to date (status table, new sections for 3.2 - 3.5, all annotated screenshots re-made, "where are the presets" table).
+- **Docs:** README and MANUAL brought up to date (status table, new sections for everything added since 1.0.0, all annotated screenshots re-made, "where are the presets" table).
 - **Tests:** new audit that plays all 72 factory presets through engine and effects (NaN, DC, silence, level, tails) and a CPU-cost report; GUI fuzzing on every page found no further crash.
-
-# v3.4.0
 
 - **New modulation sources:** `OSC A / OSC B / OSC C` (the output of an oscillator, usable for cross-modulation of anything) and `LANE` (the automation lane of the active clip).
 - **Clip automation lane:** under the piano roll of the clip sequencer; drag up/down on a step to set a value (-100..+100), right-click resets. Send it anywhere with the LANE chip. Stored with the clip; old presets load unchanged.
@@ -18,6 +16,12 @@
 - **MIDI out:** SETTINGS > MIDI / PLAY > `MIDI OUT` sends the notes made by the arpeggiator and the clip sequencer to the host.
 - **Fix:** Wind noise could blow up after switching the noise type while playing (state is now kept in range).
 - Mod source chips re-arranged (15 per row) to fit the four new sources.
+
+---
+
+# Development history
+
+These builds were numbered 2.x / 3.x during development; the numbering was reset so the current release is **1.0.2**.
 
 ## NyashkSynth v3.3.0
 

@@ -172,7 +172,9 @@ UNDO and REDO (header, or Ctrl+Z / Ctrl+Y) step through your parameter changes, 
 | Undo / redo, spectrum analyser, settings (tuning, MIDI channel, velocity curve) | done |
 | Not done | per-region loop points in Multisample, SFZ round-robin / release samples, per-point modulation of individual filter points |
 
-## What is new in 3.0
+## What is new in 1.0.2
+
+### Sequencing, keys and matrix
 
 - **Arp BANK 1-12** (SEQ page, Pattern mode): twelve pattern slots; click a number to edit another pattern. A dot marks an edited slot.
 - **Clip SWING** slider next to the clip STEP selector.
@@ -180,25 +182,25 @@ UNDO and REDO (header, or Ctrl+Z / Ctrl+Y) step through your parameter changes, 
 - **Matrix rows**: click the row number to bypass the row, `^` / `v` move it up or down, `x` clears it.
 - **COPY / PASTE** buttons in each oscillator header.
 
-## What is new in 3.1
+### Reverb and tuning modes
 
 - **Convolve reverb** (FX page, REVERB, ALGORITHM = Convolve): press LOAD IR and pick a .wav. SIZE shortens the tail, MIX sets the wet level, LOW/HIGH CUT shape it.
 - **Tuning modes**: click the label under the SEMI knob of an oscillator: SEMI -> HARM (harmonic number) -> RATIO (frequency ratio).
 
-## What is new in 3.2
+### Oscillators, clips and packs
 
 - **Multisample oscillator** (`.sfz`): choose *Multisample* in the mode box, press LOAD SFZ and pick an `.sfz` file from the Noises folder. Every key plays the recording whose key range contains it (`lokey`, `hikey`, `key`, `pitch_keycenter`). Up to 48 regions.
 - **Spectral oscillator**: 64 additive partials per wavetable frame. Knobs: POS (frame), TILT (bright/dark), SHIFT (move all partials), EVEN/ODD (balance of even and odd harmonics). Unison is off in this mode.
 - **Clip SYNC**: the clip starts on the host bar instead of when you press the key. **CAPTURE** turns the notes you just played into the selected clip. A white play-head runs over the piano roll.
 - **Preset packs**: `EXPORT PACK` writes all your presets into one `.nypack` file (Packs folder), `IMPORT PACKS` unpacks every pack found there.
 
-## What is new in 3.3
+### LFO grid, HYBRID and FX flow
 
 - **LFO grid and shapes**: in *Custom* LFO mode the GRID pill snaps the drawn curve to a grid and SHAPES inserts a preset curve (sine, triangle, saw, square, stairs, bounce, exp decay, random steps).
 - **HYBRID**: press it in the TOOLS strip, pick another preset and the sound is mixed from both presets (every oscillator, filter, LFO, matrix row and effect comes from one or the other, by chance).
 - **FX signal flow** strip on the FX page shows the effect order of the selected bus and the routing text.
 
-## What is new in 3.4
+### Modulation, MIDI out and fixes
 
 - **New modulation sources**: `OSC A`, `OSC B`, `OSC C` (oscillator output, for cross-modulation), `FILT 1`, `FILT 2` (filter output) and `LANE` (the automation lane of the active clip).
 - **Clip automation lane**: under the piano roll, one value per step (-100 to +100). Drag up / down on a step to set it, right-click resets. Drag the LANE chip onto any knob.
