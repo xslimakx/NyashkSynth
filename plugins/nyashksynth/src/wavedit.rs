@@ -1165,7 +1165,8 @@ impl WavEdit {
                 let k = to_k(pt.x);
                 let frac = ((ar.bottom() - pt.y) / ar.height()).clamp(0.0, 1.0);
                 let amp = if erase { 0.0 } else { frac * frac };
-                let (a, va) = self.last_pt.map(|(a, v)| (a as usize, v)).unwrap_or((k, amp));
+                let top = self.spec.len().saturating_sub(1);
+                let (a, va) = self.last_pt.map(|(a, v)| ((a as usize).min(top), v)).unwrap_or((k, amp));
                 let (lo, hi, vl, vh) = if a <= k { (a, k, va, amp) } else { (k, a, amp, va) };
                 let mut s = self.spec.clone();
                 for kk in lo..=hi {
@@ -1217,7 +1218,8 @@ impl WavEdit {
             if let Some(pt) = resp.interact_pointer_pos() {
                 let k = (((pt.x - pr.left()) / pr.width() * h as f32).floor() as i64 + 1).clamp(1, (h as i64).min(slen - 1).max(1)) as usize;
                 let phv = ((pr.center().y - pt.y) / (pr.height() * 0.5)).clamp(-1.0, 1.0) * PI;
-                let (a, va) = self.last_pt.map(|(a, v)| (a as usize, v)).unwrap_or((k, phv));
+                let top = self.spec.len().saturating_sub(1);
+                let (a, va) = self.last_pt.map(|(a, v)| ((a as usize).min(top), v)).unwrap_or((k, phv));
                 let (lo, hi, vl, vh) = if a <= k { (a, k, va, phv) } else { (k, a, phv, va) };
                 let mut s = self.spec.clone();
                 for kk in lo..=hi {

@@ -24,21 +24,20 @@ A Serum-style wavetable synthesizer in the same black-and-white Nyashk design.
 
 | | |
 |---|---|
-| **Oscillators** | 3 oscillators (A/B/C), each wavetable, **sample** (start / end / loop / ping-pong) or **granular** with a built-in table library, **warp ×2 per oscillator (22 modes)**, unison (up to 16 voices, 4 modes), sub oscillator and noise (with sample loading) |
+| **Oscillators** | 3 oscillators (A/B/C), each **wavetable**, **sample** (start / end / loop / ping-pong), **granular**, **multisample** (load an `.sfz` with key ranges, root keys and velocity layers; edit the region map in the UI) or **spectral** (64 additive partials per frame with tilt, shift and even/odd), with a built-in table library, tuning in **Semi / Harmonic / Ratio / Step** (scale steps), **warp ×2 per oscillator (22 modes)**, unison (up to 16 voices, 4 modes), sub oscillator and noise (with sample loading) |
 | **Wavetable editor** | Draw, edit harmonics (amp/phase), formula generator (`sin(x*tau)*…`), spectral and time ops, **multi-frame editing** (select a range of frames and draw/process them together, with strength, fade, soft edges, vary and drift), frame morphing, undo/redo, import and export of `.wav` tables |
 | **Filter** | **two filters** (series or parallel) with 16 classic types (LP/HP/Band/Notch, Ladder, shelves, combs, phaser, formant) plus **Custom (points)**: up to 8 draggable EQ-style points (bell, shelves, HP/LP, notch, band) placed right on the response graph; routing per source |
 | **Envelopes / LFOs** | 4 envelopes with bendable slopes and invert-legato, 8 LFOs (12 shapes incl. Lorenz/Rössler chaos, drawable curve, delay, one-shot, tempo sync) |
-| **Mod matrix** | 16 slots, drag any source onto any knob, per-slot curve / uni / aux source, live modulation dots on the knobs, **FX parameters are modulatable** |
-| **Sequencing+** | 12 arp pattern banks, clip swing, key lock (scale quantizer), matrix row bypass/reorder, oscillator copy/paste |
-| **Effects** | Hyper/Dimension, Distortion, Flanger, Phaser, Chorus, Delay, Compressor, Reverb, EQ, Filter, **Bode** frequency shifter, **Utility**: reorderable chain, **two FX buses** with series / parallel / low-high / low-mid-high / mid-side routing; Overdrive + DC bias, 4 reverb algorithms, Delay HQ |
+| **Mod matrix** | 16 slots, drag any of **33 sources** (4 envelopes, 8 LFOs, 8 macros, velocity, key, wheel, aftertouch, random, **oscillator A/B/C outputs, filter 1/2 outputs, clip automation lane**) onto any knob; per-slot curve / uni / aux source, row bypass and reorder; **FX bus 1 and bus 2 parameters and the point-filter gain / Q are modulatable** |
+| **Sequencing+** | 12 arp pattern banks, clip swing / sync-to-host / **capture from your playing** / **automation lane**, **MIDI out** of arp and clip notes, key lock (scale quantizer), oscillator copy/paste |
+| **Effects** | Hyper/Dimension, Distortion, Flanger, Phaser, Chorus, Delay, Compressor, Reverb, EQ, Filter, **Bode** frequency shifter, **Utility**: reorderable chain, **two FX buses** with series / parallel / low-high / low-mid-high / mid-side routing; Overdrive + DC bias, reverb algorithms incl. **Convolve** (load your own impulse response), Delay HQ |
 | **Arpeggiator** | 7 patterns + **16-step Pattern editor**, 18 rates incl. triplets/dotted, gate, swing, octaves, hold |
-| **Sequencing** | **Clip sequencer**: 12 clips with piano roll, transposed from the held key |
 | **Browser** | categories, search, favorites, **star ratings and tags** |
 | **Layout** | Serum-style pages: SOUND / MOD / MATRIX / FX / SEQ / SETTINGS |
 | **Workflow** | Undo / redo (Ctrl+Z / Ctrl+Y), SETTINGS tab (A4 / scale tuning, MIDI channel, velocity curve) |
 | **MIDI** | **MIDI learn** on every knob, OCT/SEMI transpose spinners, pitch and mod wheels |
 | **Performance** | Poly / Mono / Legato, glide, sustain pedal, mod wheel, pitch bend, aftertouch, on-screen keyboard, oscilloscope |
-| **Presets** | 68 factory presets in categories, user presets / tables / noises as plain files you can drop into folders. The RANDOM button builds a full new patch (matrix routes, all 4 LFOs, 3 envelopes, macros, FX, arp reset) |
+| **Presets** | 72 factory presets in categories (built into the plugin, can be hidden but not deleted), user presets / tables / noises as plain files you can drop into folders, `.nypack` preset packs (export / import), HYBRID (mix two presets) and RANDOM (a full new patch) |
 
 📖 **[Illustrated manual with annotated screenshots](docs/MANUAL.md)**
 
@@ -46,7 +45,7 @@ A Serum-style wavetable synthesizer in the same black-and-white Nyashk design.
 
 **Drag and drop:** drop a `.wav` onto OSC A / OSC B to load it as a wavetable, onto the SUB/NOISE panel to use it as a noise sample, or drop a `.nyp` file anywhere to load a preset. Dropped files are also copied into your library folders (works on Linux/X11, Windows and macOS hosts that pass file drops to plugins).
 
-User data: `~/.config/NyashkSynth/{Presets,Tables,Noises}` (Windows: `%APPDATA%\NyashkSynth\…`).
+User data: `~/.config/NyashkSynth/{Presets,Tables,Noises,Packs}` (Windows: `%APPDATA%\NyashkSynth\…`, macOS: `~/Library/Application Support/NyashkSynth/…`). The 72 **factory presets are compiled into the plugin**, so they are not files: you cannot delete them, but the preset browser has a **HIDE** button (and **RESTORE**) to remove the ones you do not want from the list. Your own presets are plain `.nyp` files in `Presets/` and can be deleted with the DELETE button or in your file manager.
 
 ### Wavetable editor in short
 

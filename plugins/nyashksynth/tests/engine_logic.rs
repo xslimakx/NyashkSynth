@@ -429,7 +429,7 @@ fn clip_sequencer_plays_pattern_transposed_and_stops() {
     use nyashksynth::clip::{CNote, Clip, ClipP};
     let mut e = engine();
     e.patch.env[0].r_coef = (-1.0f32 / (0.02 * 48000.0 / 4.6)).exp();
-    let clip = Clip { bars: 1, notes: vec![CNote { start: 0, len: 2, pitch: 0, vel: 100 }, CNote { start: 8, len: 2, pitch: 7, vel: 100 }] };
+    let clip = Clip { bars: 1, notes: vec![CNote { start: 0, len: 2, pitch: 0, vel: 100 }, CNote { start: 8, len: 2, pitch: 7, vel: 100 }], lane: vec![] };
     e.patch.clip = ClipP::from_clip(true, 0.25, &clip);
     // 120 bpm: a 1/16 step is 6000 samples; 8 steps = 48000
     e.bpm = 120.0;
@@ -624,4 +624,170 @@ fn convolve_reverb_uses_impulse_response() {
     let peak = (0..n).filter(|i| *i != 100).max_by(|a, b| l[*a].abs().partial_cmp(&l[*b].abs()).unwrap()).unwrap();
     assert!((peak as i32 - echo as i32).abs() <= 4, "echo at {peak}, expected {echo}");
     assert!(l.iter().all(|v| v.is_finite()));
+}
+
+#[test]
+fn multisample_picks_recording_by_key() {
+    use nyashksynth::params::OscMode;
+    use nyashksynth::sample::{MultiS, NSample, Region};
+    use std::sync::Arc;
+    // low region: 200 Hz recorded at note 48 (C3); high region: 800 Hz recorded at note 72 (C5)
+    let tone = |f: f32| -> Arc<NSample> { Arc::new(NSample { name: String::new(), data: (0..44100).map(|i| (std::f32::consts::TAU * f * i as f32 / 44100.0).sin() * 0.8).collect() }) };
+    let multi = Arc::new(MultiS { name: "t".into(), regions: vec![Region { lo: 0, hi: 59, root: 48, lv: 1, hv: 127, smp: tone(130.8128) }, Region { lo: 60, hi: 127, root: 72, lv: 1, hv: 127, smp: tone(523.2511) }] });
+    let run = |note: u8| {
+        let mut e = engine();
+        e.patch.sub_on = false;
+        e.patch.fl[0].on = false;
+        e.patch.osc[1].on = false;
+        e.patch.osc[0].mode = OscMode::Multisample;
+        e.patch.osc[0].multi = Some(multi.clone());
+        e.note_on(note, 1.0);
+        render_vec(&mut e, 48000 * 2)
+    };
+    // note 48 plays region 0 at its original pitch (130.8 Hz); note 72 plays region 1 at 523.25 Hz
+    let lo = run(48);
+    let hi = run(72);
+    let (sl, sh) = (&lo[48000..48000 + 24000], &hi[48000..48000 + 24000]);
+    assert!(goertzel(sl, 130.8128, 48000.0) > goertzel(sl, 523.2511, 48000.0) * 8.0);
+    assert!(goertzel(sh, 523.2511, 48000.0) > goertzel(sh, 130.8128, 48000.0) * 8.0);
+}
+
+#[test]
+fn spectral_oscillator_matches_pitch_and_responds_to_tilt() {
+    use nyashksynth::params::OscMode;
+    let f0 = 110.0f32;
+    let run = |mode: OscMode, tilt: f32, shift: f32| {
+        let mut e = engine();
+        e.patch.sub_on = false;
+        e.patch.fl[0].on = false;
+        e.patch.osc[1].on = false;
+        e.patch.osc[0].tbl = nyashksynth::wavetable::tables().t[2].clone(); // saw sweep
+        e.patch.osc[0].pos = 0.0;
+        e.patch.osc[0].mode = mode;
+        e.patch.osc[0].sp_tilt = tilt;
+        e.patch.osc[0].sp_shift = shift;
+        e.note_on(45, 1.0);
+        render_vec(&mut e, 48000 * 2)
+    };
+    let seg = |v: &Vec<f32>| v[48000..48000 + 24000].to_vec();
+    let wt = seg(&run(OscMode::Wavetable, 0.0, 0.0));
+    let sp = seg(&run(OscMode::Spectral, 0.0, 0.0));
+    let h = |x: &[f32], k: f32| goertzel(x, f0 * k, 48000.0);
+    // same fundamental and a similar harmonic ladder as the wavetable oscillator
+    assert!(h(&sp, 1.0) > h(&sp, 1.5) * 20.0, "no clear fundamental");
+    let ratio = h(&sp, 3.0) / h(&sp, 1.0);
+    let ratio_wt = h(&wt, 3.0) / h(&wt, 1.0);
+    assert!((ratio / ratio_wt - 1.0).abs() < 0.35, "3rd harmonic ratio {ratio} vs wavetable {ratio_wt}");
+    // tilt darker: fewer highs
+    let dark = seg(&run(OscMode::Spectral, -1.0, 0.0));
+    assert!(h(&dark, 8.0) / h(&dark, 1.0) < 0.5 * h(&sp, 8.0) / h(&sp, 1.0), "tilt did not darken");
+    // shift stretches partials: energy moves off the harmonic grid
+    let st = seg(&run(OscMode::Spectral, 0.0, 1.0));
+    assert!(h(&st, 5.0) < h(&sp, 5.0) * 0.5, "shift did not detune the 5th partial");
+    assert!(st.iter().all(|v| v.is_finite() && v.abs() < 4.0));
+}
+
+#[test]
+fn clip_starts_on_the_host_grid_when_synced() {
+    use nyashksynth::clip::{CNote, Clip, ClipP};
+    let mut e = engine();
+    e.patch.env[0].r_coef = (-1.0f32 / (0.02 * 48000.0 / 4.6)).exp();
+    // a note on every 16th step
+    let clip = Clip { bars: 1, notes: (0..16).map(|i| CNote { start: i, len: 1, pitch: 0, vel: 100 }).collect(), lane: vec![] };
+    e.patch.clip = ClipP::from_clip(true, 0.25, &clip);
+    e.patch.clip.sync = true;
+    e.bpm = 120.0;
+    // the host is 0.3 beat past a grid line: the first step must wait 0.2 beat = 4800 samples
+    e.host_beat = Some(1.3);
+    e.note_on(60, 1.0);
+    let v = render_vec(&mut e, 12000);
+    assert!(rms(&v[0..4000]) < 0.002, "clip started before the host grid: {}", rms(&v[0..4000]));
+    assert!(rms(&v[4900..7000]) > 0.01, "clip did not start at the grid");
+    // play-head: step 6 (1.5 beat / 0.25) is the first one played, so the position is 1-based 7 at the start
+    assert!(e.clip_pos >= 7, "play-head {}", e.clip_pos);
+}
+
+#[test]
+fn clip_lane_and_osc_output_are_mod_sources() {
+    use nyashksynth::clip::{CNote, Clip, ClipP};
+    use nyashksynth::params::ModSrc;
+    let mut e = engine();
+    let mut lane = vec![0i8; 16];
+    lane[0] = 100;
+    lane[1] = -50;
+    let clip = Clip { bars: 1, notes: vec![CNote { start: 0, len: 4, pitch: 0, vel: 100 }], lane };
+    e.patch.clip = ClipP::from_clip(true, 0.25, &clip);
+    e.bpm = 120.0;
+    e.note_on(60, 1.0);
+    render_vec(&mut e, 3000); // inside step 0
+    let a = e.live_sources();
+    assert!(a[ModSrc::ClipLane as usize] > 0.8, "lane step 0 should read ~+1: {}", a[ModSrc::ClipLane as usize]);
+    assert!(a[ModSrc::OscA as usize].abs() > 0.001, "osc A output should be live");
+    render_vec(&mut e, 6000); // step 1
+    let b = e.live_sources();
+    assert!(b[ModSrc::ClipLane as usize] < -0.3, "lane step 1 should read ~-0.5: {}", b[ModSrc::ClipLane as usize]);
+}
+
+#[test]
+fn clip_notes_are_reported_for_midi_out() {
+    use nyashksynth::clip::{CNote, Clip, ClipP};
+    let mut e = engine();
+    e.midi_out = true;
+    let clip = Clip { bars: 1, notes: vec![CNote { start: 0, len: 2, pitch: 0, vel: 100 }, CNote { start: 4, len: 2, pitch: 7, vel: 100 }], lane: vec![] };
+    e.patch.clip = ClipP::from_clip(true, 0.25, &clip);
+    e.bpm = 120.0;
+    e.note_on(60, 1.0);
+    let mut ons = vec![];
+    let mut offs = 0;
+    for _ in 0..40 {
+        render_vec(&mut e, 1024);
+        for (_, on, n, _) in e.out_ev.drain(..) {
+            if on { ons.push(n) } else { offs += 1 }
+        }
+    }
+    assert!(ons.starts_with(&[60, 67]), "clip notes should be reported: {:?}", ons);
+    assert!(offs >= 2);
+}
+
+#[test]
+fn step_tuning_moves_along_the_scale() {
+    use nyashksynth::params::ScaleType;
+    assert_eq!(ScaleType::Major.step_offset(60, 0, 2), 4); // C -> E
+    assert_eq!(ScaleType::Major.step_offset(60, 0, 7), 12); // a full octave
+    assert_eq!(ScaleType::Major.step_offset(62, 0, -1), -2); // D -> C
+    assert_eq!(ScaleType::Minor.step_offset(60, 0, 2), 3); // C -> Eb
+}
+
+#[test]
+fn fx_bus2_and_point_filter_destinations_work() {
+    use nyashksynth::engine::SlotP;
+    use nyashksynth::params::{ModDst, ModSrc};
+    let mut e = engine();
+    e.patch.macros[0] = 0.5;
+    e.patch.slots[0] = SlotP { src: ModSrc::Macro1, dst: ModDst::Fx2ReverbMix, amount: 1.0, aux: ModSrc::None, curve: 0.0, uni: false };
+    assert!(e.fx_mod().is_none(), "bus 1 must not react to a bus 2 route");
+    let m = e.fx_mod2().expect("bus 2 route");
+    assert!((m[8] - 0.5).abs() < 1e-4, "reverb mix slot: {:?}", m);
+    assert_eq!(ModDst::FxReverbMix.bus2(), ModDst::Fx2ReverbMix);
+    // point filter gain modulation changes the sound
+    use nyashksynth::params::FilterType;
+    let level = |amt: f32| -> f32 {
+        let mut e = engine();
+        e.patch.fl[0].on = true;
+        e.patch.fl[0].ty = FilterType::Custom;
+        for b in e.patch.fl[0].cb.iter_mut() {
+            b.on = false;
+        }
+        e.patch.fl[0].cb[0].on = true;
+        e.patch.fl[0].cb[0].gain = 0.0;
+        e.patch.fl[0].cb[0].freq = 500.0;
+        e.patch.macros[0] = 1.0;
+        e.patch.slots[0] = SlotP { src: ModSrc::Macro1, dst: ModDst::F1PtGain, amount: amt, aux: ModSrc::None, curve: 0.0, uni: false };
+        e.note_on(48, 1.0);
+        let v = render_vec(&mut e, 24000);
+        rms(&v[12000..])
+    };
+    let (flat, boosted, cut) = (level(0.0), level(0.5), level(-0.5));
+    assert!(boosted > flat * 1.05, "gain mod should boost: {flat} -> {boosted}");
+    assert!(cut < flat * 0.97, "negative gain mod should cut: {flat} -> {cut}");
 }

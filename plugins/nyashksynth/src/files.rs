@@ -17,6 +17,9 @@ pub fn base_dir() -> Option<PathBuf> {
 pub fn presets_dir() -> Option<PathBuf> {
     base_dir().map(|b| b.join("Presets"))
 }
+pub fn packs_dir() -> Option<PathBuf> {
+    base_dir().map(|b| b.join("Packs"))
+}
 pub fn tables_dir() -> Option<PathBuf> {
     base_dir().map(|b| b.join("Tables"))
 }

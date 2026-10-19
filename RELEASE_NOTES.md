@@ -1,3 +1,37 @@
+# v3.5.0
+
+- **Step tuning mode** for oscillators (click the label under SEMI): moves by steps of the KEY LOCK scale.
+- **More modulation sources:** `FILT 1` and `FILT 2` (filter outputs).
+- **More modulation destinations:** all 12 FX knobs of **bus 2**, and the gain / Q of both point filters.
+- **DC blocker** in the engine (5 Hz): pulse waves and distortion no longer leave an offset (Square Pulse Lead had 4 % DC).
+- **Fix:** the harmonic editor of the wavetable editor could crash when a drag continued after switching zoom or between the amplitude and phase panes.
+- **Factory presets:** HIDE / RESTORE buttons in the preset browser (they are built into the plugin, so they cannot be deleted).
+- **Docs:** README and MANUAL brought up to date (status table, new sections for 3.2 - 3.5, all annotated screenshots re-made, "where are the presets" table).
+- **Tests:** new audit that plays all 72 factory presets through engine and effects (NaN, DC, silence, level, tails) and a CPU-cost report; GUI fuzzing on every page found no further crash.
+
+# v3.4.0
+
+- **New modulation sources:** `OSC A / OSC B / OSC C` (the output of an oscillator, usable for cross-modulation of anything) and `LANE` (the automation lane of the active clip).
+- **Clip automation lane:** under the piano roll of the clip sequencer; drag up/down on a step to set a value (-100..+100), right-click resets. Send it anywhere with the LANE chip. Stored with the clip; old presets load unchanged.
+- **Multisample velocity layers:** `lovel` / `hivel` of `.sfz` files are read; the region is chosen by key *and* velocity.
+- **Region mapping editor:** click a bar in the Multisample display, then edit its key range, root note and velocity range. Changes are heard immediately and saved with the preset.
+- **MIDI out:** SETTINGS > MIDI / PLAY > `MIDI OUT` sends the notes made by the arpeggiator and the clip sequencer to the host.
+- **Fix:** Wind noise could blow up after switching the noise type while playing (state is now kept in range).
+- Mod source chips re-arranged (15 per row) to fit the four new sources.
+
+## NyashkSynth v3.3.0
+
+- **Spectral oscillator**: oscillator mode list (WT / SMP / GRN / MS / Spectral) is now a drop-down. Spectral resynthesises the wavetable frame from its first 64 partials with TILT (darker / brighter), SHIFT (stretch partials: harmonic -> bell-like) and EVEN/ODD balance. One voice per note (no unison).
+- **Clip sequencer**: play-head moves over the piano roll; CAPTURE turns the notes you just played into the clip (quantised to 1/16, first note = key); SYNC starts the clip on the host's step grid.
+- **FX page**: SIGNAL FLOW strip shows the chain order of the selected bus, which modules are on, and how the routing ends.
+- **Preset packs**: EXPORT PACK bundles all your presets into one .nypack file, IMPORT PACKS unpacks every .nypack from the Packs folder (nothing is overwritten).
+
+## NyashkSynth v3.2.0
+
+- **Multisample oscillator (MS)**: LOAD SFZ opens .sfz instruments from the Noises folder; every key plays the recording of its own range (key ranges, root keys, shared .wav files). Saved with presets and projects.
+- **LFO draw grid and shapes**: in Custom LFO mode, GRID (4 / 8 / 16 / 32 steps) turns drawing into a step sequencer, SHAPES > fills the drawing with a ready-made shape (sine, triangle, saws, square, pulse, stairs, bounce, exp decay, random steps).
+- **HYBRID** button (SOUND page, tools): mixes the current sound with a random preset, section by section (oscillators, filters, envelopes, LFOs, matrix rows, effects).
+
 ## NyashkSynth v3.1.0
 
 - **Convolve reverb**: choose "Convolve" in the REVERB algorithm list and load any .wav as an impulse response (room, hall, cabinet, anything). Partitioned FFT convolution, up to ~1.4 s of IR; SIZE trims the tail. The IR is saved with presets and projects.

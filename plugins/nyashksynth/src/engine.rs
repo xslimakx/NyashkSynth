@@ -6,6 +6,7 @@ use crate::clip::{ClipP, MAX_STEPS};
 use crate::fx::BqCoef;
 use crate::params::*;
 use crate::sample::{LfoCurve, NSample};
+use crate::wavetable::SH;
 use crate::shared::Shared;
 use crate::wavetable::{tables, Table};
 use nih_plug::prelude::Enum;
@@ -14,7 +15,7 @@ use std::sync::Arc;
 
 pub const VOICES: usize = 16;
 const K: usize = 16; // control-rate block
-const DSTS: usize = 48;
+const DSTS: usize = 64;
 const MAX_UNI: usize = 16;
 
 // ---------------------------------------------------------------- patch snapshot
@@ -49,10 +50,14 @@ pub struct OscP {
     pub s_loop: SampleLoop,
     pub s_xfade: f32,
     pub s_root: f32,
+    pub sp_tilt: f32,
+    pub sp_shift: f32,
+    pub sp_eo: f32,
     pub g_size: f32,
     pub g_dens: f32,
     pub g_spray: f32,
     pub sample: Option<Arc<NSample>>,
+    pub multi: Option<Arc<crate::sample::MultiS>>,
 }
 
 #[derive(Clone, Copy)]
@@ -145,15 +150,22 @@ pub struct CbP {
 
 /// Biquad of one custom-filter point (`shift` = frequency ratio from modulation / key tracking).
 pub fn cband_coef(b: &CbP, shift: f32, fs: f32) -> BqCoef {
+    cband_coef_m(b, shift, 0.0, 1.0, fs)
+}
+
+/// Point-filter band with modulation: frequency shift (ratio), gain offset (dB) and Q multiplier.
+pub fn cband_coef_m(b: &CbP, shift: f32, dgain: f32, qmul: f32, fs: f32) -> BqCoef {
     let f = (b.freq * shift).clamp(20.0, 0.45 * fs);
+    let g = (b.gain + dgain).clamp(-30.0, 30.0);
+    let q = (b.q * qmul).clamp(0.1, 30.0);
     match b.kind {
-        BandKind::Bell => BqCoef::peaking(f, b.q, b.gain, fs),
-        BandKind::LowShelf => BqCoef::low_shelf(f, b.gain, fs),
-        BandKind::HighShelf => BqCoef::high_shelf(f, b.gain, fs),
-        BandKind::HighPass => BqCoef::highpass(f, b.q.max(0.3) * 0.7071, fs),
-        BandKind::LowPass => BqCoef::lowpass(f, b.q.max(0.3) * 0.7071, fs),
-        BandKind::Notch => BqCoef::notch(f, b.q, fs),
-        BandKind::BandPass => BqCoef::bandpass(f, b.q, fs),
+        BandKind::Bell => BqCoef::peaking(f, q, g, fs),
+        BandKind::LowShelf => BqCoef::low_shelf(f, g, fs),
+        BandKind::HighShelf => BqCoef::high_shelf(f, g, fs),
+        BandKind::HighPass => BqCoef::highpass(f, q.max(0.3) * 0.7071, fs),
+        BandKind::LowPass => BqCoef::lowpass(f, q.max(0.3) * 0.7071, fs),
+        BandKind::Notch => BqCoef::notch(f, q, fs),
+        BandKind::BandPass => BqCoef::bandpass(f, q, fs),
     }
 }
 
@@ -188,13 +200,15 @@ pub struct Patch {
     pub bend: f32,
     pub poly: usize,
     pub tune: f32,
+    pub scale: crate::params::ScaleType,
+    pub scale_root: i32,
     pub a4: f32,
     pub tun: [f32; 12],
     pub tun_root: i32,
     pub vel_curve: f32,
 }
 
-fn osc_read(o: &OscParams, tbl: Arc<Table>, sample: Option<Arc<NSample>>) -> OscP {
+fn osc_read(o: &OscParams, tbl: Arc<Table>, sample: Option<Arc<NSample>>, multi: Option<Arc<crate::sample::MultiS>>) -> OscP {
     OscP {
         mode: o.mode.value(),
         s_start: o.s_start.value(),
@@ -202,10 +216,14 @@ fn osc_read(o: &OscParams, tbl: Arc<Table>, sample: Option<Arc<NSample>>) -> Osc
         s_loop: o.s_loop.value(),
         s_xfade: o.s_xfade.value(),
         s_root: o.s_root.value() as f32,
+        sp_tilt: o.sp_tilt.value(),
+        sp_shift: o.sp_shift.value(),
+        sp_eo: o.sp_eo.value(),
         g_size: o.g_size.value(),
         g_dens: o.g_dens.value(),
         g_spray: o.g_spray.value(),
         sample,
+        multi,
         on: o.on.value(),
         tbl,
         pos: o.pos.value(),
@@ -268,6 +286,13 @@ impl Patch {
                 None => None,
             }
         };
+        let pick_m = |o: usize| -> Option<Arc<crate::sample::MultiS>> {
+            match shared.map(|s| s.ms[o].try_get()) {
+                Some(Some(x)) => x,
+                Some(None) => prev.and_then(|pp| pp.osc[o].multi.clone()),
+                None => None,
+            }
+        };
         let sample = match shared.map(|s| s.noise.try_get()) {
             Some(Some(x)) => x,
             Some(None) => prev.and_then(|pp| pp.sample.clone()),
@@ -279,7 +304,7 @@ impl Patch {
             None => None,
         });
         Patch {
-            osc: [osc_read(&p.a, pick(0, p.a.table.value().to_index()), pick_s(0)), osc_read(&p.b, pick(1, p.b.table.value().to_index()), pick_s(1)), osc_read(&p.c, pick(2, p.c.table.value().to_index()), pick_s(2))],
+            osc: [osc_read(&p.a, pick(0, p.a.table.value().to_index()), pick_s(0), pick_m(0)), osc_read(&p.b, pick(1, p.b.table.value().to_index()), pick_s(1), pick_m(1)), osc_read(&p.c, pick(2, p.c.table.value().to_index()), pick_s(2), pick_m(2))],
             sub_on: p.sub_on.value(),
             sub_wave: p.sub_wave.value(),
             sub_oct: p.sub_oct.value(),
@@ -306,12 +331,14 @@ impl Patch {
                     Ok(g) => {
                         let mut c = crate::clip::ClipP::from_clip(p.clip_on.value(), p.clip_div.value().beats(), &crate::clip::Clip::decode(g.split('#').nth(sel).unwrap_or("")));
                         c.swing = p.clip_swing.value();
+                        c.sync = p.clip_sync.value();
                         c
                     }
                     Err(_) => {
                         let mut c = prev.map(|pp| pp.clip).unwrap_or_default();
                         c.on = p.clip_on.value();
                         c.swing = p.clip_swing.value();
+                        c.sync = p.clip_sync.value();
                         c
                     }
                 }
@@ -329,6 +356,8 @@ impl Patch {
             bend: p.bend.value() as f32,
             poly: p.poly.value().clamp(1, VOICES as i32) as usize,
             tune: p.tune.value(),
+            scale: p.key_scale.value(),
+            scale_root: p.key_root.value(),
             a4: p.a4.value(),
             tun: p.tuning.value().cents(),
             tun_root: p.tun_root.value(),
@@ -750,10 +779,14 @@ struct Voice {
     grains: [[Grain; GN]; 3],
     gtimer: [f32; 3],
     sdir: [[f32; MAX_UNI]; 3],
+    sph: [[f32; SH]; 3],
+    msel: [Option<Arc<NSample>>; 3],
+    mroot: [f32; 3],
     sub_ph: f32,
     rnd: u32,
     rnd_val: f32,
     prev: [f32; 3],
+    fprev: [f32; 2],
     nz: [f32; 10],
     nph: f32,
     nplaying: bool,
@@ -783,10 +816,14 @@ impl Voice {
             grains: [[Grain::default(); GN]; 3],
             gtimer: [0.0; 3],
             sdir: [[1.0; MAX_UNI]; 3],
+            sph: [[0.0; SH]; 3],
+            msel: [None, None, None],
+            mroot: [0.0; 3],
             sub_ph: 0.0,
             rnd: 1,
             rnd_val: 0.0,
             prev: [0.0; 3],
+            fprev: [0.0; 2],
             dc: [0.0; 2],
             last: [0.0; 2],
             fade: 1.0,
@@ -809,6 +846,7 @@ struct Ctx {
     bpm: f32,
     glide_coef: f32,
     tune: f32,
+    lane: f32,
 }
 
 fn midi_freq(p: &Patch, n: f32) -> f32 {
@@ -840,6 +878,11 @@ struct OscRun {
     warp2: f32,
     smp: bool,
     grn: bool,
+    spec: bool,
+    kn: usize,
+    sa: [f32; SH],
+    sb: [f32; SH],
+    sdk: [f32; SH],
     g_len: f32,
     g_rate: f32,
     g_spray: f32,
@@ -857,7 +900,7 @@ struct OscRun {
 
 impl OscRun {
     fn off() -> Self {
-        Self { on: false, mip: 0, pos: 0.0, f0: 0, ff: 0.0, wmode: WarpMode::Off, warp: 0.0, wmode2: WarpMode::Off, warp2: 0.0, smp: false, grn: false, g_len: 1.0, g_rate: 0.0, g_spray: 0.0, g_pos: 0.0, g_norm: 1.0, s0: 0.0, s1: 1.0, sloop: SampleLoop::Loop, sxf: 0.0, n: 1, inc: [0.0; MAX_UNI], gl: [0.0; MAX_UNI], gr: [0.0; MAX_UNI] }
+        Self { on: false, mip: 0, pos: 0.0, f0: 0, ff: 0.0, wmode: WarpMode::Off, warp: 0.0, wmode2: WarpMode::Off, warp2: 0.0, smp: false, grn: false, spec: false, kn: 0, sa: [0.0; SH], sb: [0.0; SH], sdk: [0.0; SH], g_len: 1.0, g_rate: 0.0, g_spray: 0.0, g_pos: 0.0, g_norm: 1.0, s0: 0.0, s1: 1.0, sloop: SampleLoop::Loop, sxf: 0.0, n: 1, inc: [0.0; MAX_UNI], gl: [0.0; MAX_UNI], gr: [0.0; MAX_UNI] }
     }
 }
 
@@ -1098,7 +1141,7 @@ fn run_filter(f: &Fc, st: &mut Fst, ch: usize, x: f32) -> f32 {
 
 /// Bipolar sources are mapped to 0..1 when a slot is unipolar or used as scaler.
 pub fn src_bipolar(s: ModSrc) -> bool {
-    matches!(s, ModSrc::Lfo1 | ModSrc::Lfo2 | ModSrc::Lfo3 | ModSrc::Lfo4 | ModSrc::Lfo5 | ModSrc::Lfo6 | ModSrc::Lfo7 | ModSrc::Lfo8 | ModSrc::Random | ModSrc::Key | ModSrc::Bend)
+    matches!(s, ModSrc::Lfo1 | ModSrc::Lfo2 | ModSrc::Lfo3 | ModSrc::Lfo4 | ModSrc::Lfo5 | ModSrc::Lfo6 | ModSrc::Lfo7 | ModSrc::Lfo8 | ModSrc::Random | ModSrc::Key | ModSrc::Bend | ModSrc::OscA | ModSrc::OscB | ModSrc::OscC | ModSrc::ClipLane | ModSrc::Filt1 | ModSrc::Filt2)
 }
 
 /// Value of one matrix slot (curve, polarity, amount and aux scaling applied).
@@ -1206,6 +1249,12 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
             ModSrc::Macro4 => p.macros[3],
             ModSrc::Env1 => v.env[0].out,
             ModSrc::Bend => (c.bend / p.bend.max(1.0)).clamp(-1.0, 1.0),
+            ModSrc::OscA => v.prev[0].clamp(-1.0, 1.0),
+            ModSrc::OscB => v.prev[1].clamp(-1.0, 1.0),
+            ModSrc::OscC => v.prev[2].clamp(-1.0, 1.0),
+            ModSrc::ClipLane => c.lane,
+            ModSrc::Filt1 => v.fprev[0].clamp(-1.0, 1.0),
+            ModSrc::Filt2 => v.fprev[1].clamp(-1.0, 1.0),
         }
     };
     let mut md = [0.0f32; DSTS];
@@ -1227,12 +1276,13 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
             crate::params::OscTune::Semitone => op.semi as f32,
             crate::params::OscTune::Harmonic => 12.0 * (op.harm.max(1) as f32).log2(),
             crate::params::OscTune::Ratio => 12.0 * op.ratio.max(0.01).log2(),
+            crate::params::OscTune::Step => p.scale.step_offset(v.note, p.scale_root, op.semi) as f32,
         };
         let semis = (op.oct * 12) as f32 + tune_st + op.fine * 0.01 + md[pit_i] * 24.0 + c.bend;
         let base = v.freq * c.tune * 2f32.powf(semis / 12.0);
         let r = &mut run[o];
         r.on = true;
-        let smp_len = if op.mode != OscMode::Wavetable { op.sample.as_ref().map_or(0, |x| x.data.len()) } else { 0 };
+        let smp_len = if op.mode == OscMode::Multisample { v.msel[o].as_ref().map_or(0, |x| x.data.len()) } else if op.mode == OscMode::Sample || op.mode == OscMode::Granular { op.sample.as_ref().map_or(0, |x| x.data.len()) } else { 0 };
         if op.mode == OscMode::Granular && smp_len >= 16 {
             r.grn = true;
             let len = smp_len as f32;
@@ -1244,7 +1294,7 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
             let overlap = (dens * r.g_len / fs).max(1.0);
             r.g_norm = 1.0 / overlap.sqrt();
             r.n = 1;
-        } else if op.mode != OscMode::Wavetable {
+        } else if op.mode == OscMode::Sample || op.mode == OscMode::Multisample {
             if smp_len < 16 {
                 r.on = false;
                 continue;
@@ -1266,7 +1316,8 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
         r.warp = (op.warp + md[wrp_i]).clamp(0.0, 1.0);
         r.wmode2 = op.wmode2;
         r.warp2 = (op.warp2 + md[[23, 24, 43][o]]).clamp(0.0, 1.0);
-        let n = op.uni;
+        let spectral = op.mode == OscMode::Spectral;
+        let n = if spectral { 1 } else { op.uni };
         r.n = n;
         let det = (op.detune + md[12]).clamp(0.0, 1.0);
         let cents_max = det.powf(1.5) * 100.0;
@@ -1284,7 +1335,7 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
                 f = base * 2f32.powf((STACK_ST[j % 16] + off * cents_max / 100.0) / 12.0);
             }
             fmax = fmax.max(f);
-            r.inc[j] = if r.smp || r.grn { (f / 261.6256 * 2f32.powf(-op.s_root / 12.0) * crate::sample::SAMPLE_RATE as f32 / fs).clamp(0.0, 16.0) } else { (f / fs).clamp(0.0, 0.49) };
+            r.inc[j] = if r.smp || r.grn { (f / 261.6256 * 2f32.powf(-(op.s_root + v.mroot[o]) / 12.0) * crate::sample::SAMPLE_RATE as f32 / fs).clamp(0.0, 16.0) } else { (f / fs).clamp(0.0, 0.49) };
             let lin = if n == 1 { 0.0 } else { j as f32 / (n - 1) as f32 * 2.0 - 1.0 };
             let w = 1.0 - (1.0 - blend) * 0.75 * lin.abs();
             ws[j] = w;
@@ -1300,7 +1351,45 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
             r.gl[j] *= g;
             r.gr[j] *= g;
         }
-        if !r.smp && !r.grn {
+        if spectral {
+            r.spec = true;
+            let (mut a, mut b) = ([0.0f32; SH], [0.0f32; SH]);
+            op.tbl.spectral_at(r.f0, r.ff, &mut a, &mut b);
+            let inc0 = r.inc[0];
+            let tilt = op.sp_tilt.clamp(-1.0, 1.0);
+            let shift = op.sp_shift.clamp(0.0, 1.0);
+            let eo = op.sp_eo.clamp(-1.0, 1.0);
+            let (mut p0, mut p1) = (0.0f32, 0.0f32);
+            let mut kn = 0usize;
+            for k in 0..SH {
+                let kf = (k + 1) as f32;
+                let keff = kf * (1.0 + shift * 0.03 * (kf - 1.0));
+                let dk = inc0 * keff;
+                p0 += a[k] * a[k] + b[k] * b[k];
+                if dk >= 0.45 {
+                    r.sa[k] = 0.0;
+                    r.sb[k] = 0.0;
+                    r.sdk[k] = dk;
+                    continue;
+                }
+                let odd = k % 2 == 0;
+                let g = kf.powf(tilt * 1.2) * if odd { 1.0 + eo.min(0.0) } else { 1.0 - eo.max(0.0) };
+                let g = g.max(0.0);
+                r.sa[k] = a[k] * g;
+                r.sb[k] = b[k] * g;
+                r.sdk[k] = dk;
+                p1 += r.sa[k] * r.sa[k] + r.sb[k] * r.sb[k];
+                kn = k + 1;
+            }
+            r.kn = kn;
+            // keep the loudness when the spectrum is reshaped
+            let gain = if p1 > 1e-12 { (p0 / p1).sqrt().clamp(0.0, 8.0) } else { 0.0 };
+            for k in 0..kn {
+                r.sa[k] *= gain;
+                r.sb[k] *= gain;
+            }
+        }
+        if !r.smp && !r.grn && !r.spec {
             r.mip = op.tbl.mip_for(fmax * warp_bandwidth(r.wmode, r.warp) * warp_bandwidth(r.wmode2, r.warp2), fs);
         }
     }
@@ -1325,8 +1414,10 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
         let fc = (fp.cutoff * shift).clamp(20.0, (0.45 * fs).min(20000.0));
         let mut co = filter_coefs(fp.ty, fc, res, fs, comb_len);
         if fp.ty == FilterType::Custom {
+            let (i_pg, i_pq) = if fi == 0 { (60, 61) } else { (62, 63) };
+            let (dg, qm) = (md[i_pg] * 24.0, 2f32.powf(md[i_pq] * 3.0));
             for b in fp.cb.iter().filter(|b| b.on) {
-                co.cc[co.cn] = cband_coef(b, shift, fs);
+                co.cc[co.cn] = cband_coef_m(b, shift, dg, qm, fs);
                 co.cn += 1;
             }
         }
@@ -1345,6 +1436,25 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
         0.0
     };
 
+    // spectral oscillators: one rotating phasor per partial, re-seeded from exact phases every block
+    let mut rc = [[0.0f32; SH]; 3];
+    let mut rs_ = [[0.0f32; SH]; 3];
+    let mut cc = [[0.0f32; SH]; 3];
+    let mut cs = [[0.0f32; SH]; 3];
+    for o in 0..3 {
+        let r = &run[o];
+        if r.on && r.spec {
+            for k in 0..r.kn {
+                let (sn, cn) = (std::f32::consts::TAU * v.sph[o][k]).sin_cos();
+                cs[o][k] = sn;
+                cc[o][k] = cn;
+                let (sd, cd) = (std::f32::consts::TAU * r.sdk[k]).sin_cos();
+                rs_[o][k] = sd;
+                rc[o][k] = cd;
+                v.sph[o][k] = (v.sph[o][k] + m as f32 * r.sdk[k]).fract();
+            }
+        }
+    }
     for s in 0..m {
         // oscillators
         let mut sig = [[0.0f32; 2]; 3]; // [osc][ch]
@@ -1353,8 +1463,24 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
             if !r.on {
                 continue;
             }
+            if r.spec {
+                let mut x = 0.0f32;
+                for k in 0..r.kn {
+                    let (c, sn) = (cc[o][k], cs[o][k]);
+                    x += r.sa[k] * c + r.sb[k] * sn;
+                    cc[o][k] = c * rc[o][k] - sn * rs_[o][k];
+                    cs[o][k] = sn * rc[o][k] + c * rs_[o][k];
+                }
+                v.ph[o][0] = (v.ph[o][0] + r.inc[0]).fract();
+                sig[o] = [x * r.gl[0], x * r.gr[0]];
+                continue;
+            }
             if r.grn {
-                let data = &p.osc[o].sample.as_ref().unwrap().data;
+                let hold = v.msel[o].clone();
+                let data = match &hold {
+                    Some(a) if p.osc[o].mode == OscMode::Multisample => &a.data,
+                    _ => &p.osc[o].sample.as_ref().unwrap().data,
+                };
                 let n = data.len() as f32;
                 v.gtimer[o] += r.g_rate;
                 while v.gtimer[o] >= 1.0 {
@@ -1396,7 +1522,11 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
                 continue;
             }
             if r.smp {
-                let data = &p.osc[o].sample.as_ref().unwrap().data;
+                let hold = v.msel[o].clone();
+                let data = match &hold {
+                    Some(a) if p.osc[o].mode == OscMode::Multisample => &a.data,
+                    _ => &p.osc[o].sample.as_ref().unwrap().data,
+                };
                 let (mut l, mut rr) = (0.0, 0.0);
                 for j in 0..r.n {
                     let mut pos = v.sp[o][j];
@@ -1550,9 +1680,12 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
                     if v.rnd & 0xFFF == 0 {
                         v.nz[9] = hash01(v.rnd >> 5);
                     }
-                    v.nz[8] += 0.0004 * (v.nz[9] - v.nz[8]);
-                    v.nz[3] = (v.nz[3] + 0.02 * w) / 1.02;
+                    // state may be left over from another noise type after a live switch: keep it in range
+                    v.nz[9] = v.nz[9].clamp(0.0, 1.0);
+                    v.nz[8] = (v.nz[8] + 0.0004 * (v.nz[9] - v.nz[8])).clamp(0.0, 1.0);
+                    v.nz[3] = ((v.nz[3] + 0.02 * w) / 1.02).clamp(-4.0, 4.0);
                     v.nz[4] += (0.01 + 0.08 * v.nz[8]) * (v.nz[3] * 6.0 - v.nz[4]);
+                    v.nz[4] = v.nz[4].clamp(-30.0, 30.0);
                     v.nz[4] * (0.5 + 1.5 * v.nz[8])
                 }
                 NoiseType::Digital => {
@@ -1615,6 +1748,7 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
         let mut f = [0.0f32; 2];
         for fi in 0..2 {
             let Some(fr) = &fcs[fi] else { continue };
+            let mut facc = 0.0f32;
             for ch in 0..2 {
                 let x0 = if fi == 1 && p.fl_serial && fcs[0].is_some() { f[ch] } else { ro[fi][ch] };
                 let x = x0 * (1.0 - fr.drive) + fr.drive * (fr.gd * x0).tanh() / fr.dcomp;
@@ -1624,12 +1758,14 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
                     y = 0.0;
                 }
                 let out = y * fr.mix + x0 * (1.0 - fr.mix);
+                facc += out * 0.5;
                 if fi == 1 && p.fl_serial && fcs[0].is_some() {
                     f[ch] = out;
                 } else {
                     f[ch] += out;
                 }
             }
+            v.fprev[fi] = facc;
             v.fl[fi].cw += 1;
             if v.fl[fi].cw >= comb_len {
                 v.fl[fi].cw = 0;
@@ -1680,6 +1816,18 @@ pub struct Engine {
     last_note: u8,
     last_vel: f32,
     pub bpm: f32,
+    /// host transport position in beats at the current event (if the host tells)
+    pub host_beat: Option<f64>,
+    /// 1-based step the clip sequencer is on (0 = idle), for the play-head
+    pub clip_pos: usize,
+    clip_lane_t: f32,
+    clip_lane_s: f32,
+    /// MIDI out: arp/clip notes as (offset in the current segment, on, note, velocity)
+    pub midi_out: bool,
+    dc_x: [f32; 2],
+    dc_y: [f32; 2],
+    pub out_ev: Vec<(u32, bool, u8, f32)>,
+    seg_off: usize,
     counter: u64,
     rng: u32,
     arp: Arp,
@@ -1711,6 +1859,15 @@ impl Engine {
             last_note: 60,
             last_vel: 0.8,
             bpm: 120.0,
+            host_beat: None,
+            clip_pos: 0,
+            clip_lane_t: 0.0,
+            midi_out: false,
+            dc_x: [0.0; 2],
+            dc_y: [0.0; 2],
+            out_ev: Vec::with_capacity(512),
+            seg_off: 0,
+            clip_lane_s: 0.0,
             counter: 0,
             rng: 0x1234_5678,
             arp: Arp::new(),
@@ -1832,12 +1989,30 @@ impl Engine {
         v.rnd = ((r1 * 4_000_000_000.0) as u32) | 1;
         v.rnd_val = r2 * 2.0 - 1.0;
         for o in 0..3 {
+            // multisample: choose the recording for this key
+            match (&patch.osc[o].multi, patch.osc[o].mode) {
+                (Some(m), OscMode::Multisample) => {
+                    if let Some(rg) = m.pick(note, (vel * 127.0).round() as u8) {
+                        v.msel[o] = Some(rg.smp.clone());
+                        v.mroot[o] = rg.root as f32 - 60.0;
+                    }
+                }
+                _ => v.msel[o] = None,
+            }
             for j in 0..MAX_UNI {
                 v.ph[o][j] = (patch.osc[o].phase + patch.osc[o].rand * phases[o * MAX_UNI + j]).fract();
                 v.sdir[o][j] = 1.0;
+                if j == 0 {
+                    for k in 0..SH {
+                        v.sph[o][k] = ((k + 1) as f32 * v.ph[o][0]).fract();
+                    }
+                }
                 v.sp[o][j] = match (&patch.osc[o].sample, patch.osc[o].mode) {
                     (Some(sm), OscMode::Sample) => sm.data.len() as f32 * patch.osc[o].s_start,
-                    _ => 0.0,
+                    _ => match (&v.msel[o], patch.osc[o].mode) {
+                        (Some(sm), OscMode::Multisample) => sm.data.len() as f32 * patch.osc[o].s_start,
+                        _ => 0.0,
+                    },
                 };
             }
         }
@@ -1880,8 +2055,20 @@ impl Engine {
             self.clip_held.retain(|(n, _)| *n != note);
             self.clip_held.push((note, vel));
             if self.clip_timer.is_infinite() {
-                self.clip_timer = 0.0;
-                self.clip_step = 0;
+                let c = self.patch.clip;
+                match self.host_beat {
+                    Some(hb) if c.sync && hb.is_finite() => {
+                        // start on the host's step grid, so the clip lines up with the song
+                        let cb = (c.beats as f64).max(1e-3);
+                        let k = (hb / cb - 1e-6).ceil().max(0.0);
+                        self.clip_timer = (k * cb - hb).max(0.0) * 60.0 / (self.bpm.max(20.0) as f64) * self.fs as f64;
+                        self.clip_step = k as usize;
+                    }
+                    _ => {
+                        self.clip_timer = 0.0;
+                        self.clip_step = 0;
+                    }
+                }
             }
         } else if self.patch.arp.on {
             let hold = self.patch.arp.hold;
@@ -1921,6 +2108,21 @@ impl Engine {
         } else {
             self.voice_note_off(note);
         }
+    }
+
+    /// Note produced by the arpeggiator / clip sequencer: also reported for MIDI out.
+    fn gen_on(&mut self, note: u8, vel: f32) {
+        if self.midi_out && self.out_ev.len() < 512 {
+            self.out_ev.push((self.seg_off as u32, true, note, vel));
+        }
+        self.voice_note_on(note, vel);
+    }
+
+    fn gen_off(&mut self, note: u8) {
+        if self.midi_out && self.out_ev.len() < 512 {
+            self.out_ev.push((self.seg_off as u32, false, note, 0.0));
+        }
+        self.voice_note_off(note);
     }
 
     fn voice_note_on(&mut self, note: u8, vel: f32) {
@@ -2014,12 +2216,14 @@ impl Engine {
     fn clip_stop(&mut self) {
         let mut act = std::mem::take(&mut self.clip_act);
         for (n, _) in act.drain(..) {
-            self.voice_note_off(n);
+            self.gen_off(n);
         }
         self.clip_act = act;
         self.clip_held.clear();
         self.clip_timer = f64::INFINITY;
         self.clip_step = 0;
+        self.clip_pos = 0;
+        self.clip_lane_t = 0.0;
     }
 
     fn clip_fire(&mut self) {
@@ -2038,12 +2242,16 @@ impl Engine {
             let note = (root as i32 + nt.pitch as i32).clamp(0, 127) as u8;
             if let Some(i) = self.clip_act.iter().position(|(n, _)| *n == note) {
                 self.clip_act.swap_remove(i);
-                self.voice_note_off(note);
+                self.gen_off(note);
             }
             if self.clip_act.len() < 120 {
-                self.voice_note_on(note, (nt.vel as f32 / 100.0 * kvel.max(0.3)).clamp(0.02, 1.0));
+                self.gen_on(note, (nt.vel as f32 / 100.0 * kvel.max(0.3)).clamp(0.02, 1.0));
                 self.clip_act.push((note, (nt.len as f64 * step_len * 0.97).max(8.0)));
             }
+        }
+        self.clip_pos = st + 1;
+        if c.has_lane {
+            self.clip_lane_t = c.lane[st] as f32 / 100.0;
         }
         let sw = c.swing as f64 * 0.5;
         let gap = if st % 2 == 0 { step_len * (1.0 + sw) } else { step_len * (1.0 - sw) };
@@ -2055,6 +2263,7 @@ impl Engine {
         let n = l.len();
         let mut i = 0;
         while i < n {
+            self.seg_off = i;
             if self.clip_timer <= 0.0 {
                 self.clip_fire();
             }
@@ -2062,7 +2271,7 @@ impl Engine {
             while j < self.clip_act.len() {
                 if self.clip_act[j].1 <= 0.0 {
                     let (nt, _) = self.clip_act.swap_remove(j);
-                    self.voice_note_off(nt);
+                    self.gen_off(nt);
                 } else {
                     j += 1;
                 }
@@ -2088,7 +2297,7 @@ impl Engine {
     fn arp_stop(&mut self) {
         let mut pl = std::mem::take(&mut self.arp.playing);
         for n in pl.drain(..) {
-            self.voice_note_off(n);
+            self.gen_off(n);
         }
         self.arp.playing = pl;
         self.arp.clear();
@@ -2097,7 +2306,7 @@ impl Engine {
     fn arp_gate_off(&mut self) {
         let mut pl = std::mem::take(&mut self.arp.playing);
         for n in pl.drain(..) {
-            self.voice_note_off(n);
+            self.gen_off(n);
         }
         self.arp.playing = pl;
         self.arp.gate = f64::INFINITY;
@@ -2113,7 +2322,7 @@ impl Engine {
         }
         let out = std::mem::take(&mut self.arp.out);
         for &(n, v) in out.iter() {
-            self.voice_note_on(n, v);
+            self.gen_on(n, v);
             self.arp.playing.push(n);
         }
         self.arp.out = out;
@@ -2150,11 +2359,28 @@ impl Engine {
             o[mac_src(i) as usize] = self.patch.macros[i];
         }
         o[ModSrc::Bend as usize] = self.bend_norm;
+        o[ModSrc::ClipLane as usize] = self.clip_lane_s;
+        if let Some(v) = newest {
+            o[ModSrc::OscA as usize] = v.prev[0].clamp(-1.0, 1.0);
+            o[ModSrc::OscB as usize] = v.prev[1].clamp(-1.0, 1.0);
+            o[ModSrc::OscC as usize] = v.prev[2].clamp(-1.0, 1.0);
+            o[ModSrc::Filt1 as usize] = v.fprev[0].clamp(-1.0, 1.0);
+            o[ModSrc::Filt2 as usize] = v.fprev[1].clamp(-1.0, 1.0);
+        }
         o
     }
 
     /// Global values of the modulation matrix for the effect section (None when unused).
     pub fn fx_mod(&self) -> Option<[f32; 12]> {
+        self.fx_mod_bus(25)
+    }
+
+    /// Same for FX bus 2.
+    pub fn fx_mod2(&self) -> Option<[f32; 12]> {
+        self.fx_mod_bus(48)
+    }
+
+    fn fx_mod_bus(&self, base: usize) -> Option<[f32; 12]> {
         let mut m = [0.0f32; 12];
         let mut any = false;
         let src = |s: ModSrc| -> f32 {
@@ -2180,13 +2406,14 @@ impl Engine {
                 ModSrc::Macro3 => self.patch.macros[2],
                 ModSrc::Macro4 => self.patch.macros[3],
                 ModSrc::Bend => self.bend_norm,
+                ModSrc::ClipLane => self.clip_lane_s,
                 _ => 0.0,
             }
         };
         for sl in self.patch.slots.iter() {
             let d = sl.dst as usize;
-            if sl.src != ModSrc::None && sl.amount != 0.0 && (25..37).contains(&d) {
-                m[d - 25] += slot_value(sl, src);
+            if sl.src != ModSrc::None && sl.amount != 0.0 && (base..base + 12).contains(&d) {
+                m[d - base] += slot_value(sl, src);
                 any = true;
             }
         }
@@ -2222,6 +2449,7 @@ impl Engine {
     }
 
     pub fn process(&mut self, l: &mut [f32], r: &mut [f32]) {
+        self.seg_off = 0;
         self.reconcile_notes();
         if !self.patch.clip.on && !self.clip_held.is_empty() {
             self.clip_stop();
@@ -2240,6 +2468,7 @@ impl Engine {
         let n = l.len();
         let mut i = 0;
         while i < n {
+            self.seg_off = i;
             if self.arp.timer <= 0.0 {
                 self.arp_fire();
             }
@@ -2292,11 +2521,24 @@ impl Engine {
             self.glfo_out = glfo;
             let tau = (self.patch.glide_ms * 0.001 / 3.0).max(1e-4);
             let glide_coef = if self.patch.glide_ms <= 0.6 { 1.0 } else { 1.0 - (-(m as f32) / (fs * tau)).exp() };
-            let ctx = Ctx { fs, bend: self.bend_norm * self.patch.bend, modwheel: self.modwheel, aftertouch: self.aftertouch, glfo, bpm: self.bpm, glide_coef, tune: 2f32.powf(self.patch.tune / 1200.0) };
+            self.clip_lane_s += (self.clip_lane_t - self.clip_lane_s) * (1.0 - (-(m as f32) / (fs * 0.008)).exp());
+            let ctx = Ctx { lane: self.clip_lane_s, fs, bend: self.bend_norm * self.patch.bend, modwheel: self.modwheel, aftertouch: self.aftertouch, glfo, bpm: self.bpm, glide_coef, tune: 2f32.powf(self.patch.tune / 1200.0) };
             for v in self.voices.iter_mut() {
                 if v.active {
                     render_voice(&self.patch, v, &ctx, &mut l[i..i + m], &mut r[i..i + m]);
                 }
+            }
+            // DC blocker (5 Hz high-pass): pulse waves, shaping and distortion can leave an offset that
+            // would eat headroom and click on note changes
+            let rc = 1.0 - std::f32::consts::TAU * 5.0 / fs;
+            for s in i..i + m {
+                let (xl, xr) = (l[s], r[s]);
+                let yl = xl - self.dc_x[0] + rc * self.dc_y[0];
+                let yr = xr - self.dc_x[1] + rc * self.dc_y[1];
+                self.dc_x = [xl, xr];
+                self.dc_y = [yl, yr];
+                l[s] = yl;
+                r[s] = yr;
             }
             i += m;
         }

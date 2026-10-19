@@ -352,9 +352,21 @@ pub enum ModSrc {
     Macro7,
     #[name = "Macro 8"]
     Macro8,
+    #[name = "Osc A out"]
+    OscA,
+    #[name = "Osc B out"]
+    OscB,
+    #[name = "Osc C out"]
+    OscC,
+    #[name = "Clip lane"]
+    ClipLane,
+    #[name = "Filter 1 out"]
+    Filt1,
+    #[name = "Filter 2 out"]
+    Filt2,
 }
 
-pub const N_SRC: usize = 27;
+pub const N_SRC: usize = 33;
 pub const NLFO: usize = 8;
 pub const NENV: usize = 4;
 pub const NMAC: usize = 8;
@@ -467,6 +479,50 @@ pub enum ModDst {
     Drive2,
     #[name = "Filter 2 Mix"]
     FilterMix2,
+    #[name = "FX2 Hyper Mix"]
+    Fx2HyperMix,
+    #[name = "FX2 Dist Drive"]
+    Fx2DistDrive,
+    #[name = "FX2 Dist Mix"]
+    Fx2DistMix,
+    #[name = "FX2 Chorus Mix"]
+    Fx2ChorusMix,
+    #[name = "FX2 Flanger Depth"]
+    Fx2FlangerDepth,
+    #[name = "FX2 Phaser Freq"]
+    Fx2PhaserFreq,
+    #[name = "FX2 Delay Mix"]
+    Fx2DelayMix,
+    #[name = "FX2 Delay Feedback"]
+    Fx2DelayFb,
+    #[name = "FX2 Reverb Mix"]
+    Fx2ReverbMix,
+    #[name = "FX2 Reverb Size"]
+    Fx2ReverbSize,
+    #[name = "FX2 Filter Cutoff"]
+    Fx2FilterCut,
+    #[name = "FX2 Filter Res"]
+    Fx2FilterRes,
+    #[name = "Filter 1 Points Gain"]
+    F1PtGain,
+    #[name = "Filter 1 Points Q"]
+    F1PtQ,
+    #[name = "Filter 2 Points Gain"]
+    F2PtGain,
+    #[name = "Filter 2 Points Q"]
+    F2PtQ,
+}
+
+impl ModDst {
+    /// The same effect knob on FX bus 2 (bus 1 destinations only).
+    pub fn bus2(self) -> ModDst {
+        let i = self as usize;
+        if (25..37).contains(&i) {
+            ModDst::from_index(i + 23)
+        } else {
+            self
+        }
+    }
 }
 
 #[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
@@ -586,6 +642,19 @@ impl ScaleType {
         }
     }
 
+    /// Semitones to add to `note` to move `n` scale steps (the note is first snapped into the scale).
+    pub fn step_offset(self, note: u8, root: i32, n: i32) -> i32 {
+        let deg = self.degrees();
+        let base = self.quantize(note, root) as i32;
+        let len = deg.len() as i32;
+        let rel = (base - root).rem_euclid(12);
+        let oct = (base - root).div_euclid(12);
+        let idx = deg.iter().position(|d| *d == rel).unwrap_or(0) as i32 + n;
+        let new_oct = oct + idx.div_euclid(len);
+        let new_deg = deg[idx.rem_euclid(len) as usize];
+        (root + new_oct * 12 + new_deg) - note as i32
+    }
+
     /// Nearest in-scale note (ties go down).
     pub fn quantize(self, note: u8, root: i32) -> u8 {
         if self == ScaleType::Off {
@@ -641,6 +710,8 @@ pub enum OscTune {
     Harmonic,
     #[name = "Ratio"]
     Ratio,
+    #[name = "Step"]
+    Step,
 }
 
 #[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
@@ -651,6 +722,10 @@ pub enum OscMode {
     Sample,
     #[name = "Granular"]
     Granular,
+    #[name = "Multisample"]
+    Multisample,
+    #[name = "Spectral"]
+    Spectral,
 }
 
 #[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
@@ -1282,6 +1357,8 @@ pub struct OscParams {
     pub rand: FloatParam,
     #[persist = "smp"]
     pub smp: Arc<std::sync::Mutex<String>>,
+    #[persist = "msmp"]
+    pub msmp: Arc<std::sync::Mutex<String>>,
     #[id = "om"]
     pub mode: EnumParam<OscMode>,
     #[id = "ss"]
@@ -1300,6 +1377,12 @@ pub struct OscParams {
     pub g_dens: FloatParam,
     #[id = "gy"]
     pub g_spray: FloatParam,
+    #[id = "xt"]
+    pub sp_tilt: FloatParam,
+    #[id = "xs"]
+    pub sp_shift: FloatParam,
+    #[id = "xe"]
+    pub sp_eo: FloatParam,
     #[id = "tm"]
     pub tune_mode: EnumParam<OscTune>,
     #[id = "tr"]
@@ -1334,6 +1417,7 @@ impl OscParams {
                 .with_unit(" deg"),
             rand: unit_param("Random", 1.0),
             smp: Arc::new(std::sync::Mutex::new(String::new())),
+            msmp: Arc::new(std::sync::Mutex::new(String::new())),
             mode: EnumParam::new("Mode", OscMode::Wavetable),
             s_start: unit_param("Sample Start", 0.0),
             s_end: unit_param("Sample End", 1.0),
@@ -1343,6 +1427,9 @@ impl OscParams {
             g_size: FloatParam::new("Grain Size", 80.0, FloatRange::Skewed { min: 5.0, max: 500.0, factor: FloatRange::skew_factor(-1.0) }).with_unit(" ms").with_step_size(0.1),
             g_dens: FloatParam::new("Grain Density", 30.0, FloatRange::Skewed { min: 1.0, max: 256.0, factor: FloatRange::skew_factor(-1.0) }).with_unit(" /s").with_step_size(0.1),
             g_spray: unit_param("Grain Spray", 0.1),
+            sp_tilt: bi_param("Spectral Tilt", 0.0),
+            sp_shift: unit_param("Spectral Shift", 0.0),
+            sp_eo: bi_param("Spectral Even/Odd", 0.0),
             tune_mode: EnumParam::new("Tune Mode", OscTune::Semitone),
             ratio: FloatParam::new("Freq Ratio", 1.0, FloatRange::Skewed { min: 0.25, max: 16.0, factor: FloatRange::skew_factor(-1.5) }).with_step_size(0.01).with_value_to_string(formatters::v2s_f32_rounded(2)),
             harm: IntParam::new("Harmonic", 1, IntRange::Linear { min: 1, max: 32 }),
@@ -1622,12 +1709,16 @@ pub struct SynthParams {
     pub clips: Arc<std::sync::Mutex<String>>,
     #[id = "clp_on"]
     pub clip_on: BoolParam,
+    #[id = "mout"]
+    pub midi_out: BoolParam,
     #[id = "clp_sl"]
     pub clip_sel: IntParam,
     #[id = "clp_dv"]
     pub clip_div: EnumParam<Div>,
     #[id = "clp_sw"]
     pub clip_swing: FloatParam,
+    #[id = "clp_sy"]
+    pub clip_sync: BoolParam,
     #[id = "arp_sl"]
     pub arp_sel: IntParam,
     #[id = "scl"]
@@ -1730,9 +1821,11 @@ impl Default for SynthParams {
             arp_pat: Arc::new(std::sync::Mutex::new(String::new())),
             clips: Arc::new(std::sync::Mutex::new(String::new())),
             clip_on: BoolParam::new("Clip On", false),
+            midi_out: BoolParam::new("MIDI Out", false),
             clip_sel: IntParam::new("Clip Slot", 1, IntRange::Linear { min: 1, max: 12 }),
             clip_div: EnumParam::new("Clip Step", Div::D16),
             clip_swing: unit_param("Clip Swing", 0.0),
+            clip_sync: BoolParam::new("Clip Host Sync", false),
             arp_sel: IntParam::new("Arp Pattern Slot", 1, IntRange::Linear { min: 1, max: 12 }),
             key_scale: EnumParam::new("Key Lock Scale", ScaleType::Off),
             key_root: IntParam::new("Key Lock Root", 0, IntRange::Linear { min: 0, max: 11 }),

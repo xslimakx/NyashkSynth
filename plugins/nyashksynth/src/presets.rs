@@ -679,6 +679,7 @@ fn find(map: &[(String, ParamPtr, String)], id: &str) -> Option<ParamPtr> {
 pub struct Blobs {
     pub wave: [String; 3],
     pub smp: [String; 3],
+    pub ms: [String; 3],
     pub noise: String,
     pub ir: String,
     pub arp: String,
@@ -689,7 +690,7 @@ pub struct Blobs {
 impl Blobs {
     pub fn from_params(p: &SynthParams) -> Blobs {
         let g = |m: &std::sync::Mutex<String>| m.lock().map(|x| x.clone()).unwrap_or_default();
-        Blobs { wave: [g(&p.a.wave), g(&p.b.wave), g(&p.c.wave)], smp: [g(&p.a.smp), g(&p.b.smp), g(&p.c.smp)], noise: g(&p.noise_sample), ir: g(&p.ir), arp: g(&p.arp_pat), clips: g(&p.clips), lfo: std::array::from_fn(|i| g(&p.lfo[i].draw)) }
+        Blobs { wave: [g(&p.a.wave), g(&p.b.wave), g(&p.c.wave)], smp: [g(&p.a.smp), g(&p.b.smp), g(&p.c.smp)], ms: [g(&p.a.msmp), g(&p.b.msmp), g(&p.c.msmp)], noise: g(&p.noise_sample), ir: g(&p.ir), arp: g(&p.arp_pat), clips: g(&p.clips), lfo: std::array::from_fn(|i| g(&p.lfo[i].draw)) }
     }
 
     /// Store in the parameters and rebuild the shared audio-side data.
@@ -705,6 +706,9 @@ impl Blobs {
         set(&p.a.smp, &self.smp[0]);
         set(&p.b.smp, &self.smp[1]);
         set(&p.c.smp, &self.smp[2]);
+        set(&p.a.msmp, &self.ms[0]);
+        set(&p.b.msmp, &self.ms[1]);
+        set(&p.c.msmp, &self.ms[2]);
         set(&p.noise_sample, &self.noise);
         set(&p.ir, &self.ir);
         set(&p.arp_pat, &self.arp);
@@ -758,7 +762,13 @@ impl PresetRef {
 
 /// Factory presets plus everything found in the user's preset folder.
 pub fn list_all() -> Vec<PresetRef> {
-    let mut out: Vec<PresetRef> = PRESETS.iter().enumerate().map(|(i, p)| PresetRef { name: p.name.to_string(), cat: p.cat.to_string(), factory: Some(i), path: None }).collect();
+    let hidden = load_hidden();
+    let mut out: Vec<PresetRef> = PRESETS
+        .iter()
+        .enumerate()
+        .map(|(i, p)| PresetRef { name: p.name.to_string(), cat: p.cat.to_string(), factory: Some(i), path: None })
+        .filter(|r| !hidden.contains(&r.key()))
+        .collect();
     if let Some(dir) = files::presets_dir() {
         for e in files::scan(&dir, &["nyp"]) {
             out.push(PresetRef { name: e.name, cat: e.cat, factory: None, path: Some(e.path) });
@@ -785,6 +795,9 @@ fn parse_file(txt: &str) -> (Vec<(String, f32)>, Blobs) {
                 "a_smp" => bl.smp[0] = v.to_string(),
                 "b_smp" => bl.smp[1] = v.to_string(),
                 "c_smp" => bl.smp[2] = v.to_string(),
+                "a_ms" => bl.ms[0] = v.to_string(),
+                "b_ms" => bl.ms[1] = v.to_string(),
+                "c_ms" => bl.ms[2] = v.to_string(),
                 "noise" => bl.noise = v.to_string(),
                 "ir" => bl.ir = v.to_string(),
                 "arp" => bl.arp = v.to_string(),
@@ -864,6 +877,11 @@ pub fn save_user(params: &SynthParams, name: &str, cat: &str) -> Result<PathBuf,
     if !bl.arp.is_empty() {
         txt.push_str(&format!("@arp={}\n", bl.arp));
     }
+    for (i, k) in ["a_ms", "b_ms", "c_ms"].iter().enumerate() {
+        if !bl.ms[i].is_empty() {
+            txt.push_str(&format!("@{}={}\n", k, bl.ms[i]));
+        }
+    }
     if !bl.noise.is_empty() {
         txt.push_str(&format!("@noise={}\n", bl.noise));
     }
@@ -893,6 +911,31 @@ pub fn delete_user(r: &PresetRef) {
                 d = dir.parent().map(|x| x.to_path_buf());
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------- hidden factory presets
+
+fn hidden_path() -> Option<PathBuf> {
+    files::base_dir().map(|b| b.join("hidden.txt"))
+}
+
+/// Keys (`Category/Name`) of factory presets the user chose to hide. The presets are built into the plugin,
+/// so they cannot be deleted from disk, only hidden from the browser.
+pub fn load_hidden() -> Vec<String> {
+    hidden_path().and_then(|p| std::fs::read_to_string(p).ok()).map(|t| t.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect()).unwrap_or_default()
+}
+
+pub fn save_hidden(h: &[String]) {
+    if let Some(p) = hidden_path() {
+        if h.is_empty() {
+            let _ = std::fs::remove_file(p);
+            return;
+        }
+        if let Some(d) = p.parent() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        let _ = std::fs::write(p, h.join("\n"));
     }
 }
 
@@ -1000,5 +1043,178 @@ mod tests {
                 assert!(find(&map, id).is_some(), "preset '{}' uses unknown id '{}'", p.name, id);
             }
         }
+    }
+}
+
+/// Numbers and blobs of a preset without applying it.
+pub fn values_of(r: &PresetRef) -> Option<(Vec<(String, f32)>, Blobs)> {
+    if let Some(i) = r.factory {
+        let p = PRESETS.get(i)?;
+        Some((p.values.iter().map(|(k, v)| (k.to_string(), *v)).collect(), Blobs::default()))
+    } else {
+        let txt = std::fs::read_to_string(r.path.as_ref()?).ok()?;
+        Some(parse_file(&txt))
+    }
+}
+
+/// Mix the current sound with another preset: every section (oscillator, filter, one LFO, one
+/// matrix row, one effect...) comes from one or the other, decided by chance.
+pub fn hybridize(setter: &ParamSetter, params: &SynthParams, shared: &Shared, other: &PresetRef, seed: u64) -> Result<(), String> {
+    use std::collections::HashMap;
+    let (vals, blob_b) = values_of(other).ok_or("cannot read the other preset")?;
+    let map = params.param_map();
+    let mut rng = seed | 1;
+    let mut coin = move || {
+        rng ^= rng << 13;
+        rng ^= rng >> 7;
+        rng ^= rng << 17;
+        (rng >> 11) as f64 / (1u64 << 53) as f64 > 0.5
+    };
+    let key = |id: &str, grp: &str| -> String {
+        if grp.starts_with("FX") {
+            let rest = id.strip_prefix("b2_").unwrap_or(id);
+            format!("{grp}/{}", rest.split('_').next().unwrap_or(rest))
+        } else if grp.is_empty() {
+            id.to_string()
+        } else {
+            grp.to_string()
+        }
+    };
+    let mut choice: HashMap<String, bool> = HashMap::new();
+    // SAFETY: pointers come from `params`, which outlives this call; GUI thread only.
+    unsafe {
+        for (id, ptr, grp) in &map {
+            let k = key(id, grp);
+            let from_b = *choice.entry(k).or_insert_with(&mut coin);
+            if !from_b {
+                continue;
+            }
+            let n = match vals.iter().find(|(i, _)| i == id) {
+                Some((_, v)) => ptr.preview_normalized(*v),
+                None => ptr.default_normalized_value(),
+            };
+            setter.raw_context.raw_begin_set_parameter(*ptr);
+            setter.raw_context.raw_set_parameter_normalized(*ptr, n);
+            setter.raw_context.raw_end_set_parameter(*ptr);
+        }
+    }
+    let mut bl = Blobs::from_params(params);
+    for (i, g) in ["Osc A", "Osc B", "Osc C"].iter().enumerate() {
+        if choice.get(*g).copied().unwrap_or(false) {
+            bl.wave[i] = blob_b.wave[i].clone();
+            bl.smp[i] = blob_b.smp[i].clone();
+            bl.ms[i] = blob_b.ms[i].clone();
+        }
+    }
+    for i in 0..NLFO {
+        if choice.get(&format!("LFO {}", i + 1)).copied().unwrap_or(false) {
+            bl.lfo[i] = blob_b.lfo[i].clone();
+        }
+    }
+    if choice.get("FX/rv").copied().unwrap_or(false) {
+        bl.ir = blob_b.ir.clone();
+    }
+    if choice.get("arp_pat").copied().unwrap_or(false) {
+        bl.arp = blob_b.arp.clone();
+    }
+    bl.apply(params, shared);
+    if let Ok(mut g) = params.preset_name.lock() {
+        *g = format!("Hybrid {}", other.name);
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------- preset packs
+
+const PACK_MAGIC: &str = "#NYASHKPACK 1";
+
+/// Bundle all user presets (or one category) into a single `.nypack` file in the Packs folder.
+pub fn export_pack(name: &str, only_cat: Option<&str>) -> Result<(PathBuf, usize), String> {
+    let dir = files::packs_dir().ok_or("no folder")?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let mut txt = format!("{PACK_MAGIC}\n");
+    let mut n = 0;
+    for r in list_all() {
+        let Some(path) = &r.path else { continue };
+        if only_cat.map_or(false, |c| c != r.cat) {
+            continue;
+        }
+        let Ok(body) = std::fs::read_to_string(path) else { continue };
+        txt.push_str(&format!("@@@PRESET {}/{}\n{}\n@@@END\n", r.cat, r.name, body.trim_end()));
+        n += 1;
+    }
+    if n == 0 {
+        return Err("no user presets to export".into());
+    }
+    let path = dir.join(format!("{}.nypack", files::clean_name(name)));
+    std::fs::write(&path, txt).map_err(|e| e.to_string())?;
+    Ok((path, n))
+}
+
+/// Unpack every `.nypack` in the Packs folder into the preset folder. Existing presets are never overwritten.
+pub fn import_packs() -> Result<usize, String> {
+    let dir = files::packs_dir().ok_or("no folder")?;
+    let pdir = files::presets_dir().ok_or("no folder")?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let mut added = 0;
+    for e in files::scan(&dir, &["nypack"]) {
+        let Ok(txt) = std::fs::read_to_string(&e.path) else { continue };
+        added += unpack(&txt, &pdir);
+    }
+    Ok(added)
+}
+
+pub fn unpack(txt: &str, pdir: &std::path::Path) -> usize {
+    let mut lines = txt.lines();
+    if lines.next().map(|l| l.trim()) != Some(PACK_MAGIC) {
+        return 0;
+    }
+    let mut added = 0;
+    let mut cur: Option<(String, String, String)> = None;
+    for l in lines {
+        if let Some(h) = l.strip_prefix("@@@PRESET ") {
+            let (cat, name) = h.rsplit_once('/').unwrap_or(("User", h));
+            cur = Some((files::clean_name(cat), files::clean_name(name), String::new()));
+        } else if l.trim() == "@@@END" {
+            if let Some((cat, name, body)) = cur.take() {
+                if name.is_empty() {
+                    continue;
+                }
+                let d = if cat.is_empty() || cat == "User" { pdir.to_path_buf() } else { pdir.join(&cat) };
+                if std::fs::create_dir_all(&d).is_err() {
+                    continue;
+                }
+                let path = d.join(format!("{name}.nyp"));
+                if path.exists() {
+                    continue;
+                }
+                if std::fs::write(&path, body).is_ok() {
+                    added += 1;
+                }
+            }
+        } else if let Some((_, _, body)) = cur.as_mut() {
+            body.push_str(l);
+            body.push('\n');
+        }
+    }
+    added
+}
+
+#[cfg(test)]
+mod pack_tests {
+    use super::*;
+
+    #[test]
+    fn unpack_writes_presets_and_keeps_existing() {
+        let dir = std::env::temp_dir().join(format!("nyashk_pack_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let txt = "#NYASHKPACK 1\n@@@PRESET Bass/Wobble\na_lv=0.5\n@a_wave=NWT1|x\n@@@END\n@@@PRESET Lead/Zip\nmaster=-3\n@@@END\n";
+        assert_eq!(unpack(txt, &dir), 2);
+        assert_eq!(std::fs::read_to_string(dir.join("Bass").join("Wobble.nyp")).unwrap(), "a_lv=0.5\n@a_wave=NWT1|x\n");
+        // second import adds nothing and overwrites nothing
+        assert_eq!(unpack(txt, &dir), 0);
+        // not a pack
+        assert_eq!(unpack("hello", &dir), 0);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

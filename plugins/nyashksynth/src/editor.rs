@@ -47,7 +47,12 @@ pub struct Gui {
     pub filt_sel: usize,
     pub clip_len: u8,
     pub smp_target: Option<usize>,
+    pub multi_target: usize,
+    pub ms_sel: usize,
+    pub ms_dirty: Option<usize>,
     osc_clip: Option<(Vec<f32>, String, String)>,
+    lfo_grid: [u8; 8],
+    lfo_pre: [u8; 8],
     smp_dev: bool,
     arp_dev: bool,
     undo: Vec<Vec<f32>>,
@@ -64,6 +69,7 @@ pub struct Gui {
     pub overlay: Overlay,
     presets: Vec<PresetRef>,
     favs: Vec<String>,
+    hidden_n: usize,
     spec: Vec<f32>,
     spec_fs: f32,
     meta: presets::Meta,
@@ -153,6 +159,22 @@ fn load_table(setter: &ParamSetter, p: &SynthParams, shared: &Shared, o: usize, 
     }
 }
 
+fn load_multi(setter: &ParamSetter, p: &SynthParams, shared: &Shared, o: usize, path: &std::path::Path) -> Result<String, String> {
+    let m = crate::sample::MultiS::from_sfz(path)?;
+    let name = format!("{} ({} regions)", m.name, m.regions.len());
+    if let Ok(mut g) = osc(p, o).msmp.lock() {
+        *g = m.encode();
+    }
+    shared.ms[o].set(Some(Arc::new(m)));
+    let op = osc(p, o);
+    if op.mode.value() != OscMode::Multisample {
+        set_e(setter, &op.mode, OscMode::Multisample);
+    }
+    set_f(setter, &op.s_start, 0.0);
+    set_f(setter, &op.s_end, 1.0);
+    Ok(name)
+}
+
 fn load_ir(p: &SynthParams, shared: &Shared, path: &std::path::Path) -> Result<String, String> {
     let s = NSample::from_file(path)?;
     let name = s.name.clone();
@@ -175,7 +197,8 @@ fn load_noise(setter: &ParamSetter, p: &SynthParams, shared: &Shared, path: &std
 }
 
 fn paste_osc(setter: &ParamSetter, p: &SynthParams, shared: &Shared, st: &mut Gui, o: usize) {
-    let Some((vals, w, sm)) = st.osc_clip.clone() else { return };
+    let Some((vals, w, smms)) = st.osc_clip.clone() else { return };
+    let (sm, ms) = smms.split_once('\u{1}').map(|(a, b)| (a.to_string(), b.to_string())).unwrap_or((smms.clone(), String::new()));
     let op = osc(p, o);
     let map = op.param_map();
     if map.len() != vals.len() {
@@ -197,6 +220,10 @@ fn paste_osc(setter: &ParamSetter, p: &SynthParams, shared: &Shared, st: &mut Gu
     if let Ok(mut g) = op.smp.lock() {
         *g = sm.clone();
     }
+    if let Ok(mut g) = op.msmp.lock() {
+        *g = ms.clone();
+    }
+    shared.ms[o].set(if ms.is_empty() { None } else { crate::sample::MultiS::decode(&ms).map(Arc::new) });
     shared.smp[o].set(if sm.is_empty() { None } else { NSample::decode(&sm).map(Arc::new) });
     shared.waves[o].set(if w.is_empty() { None } else { wavetable::decode_table(&w).map(|(_, t)| Arc::new(t)) });
     shared.version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -255,7 +282,12 @@ impl Gui {
             filt_sel: 0,
             clip_len: 1,
             smp_target: None,
+            multi_target: 0,
+            ms_sel: 0,
+            ms_dirty: None,
             osc_clip: None,
+            lfo_grid: [0; 8],
+            lfo_pre: [0; 8],
             smp_dev: false,
             arp_dev: false,
             undo: Vec::new(),
@@ -278,6 +310,7 @@ impl Gui {
             },
             presets: presets::list_all(),
             favs: presets::load_favs(),
+            hidden_n: presets::load_hidden().len(),
             spec: Vec::new(),
             spec_fs: 48000.0,
             meta: presets::load_meta(),
@@ -290,7 +323,7 @@ impl Gui {
             tables: scan_tables(),
             tbs: BState::default(),
             frame_size: 0,
-            noises: files::noises_dir().map(|d| files::scan(&d, &["wav"])).unwrap_or_default(),
+            noises: files::noises_dir().map(|d| files::scan(&d, &["wav", "sfz"])).unwrap_or_default(),
             nbs: BState::default(),
             edit: None,
             status: String::new(),
@@ -314,7 +347,7 @@ impl Gui {
     fn rescan(&mut self) {
         self.presets = presets::list_all();
         self.tables = scan_tables();
-        self.noises = files::noises_dir().map(|d| files::scan(&d, &["wav"])).unwrap_or_default();
+        self.noises = files::noises_dir().map(|d| files::scan(&d, &["wav", "sfz"])).unwrap_or_default();
     }
 
     fn open_edit(&mut self, shared: &Shared, p: &SynthParams, o: usize) {
@@ -398,7 +431,7 @@ pub fn create(params: Arc<SynthParams>, meters: Arc<Meters>, shared: Arc<Shared>
                 if std::env::var("NYASHK_CLIPDEMO").is_ok() && !st.arp_dev {
                     st.arp_dev = true;
                     if let Ok(mut g) = p.clips.lock() {
-                        *g = "2|0,2,0,100;2,1,7,80;4,2,12,100;6,1,5,70;8,3,3,100;11,1,10,60;12,2,-5,90;16,2,0,100;18,2,4,80;20,4,7,100;26,2,12,70;28,3,-12,100".to_string();
+                        *g = "2|0,2,0,100;2,1,7,80;4,2,12,100;6,1,5,70;8,3,3,100;11,1,10,60;12,2,-5,90;16,2,0,100;18,2,4,80;20,4,7,100;26,2,12,70;28,3,-12,100|0,30,60,90,100,80,40,0,-30,-60,-90,-100,-70,-30,0,0,0,30,60,90,100,80,40,0,-30,-60,-90,-100,-70,-30,0,0".to_string();
                     }
                     set_b(setter, &p.clip_on, true);
                 }
@@ -464,7 +497,7 @@ pub fn create(params: Arc<SynthParams>, meters: Arc<Meters>, shared: Arc<Shared>
                         let c = page_panel("ARPEGGIATOR", rect(14.0, 62.0, 1430.0, 322.0));
                         arp_tab(ui, setter, p, &meters, c);
                         let c = page_panel("CLIP SEQUENCER", rect(14.0, 394.0, 1430.0, 322.0));
-                        clip_tab(ui, setter, p, st, c);
+                        clip_tab(ui, setter, p, &meters, st, c);
                     }
                     _ => {
                         let c = page_panel("SETTINGS", rect(14.0, 62.0, 1430.0, 654.0));
@@ -853,6 +886,38 @@ fn preset_overlay(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &S
             st.say(now, format!("deleted {}", r.name));
         }
     }
+    if let Some(r) = selr.as_ref().filter(|r| !r.is_user()) {
+        if pill_tip(ui, Rect::from_min_size(Pos2::new(cr.right() + 88.0, y), Vec2::new(64.0, 24.0)), "HIDE", false, "Factory presets are built into the plugin and cannot be deleted from disk. HIDE removes this one from the browser (RESTORE brings every hidden preset back).") {
+            let mut h = presets::load_hidden();
+            h.push(r.key());
+            presets::save_hidden(&h);
+            st.hidden_n = h.len();
+            st.rescan();
+            st.say(now, format!("hidden {}", r.name));
+        }
+    }
+    let nhid = st.hidden_n;
+    if nhid > 0 && pill_tip(ui, Rect::from_min_size(Pos2::new(cr.right() + 158.0, y), Vec2::new(104.0, 24.0)), &format!("RESTORE {nhid}"), false, "Show all hidden factory presets again") {
+        presets::save_hidden(&[]);
+        st.hidden_n = 0;
+        st.rescan();
+        st.say(now, format!("{nhid} presets restored"));
+    }
+    if pill_tip(ui, Rect::from_min_size(Pos2::new(f.right() - 340.0, y), Vec2::new(122.0, 24.0)), "EXPORT PACK", false, "Bundle all your own presets into one .nypack file (Packs folder) that you can share") {
+        match presets::export_pack("NyashkSynth User Pack", None) {
+            Ok((path, n)) => st.say(now, format!("{n} presets exported to {}", path.display())),
+            Err(e) => st.say(now, e),
+        }
+    }
+    if pill_tip(ui, Rect::from_min_size(Pos2::new(f.right() - 470.0, y), Vec2::new(124.0, 24.0)), "IMPORT PACKS", false, "Unpack every .nypack from the Packs folder into your presets (nothing is overwritten)") {
+        match presets::import_packs() {
+            Ok(n) => {
+                st.presets = presets::list_all();
+                st.say(now, format!("{n} presets imported"));
+            }
+            Err(e) => st.say(now, e),
+        }
+    }
     if pill_tip(ui, Rect::from_min_size(Pos2::new(f.right() - 210.0, y), Vec2::new(116.0, 24.0)), "OPEN FOLDER", false, "Open the preset folder in your file manager. Drop .nyp files (or whole category folders) in there.") {
         if let Some(d) = files::presets_dir() {
             files::open_folder(&d);
@@ -956,10 +1021,12 @@ fn table_overlay(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Sh
 }
 
 fn noise_overlay(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, st: &mut Gui, area: Rect, now: f64) {
-    let items: Vec<BItem> = st.noises.iter().map(|e| BItem { name: e.name.clone(), cat: e.cat.clone(), fav: false, user: true, rating: 0, tags: vec![] }).collect();
+    let want_sfz = st.smp_target == Some(98);
+    let list: Vec<files::Entry> = st.noises.iter().filter(|e| e.path.extension().and_then(|x| x.to_str()).map_or(false, |x| x.eq_ignore_ascii_case("sfz")) == want_sfz).cloned().collect();
+    let items: Vec<BItem> = list.iter().map(|e| BItem { name: e.name.clone(), cat: e.cat.clone(), fav: false, user: true, rating: 0, tags: vec![] }).collect();
     let cur = p.noise_sample.lock().map(|g| crate::sample::encoded_name(&g)).unwrap_or_default();
-    let sel = st.noises.iter().position(|e| e.name == cur);
-    let act = browse::browser(ui, area, "NOISE / SAMPLES", &items, sel, &mut st.nbs, false, "noises");
+    let sel = list.iter().position(|e| e.name == cur);
+    let act = browse::browser(ui, area, if want_sfz { "MULTISAMPLES (.sfz)" } else { "NOISE / SAMPLES" }, &items, sel, &mut st.nbs, false, "noises");
     let f = browse::footer(area);
     let y = f.top() + 4.0;
     if pill_tip(ui, Rect::from_min_size(Pos2::new(f.right() - 210.0, y), Vec2::new(116.0, 24.0)), "OPEN FOLDER", false, "Open the noise folder. Drop .wav files in there.") {
@@ -970,11 +1037,12 @@ fn noise_overlay(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Sh
     if pill_tip(ui, Rect::from_min_size(Pos2::new(f.right() - 88.0, y), Vec2::new(88.0, 24.0)), "RESCAN", false, "Look for new files now") {
         st.rescan();
     }
-    ui.painter().text(Pos2::new(f.left(), y + 12.0), Align2::LEFT_CENTER, "Any .wav file works (first 4 seconds are used). Pitch / key / loop are set in the NOISE section.", mono(9.5), DIM);
+    ui.painter().text(Pos2::new(f.left(), y + 12.0), Align2::LEFT_CENTER, if st.smp_target == Some(98) { "SFZ instruments: put the .sfz and its .wav files in this folder (sub-folders are fine)." } else { "Any .wav file works (first 4 seconds are used). Pitch / key / loop are set in the NOISE section." }, mono(9.5), DIM);
     match act {
         BAct::Pick(i) => {
-            if let Some(e) = st.noises.get(i).cloned() {
+            if let Some(e) = list.get(i).cloned() {
                 let res = match st.smp_target {
+                    Some(98) => load_multi(setter, p, shared, st.multi_target, &e.path),
                     Some(99) => load_ir(p, shared, &e.path),
                     Some(o) => load_osc_sample(setter, p, shared, o, &e.path),
                     None => load_noise(setter, p, shared, &e.path),
@@ -1076,23 +1144,23 @@ fn osc_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared
     let name = OSC_NAMES[o];
     panel(ui, r, ["01", "02", "03"][o], &format!("OSC {name}"));
     on_pill(ui, setter, &op.on, Rect::from_min_size(Pos2::new(r.right() - 56.0, r.top() + 6.0), Vec2::new(44.0, 22.0)), "Oscillator on/off");
-    if pill_tip(ui, Rect::from_min_size(Pos2::new(r.left() + 100.0, r.top() + 6.0), Vec2::new(20.0, 22.0)), "C", false, "COPY: every setting of this oscillator (wavetable / sample included)") {
+    if pill_tip(ui, Rect::from_min_size(Pos2::new(r.left() + 92.0, r.top() + 6.0), Vec2::new(18.0, 22.0)), "C", false, "COPY: every setting of this oscillator (wavetable / sample included)") {
         let vals: Vec<f32> = op.param_map().iter().map(|(_, ptr, _)| unsafe { ptr.unmodulated_normalized_value() }).collect();
         let w = op.wave.lock().map(|g| g.clone()).unwrap_or_default();
         let sm = op.smp.lock().map(|g| g.clone()).unwrap_or_default();
-        st.osc_clip = Some((vals, w, sm));
+        let ms = op.msmp.lock().map(|g| g.clone()).unwrap_or_default();
+        st.osc_clip = Some((vals, w, format!("{sm}\u{1}{ms}")));
     }
-    if st.osc_clip.is_some() && pill_tip(ui, Rect::from_min_size(Pos2::new(r.left() + 121.0, r.top() + 6.0), Vec2::new(20.0, 22.0)), "P", false, "PASTE the copied oscillator settings here") {
+    if st.osc_clip.is_some() && pill_tip(ui, Rect::from_min_size(Pos2::new(r.left() + 112.0, r.top() + 6.0), Vec2::new(18.0, 22.0)), "P", false, "PASTE the copied oscillator settings here") {
         paste_osc(setter, p, shared, st, o);
     }
-    let sm = op.mode.value() != OscMode::Wavetable;
-    for (k, (lbl, want)) in [("WT", OscMode::Wavetable), ("SMP", OscMode::Sample), ("GRN", OscMode::Granular)].iter().enumerate() {
-        let pr = Rect::from_min_size(Pos2::new(r.right() - 208.0 + k as f32 * 48.0, r.top() + 6.0), Vec2::new(44.0, 22.0));
-        if pill_tip(ui, pr, lbl, op.mode.value() == *want, ["Wavetable oscillator", "Sample oscillator: plays a .wav at the played pitch with start / end / loop", "Granular oscillator: a cloud of short grains read from a .wav"][k]) {
-            set_e(setter, &op.mode, *want);
-        }
-    }
+    let sm = matches!(op.mode.value(), OscMode::Sample | OscMode::Granular | OscMode::Multisample);
+    enum_combo(ui, setter, &op.mode, &format!("oscmode{o}"), Rect::from_min_size(Pos2::new(r.right() - 214.0, r.top() + 6.0), Vec2::new(154.0, 22.0)));
     let disp = Rect::from_min_size(Pos2::new(r.left() + 12.0, r.top() + 34.0), Vec2::new(196.0, 100.0));
+    if op.mode.value() == OscMode::Multisample {
+        multi_panel(ui, setter, p, shared, st, r, o, disp);
+        return osc_knobs(ui, setter, p, r, o, true);
+    }
     if sm {
         sample_panel(ui, setter, p, shared, st, r, o, disp);
         return osc_knobs(ui, setter, p, r, o, true);
@@ -1155,6 +1223,10 @@ fn osc_knobs(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, r: Rect, o: usi
         knob_s(ui, setter, &op.s_end, "END", cell(x0 + w, y0, w), "Sample end / loop end point (modulatable)", false);
         mdst([ModDst::AWarp2, ModDst::BWarp2, ModDst::CWarp2][o]);
         knob_s(ui, setter, &op.s_xfade, "XFADE", cell(x0 + w * 2.0, y0, w), "Loop crossfade length (Loop mode)", false);
+    } else if op.mode.value() == OscMode::Spectral {
+        knob_s(ui, setter, &op.pos, "POS", cell(x0, y0, w), "Which wavetable frame the partials are taken from (also drag on the display)", false);
+        knob_s(ui, setter, &op.sp_tilt, "TILT", cell(x0 + w, y0, w), "Spectral tilt: negative = darker (fewer highs), positive = brighter", true);
+        knob_s(ui, setter, &op.sp_shift, "SHIFT", cell(x0 + w * 2.0, y0, w), "Stretches the partials apart: from harmonic to bell-like / metallic", false);
     } else {
     knob_s(ui, setter, &op.pos, "POS", cell(x0, y0, w), "Wavetable position (also drag on the display)", false);
     mdst(wrp_d);
@@ -1171,6 +1243,7 @@ fn osc_knobs(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, r: Rect, o: usi
     match op.tune_mode.value() {
         OscTune::Semitone => { knob_s(ui, setter, &op.semi, "SEMI", cell(x0 + w, y1, w), "Semitones (click the label to switch to HARM / RATIO tuning)", false); }
         OscTune::Harmonic => { knob_s(ui, setter, &op.harm, "HARM", cell(x0 + w, y1, w), "Harmonic number: 1 = the played pitch, 2 = an octave up, 3 = octave + fifth ... (click the label to switch)", false); }
+        OscTune::Step => { knob_s(ui, setter, &op.semi, "STEP", cell(x0 + w, y1, w), "Moves the oscillator by whole steps of the KEY LOCK scale (SETTINGS page), e.g. +2 = a diatonic third up. Click the label to switch.", false); }
         OscTune::Ratio => { knob_s(ui, setter, &op.ratio, "RATIO", cell(x0 + w, y1, w), "Frequency ratio to the played pitch, e.g. 1.5 = a fifth up (click the label to switch)", false); }
     }
     {
@@ -1183,7 +1256,8 @@ fn osc_knobs(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, r: Rect, o: usi
             let next = match op.tune_mode.value() {
                 OscTune::Semitone => OscTune::Harmonic,
                 OscTune::Harmonic => OscTune::Ratio,
-                OscTune::Ratio => OscTune::Semitone,
+                OscTune::Ratio => OscTune::Step,
+                OscTune::Step => OscTune::Semitone,
             };
             set_e(setter, &op.tune_mode, next);
         }
@@ -1202,12 +1276,105 @@ fn osc_knobs(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, r: Rect, o: usi
         if op.mode.value() == OscMode::Granular {
             knob_s(ui, setter, &op.g_spray, "SPRAY", cell(x0 + w * 3.0, y2, w), "Random spread of the grain positions around POS", false);
         }
+    } else if op.mode.value() == OscMode::Spectral {
+        knob_s(ui, setter, &op.sp_eo, "EVEN/ODD", cell(x0 + w * 2.0, y2, w), "Negative = fewer odd partials (hollow), positive = fewer even partials (square-like)", true);
+        ui.painter().text(Pos2::new(x0 + w * 3.0 + w * 0.5, y2 + 30.0), Align2::CENTER_CENTER, "1 voice,\n64 partials", mono(8.5), DIM);
     } else {
         knob_s(ui, setter, &op.phase, "PHASE", cell(x0 + w * 2.0, y2, w), "Start phase", false);
         knob_s(ui, setter, &op.rand, "RAND", cell(x0 + w * 3.0, y2, w), "Random start phase", false);
     }
     ui.painter().text(Pos2::new(x0 + w * 4.0 + w * 0.5, y2 + 6.0), Align2::CENTER_CENTER, "UNI MODE", mono(9.0), DIM);
     enum_combo(ui, setter, &op.uni_mode, &format!("unimode{o}"), Rect::from_min_size(Pos2::new(x0 + w * 4.0 - 2.0, y2 + 16.0), Vec2::new(w + 4.0, 24.0)));
+}
+
+/// Multisample mode: key map of the loaded instrument, LOAD SFZ button, loop mode.
+fn multi_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, st: &mut Gui, r: Rect, o: usize, disp: Rect) {
+    let op = osc(p, o);
+    dark_box(ui, disp);
+    let painter = ui.painter().with_clip_rect(disp.shrink(1.0));
+    let m = shared.ms[o].get();
+    let kx = |k: f32| disp.left() + 4.0 + (disp.width() - 8.0) * (k / 127.0);
+    match &m {
+        Some(m) => {
+            for (i, rg) in m.regions.iter().enumerate() {
+                let row = i % 6;
+                let y = disp.top() + 24.0 + 11.0 * row as f32;
+                painter.rect_filled(Rect::from_min_max(Pos2::new(kx(rg.lo as f32), y), Pos2::new(kx(rg.hi as f32 + 1.0).max(kx(rg.lo as f32) + 2.0), y + 8.0)), CornerRadius::same(1), Color32::from_rgb(70, 70, 70));
+                painter.rect_filled(Rect::from_center_size(Pos2::new(kx(rg.root as f32 + 0.5), y + 4.0), Vec2::new(3.0, 8.0)), CornerRadius::ZERO, WHITE);
+            }
+            let nm = format!("{} ({} regions)", m.name, m.regions.len());
+            let shown: String = if nm.chars().count() > 26 { nm.chars().take(25).collect::<String>() + "~" } else { nm };
+            painter.text(Pos2::new(disp.left() + 5.0, disp.top() + 8.0), Align2::LEFT_CENTER, shown, mono(9.5), DIM);
+        }
+        None => {
+            painter.text(disp.center(), Align2::CENTER_CENTER, "no instrument - LOAD SFZ", mono(10.0), DIM);
+        }
+    }
+    let rx = r.left() + 218.0;
+    let ty = r.top() + 34.0;
+    if pill_tip(ui, Rect::from_min_size(Pos2::new(rx, ty), Vec2::new(122.0, 24.0)), "LOAD SFZ", false, "Choose an .sfz instrument (put the .sfz and its .wav files in the Noises folder)") {
+        st.rescan();
+        st.smp_target = Some(98);
+        st.multi_target = o;
+        st.overlay = Overlay::Noises;
+    }
+    enum_combo(ui, setter, &op.s_loop, &format!("msloop{o}"), Rect::from_min_size(Pos2::new(rx, ty + 28.0), Vec2::new(122.0, 24.0)));
+    // ---- mapping editor: click a bar, then edit its key range / root / velocity layer
+    let Some(m) = m else {
+        ui.painter().text(Pos2::new(rx + 61.0, ty + 70.0), Align2::CENTER_CENTER, "Every key plays the\nrecording of its range\n(bars = key ranges,\nwhite = root key)", mono(8.5), DIM);
+        return;
+    };
+    let resp = ui.interact(disp, egui::Id::new(("msdisp", o)), Sense::click()).on_hover_text("Click a bar to select a region, then edit its key range, root and velocity layer on the right.");
+    if resp.clicked() {
+        if let Some(pt) = resp.interact_pointer_pos() {
+            for (i, rg) in m.regions.iter().enumerate() {
+                let y = disp.top() + 24.0 + 11.0 * (i % 6) as f32;
+                let x0 = kx(rg.lo as f32);
+                let x1 = kx(rg.hi as f32 + 1.0).max(x0 + 2.0);
+                if pt.x >= x0 - 2.0 && pt.x <= x1 + 2.0 && pt.y >= y - 2.0 && pt.y <= y + 10.0 {
+                    st.ms_sel = i;
+                }
+            }
+        }
+    }
+    let sel = st.ms_sel.min(m.regions.len() - 1);
+    {
+        let rg = &m.regions[sel];
+        let y = disp.top() + 24.0 + 11.0 * (sel % 6) as f32;
+        ui.painter().with_clip_rect(disp).rect_stroke(Rect::from_min_max(Pos2::new(kx(rg.lo as f32) - 1.0, y - 1.0), Pos2::new(kx(rg.hi as f32 + 1.0).max(kx(rg.lo as f32) + 2.0) + 1.0, y + 9.0)), CornerRadius::same(1), Stroke::new(1.0_f32, WHITE), StrokeKind::Outside);
+    }
+    let mut vals = [m.regions[sel].lo, m.regions[sel].hi, m.regions[sel].root, m.regions[sel].lv, m.regions[sel].hv];
+    let before = vals;
+    ui.painter().text(Pos2::new(rx, ty + 62.0), Align2::LEFT_CENTER, format!("REGION {}/{}   LO  HI  ROOT", sel + 1, m.regions.len()), mono(8.0), DIM);
+    let mut dv = |ui: &mut Ui, x: f32, y: f32, w: f32, v: &mut u8, lo: u8, hi: u8| {
+        ui.put(Rect::from_min_size(Pos2::new(x, y), Vec2::new(w, 18.0)), egui::DragValue::new(v).range(lo..=hi).speed(0.25));
+    };
+    dv(ui, rx, ty + 70.0, 38.0, &mut vals[0], 0, 127);
+    dv(ui, rx + 40.0, ty + 70.0, 38.0, &mut vals[1], 0, 127);
+    dv(ui, rx + 80.0, ty + 70.0, 38.0, &mut vals[2], 0, 127);
+    ui.painter().text(Pos2::new(rx, ty + 98.0), Align2::LEFT_CENTER, "VELOCITY  LO  HI", mono(8.0), DIM);
+    dv(ui, rx, ty + 106.0, 38.0, &mut vals[3], 1, 127);
+    dv(ui, rx + 40.0, ty + 106.0, 38.0, &mut vals[4], 1, 127);
+    if vals != before {
+        let mut regs = m.regions.clone();
+        let rg = &mut regs[sel];
+        rg.lo = vals[0].min(vals[1]);
+        rg.hi = vals[1].max(vals[0]);
+        rg.root = vals[2];
+        rg.lv = vals[3].min(vals[4]);
+        rg.hv = vals[4].max(vals[3]);
+        shared.ms[o].set(Some(Arc::new(crate::sample::MultiS { name: m.name.clone(), regions: regs })));
+        shared.version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        st.ms_dirty = Some(o);
+    }
+    if st.ms_dirty == Some(o) && !ui.input(|i| i.pointer.any_down()) {
+        if let Some(cur) = shared.ms[o].get() {
+            if let Ok(mut g) = op.msmp.lock() {
+                *g = cur.encode();
+            }
+        }
+        st.ms_dirty = None;
+    }
 }
 
 /// Sample-mode left side: waveform with draggable start / end, load button, loop mode.
@@ -1765,8 +1932,25 @@ fn sub_noise_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, _shared: 
         randomize(setter, p, _shared, seed);
         st.say(now, "random sound".to_string());
     }
-    if pill_tip(ui, Rect::from_min_size(Pos2::new(x + 216.0, by), Vec2::new(124.0, 22.0)), "COPY OSC", st.copy_menu, "Copy one oscillator (with its wavetable) to another") {
+    if pill_tip(ui, Rect::from_min_size(Pos2::new(x + 216.0, by), Vec2::new(56.0, 22.0)), "COPY", st.copy_menu, "Copy one oscillator (with its wavetable) to another") {
         st.copy_menu = !st.copy_menu;
+    }
+    if pill_tip(ui, Rect::from_min_size(Pos2::new(x + 276.0, by), Vec2::new(64.0, 22.0)), "HYBRID", false, "Mix the current sound with a random preset: every section (oscillator, filter, LFO, effect...) comes from one or the other") {
+        if st.presets.is_empty() {
+            st.presets = presets::list_all();
+        }
+        let cur = p.preset_name.lock().map(|g| g.clone()).unwrap_or_default();
+        let pool: Vec<presets::PresetRef> = st.presets.iter().filter(|q| q.name != cur && q.name != "Init").cloned().collect();
+        if pool.is_empty() {
+            st.say(now, "no presets to mix with".to_string());
+        } else {
+            let seed = (now * 1000.0) as u64 ^ 0xA076_1D64_78BD_642F;
+            let pick = &pool[(seed >> 7) as usize % pool.len()];
+            match presets::hybridize(setter, p, _shared, pick, seed) {
+                Ok(()) => st.say(now, format!("hybrid with {}", pick.name)),
+                Err(e) => st.say(now, e),
+            }
+        }
     }
     if st.copy_menu {
         let pairs = [(0usize, 1usize), (0, 2), (1, 0), (1, 2), (2, 0), (2, 1)];
@@ -1924,7 +2108,7 @@ fn env_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, c: 
 
 // ===================================================================== clip sequencer
 
-fn clip_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, c: Rect) {
+fn clip_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, meters: &Meters, st: &mut Gui, c: Rect) {
     use crate::clip::*;
     let txt = p.clips.lock().map(|g| g.clone()).unwrap_or_default();
     let mut clips = decode_all(&txt);
@@ -1962,13 +2146,29 @@ fn clip_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, c:
     ui.painter().text(Pos2::new(bx + 244.0, c.top() + 10.0), Align2::LEFT_CENTER, "SWING", mono(9.5), DIM);
     h_slider(ui, setter, &p.clip_swing, Rect::from_min_size(Pos2::new(bx + 292.0, c.top() + 3.0), Vec2::new(80.0, 14.0)), "clip_swing", false, "Delays every second step of the clip (double-click to reset)");
     ui.painter().text(Pos2::new(bx + 380.0, c.top() + 10.0), Align2::LEFT_CENTER, format!("{:.0}%", p.clip_swing.value() * 100.0), mono(9.5), WHITE);
+    if pill_tip(ui, Rect::from_min_size(Pos2::new(bx + 420.0, c.top() - 2.0), Vec2::new(88.0, 24.0)), "CAPTURE", false, "Turn the notes you just played on your keyboard into this clip. The first note you played becomes step 1 and the key the clip is transposed from.") {
+        let ev: Vec<(bool, u8, f32, f64)> = meters.cap.lock().map(|g| g.clone()).unwrap_or_default();
+        let now_b = f64::from_bits(meters.beat_now.load(std::sync::atomic::Ordering::Relaxed));
+        let span = clips[sel].bars as f64 * 4.0 + 4.0;
+        let recent: Vec<(bool, u8, f32, f64)> = ev.into_iter().filter(|e| now_b - e.3 <= span).collect();
+        match clip_from_events(&recent, clips[sel].bars) {
+            Some(cl) => {
+                clips[sel].notes = cl.notes;
+                changed = true;
+            }
+            None => {}
+        }
+    }
+    if pill_tip(ui, Rect::from_min_size(Pos2::new(bx + 514.0, c.top() - 2.0), Vec2::new(70.0, 24.0)), "SYNC", p.clip_sync.value(), "Start the clip on the host's step grid, so it lines up with the song (needs a host that reports its position)") {
+        set_b(setter, &p.clip_sync, !p.clip_sync.value());
+    }
     if pill_tip(ui, Rect::from_min_size(Pos2::new(c.right() - 70.0, c.top() - 2.0), Vec2::new(66.0, 24.0)), "CLEAR", false, "Delete every note of this clip") {
         clips[sel].notes.clear();
         changed = true;
     }
     // ---- piano roll
     let rows = (PITCH_MAX - PITCH_MIN + 1) as usize;
-    let rh = ((c.height() - 36.0) / rows as f32).clamp(8.0, 13.0);
+    let rh = ((c.height() - 36.0 - 50.0) / rows as f32).clamp(6.0, 13.0);
     let gx = c.left() + 34.0;
     let gy = c.top() + 30.0;
     let steps = clips[sel].steps();
@@ -1996,6 +2196,53 @@ fn clip_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, c:
             let strong = k % 16 == 0;
             let beat = k % 4 == 0;
             pn.line_segment([Pos2::new(x, gy), Pos2::new(x, grid.bottom())], Stroke::new(1.0_f32, if strong { Color32::from_rgb(70, 70, 70) } else if beat { Color32::from_rgb(38, 38, 38) } else { Color32::from_rgb(22, 22, 22) }));
+        }
+    }
+    {
+        let pos = meters.clip_pos.load(std::sync::atomic::Ordering::Relaxed) as usize;
+        if p.clip_on.value() && pos > 0 {
+            let k = (pos - 1) % steps;
+            let x = gx + cw * k as f32;
+            ui.painter().rect_filled(Rect::from_min_size(Pos2::new(x, gy), Vec2::new(cw, grid.height())), CornerRadius::ZERO, Color32::from_rgba_unmultiplied(255, 255, 255, 26));
+            ui.painter().line_segment([Pos2::new(x, gy), Pos2::new(x, grid.bottom())], Stroke::new(1.5_f32, WHITE));
+            ui.ctx().request_repaint();
+        }
+    }
+    // ---- automation lane (mod source LANE)
+    {
+        let lr = Rect::from_min_size(Pos2::new(gx, grid.bottom() + 6.0), Vec2::new(grid.width(), 40.0));
+        dark_box(ui, lr);
+        ui.painter().text(Pos2::new(gx - 4.0, lr.center().y), Align2::RIGHT_CENTER, "LANE", mono(7.5), DIM);
+        ui.painter().line_segment([Pos2::new(lr.left(), lr.center().y), Pos2::new(lr.right(), lr.center().y)], Stroke::new(1.0_f32, Color32::from_rgb(50, 50, 50)));
+        for k in 0..steps {
+            let v = clips[sel].lane.get(k).copied().unwrap_or(0);
+            if v != 0 {
+                let h = v as f32 / 100.0 * 18.0;
+                let x = gx + cw * k as f32;
+                let rr = if h > 0.0 { Rect::from_min_max(Pos2::new(x + 1.0, lr.center().y - h), Pos2::new(x + cw - 1.0, lr.center().y)) } else { Rect::from_min_max(Pos2::new(x + 1.0, lr.center().y), Pos2::new(x + cw - 1.0, lr.center().y - h)) };
+                ui.painter().rect_filled(rr, CornerRadius::ZERO, WHITE);
+            }
+        }
+        let lresp = ui.interact(lr, egui::Id::new("clip_lane"), Sense::click_and_drag()).on_hover_text("Automation lane: drag up/down on a step to set a value. Right-click a step resets it.\nUse the LANE chip in the MATRIX tab to send it to any knob. Plays together with the clip.");
+        if let Some(pt) = lresp.interact_pointer_pos() {
+            let k = ((pt.x - gx) / cw).floor() as i32;
+            if k >= 0 && (k as usize) < steps {
+                let k = k as usize;
+                if clips[sel].lane.len() < MAX_STEPS {
+                    clips[sel].lane.resize(MAX_STEPS, 0);
+                }
+                if lresp.secondary_clicked() || (lresp.dragged_by(egui::PointerButton::Secondary)) {
+                    clips[sel].lane[k] = 0;
+                    changed = true;
+                } else if lresp.dragged_by(egui::PointerButton::Primary) || lresp.clicked_by(egui::PointerButton::Primary) {
+                    let v = ((lr.center().y - pt.y) / 18.0 * 100.0).clamp(-100.0, 100.0);
+                    let v = if v.abs() < 6.0 { 0 } else { v.round() as i8 };
+                    if clips[sel].lane[k] != v {
+                        clips[sel].lane[k] = v;
+                        changed = true;
+                    }
+                }
+            }
         }
     }
     let dkey = egui::Id::new("clip_drag");
@@ -2135,6 +2382,12 @@ fn settings_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, meters: &Met
     knob_s(ui, setter, &p.vel_curve, "VEL CURVE", cell(x1, c.top() + 62.0, 78.0), "Velocity response: negative = you have to hit harder, positive = soft playing is already loud", true);
     knob_s(ui, setter, &p.bend, "BEND RANGE", cell(x1 + 80.0, c.top() + 62.0, 78.0), "Pitch-bend range in semitones", false);
     knob_s(ui, setter, &p.glide, "GLIDE", cell(x1 + 160.0, c.top() + 62.0, 78.0), "Portamento time", false);
+    {
+        let on = p.midi_out.value();
+        if pill_tip(ui, Rect::from_min_size(Pos2::new(x1, c.top() + 132.0), Vec2::new(110.0, 24.0)), if on { "MIDI OUT ON" } else { "MIDI OUT OFF" }, on, "Send the notes made by the arpeggiator and the clip sequencer to the host as MIDI, so they can drive another instrument.") {
+            set_b(setter, &p.midi_out, !on);
+        }
+    }
     // key lock
     let kt = c.top() + 250.0;
     ui.painter().text(Pos2::new(x0, kt - 14.0), Align2::LEFT_CENTER, "KEY LOCK", mono(10.5), WHITE);
@@ -2147,7 +2400,7 @@ fn settings_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, meters: &Met
         }
     }
     ui.painter().text(Pos2::new(x0, kt + 66.0), Align2::LEFT_TOP, "Key lock moves every incoming note to the nearest note of the scale,\nso wrong keys can not happen (also feeds the arpeggiator and clips).", mono(8.5), DIM);
-    ui.painter().text(Pos2::new(x1, c.top() + 148.0), Align2::LEFT_TOP, "Transpose / octave: use the OCT and SEMI spinners left of the keyboard.\nMod wheel = CC1, sustain = CC64, aftertouch and pitch bend are always on.\nCtrl+Z / Ctrl+Y: undo / redo.  Right-click a knob\nmodulation ring: remove it.", mono(8.5), DIM);
+    ui.painter().text(Pos2::new(x1, c.top() + 168.0), Align2::LEFT_TOP, "Transpose / octave: use the OCT and SEMI spinners left of the keyboard.\nMod wheel = CC1, sustain = CC64, aftertouch and pitch bend are always on.\nCtrl+Z / Ctrl+Y: undo / redo.  Right-click a knob\nmodulation ring: remove it.", mono(8.5), DIM);
     // ---------------- MIDI bindings list
     let x2 = c.left() + 704.0;
     head(ui, x2, "MIDI BINDINGS (learned CCs)");
@@ -2182,6 +2435,47 @@ fn settings_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, meters: &Met
 
 // ===================================================================== LFO tab
 
+const LFO_PRESETS: [&str; 10] = ["Sine", "Triangle", "Saw up", "Saw down", "Square", "Pulse 25%", "Stairs up", "Bounce", "Exp decay", "Random steps"];
+
+fn lfo_preset(k: usize) -> LfoCurve {
+    let mut pts = [0.0f32; LFO_POINTS];
+    let n = LFO_POINTS as f32;
+    let mut seed = 0x1234_5678u32;
+    for (i, p) in pts.iter_mut().enumerate() {
+        let t = i as f32 / n;
+        *p = match k % LFO_PRESETS.len() {
+            0 => (t * std::f32::consts::TAU).sin(),
+            1 => 1.0 - 4.0 * (t - 0.5).abs(),
+            2 => t * 2.0 - 1.0,
+            3 => 1.0 - t * 2.0,
+            4 => if t < 0.5 { 1.0 } else { -1.0 },
+            5 => if t < 0.25 { 1.0 } else { -1.0 },
+            6 => ((t * 8.0).floor() / 7.0) * 2.0 - 1.0,
+            7 => (t * 3.0 * std::f32::consts::PI * 2.0).sin().abs() * 2.0 - 1.0,
+            8 => (-t * 5.0).exp() * 2.0 - 1.0,
+            _ => {
+                if i % 8 == 0 {
+                    seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                }
+                ((seed >> 8) as f32 / 8388608.0) - 1.0
+            }
+        };
+    }
+    if k % LFO_PRESETS.len() == 9 {
+        // hold each random value for 8 points
+        let mut seed = 0x9E37_79B9u32;
+        let mut cur = 0.0f32;
+        for (i, p) in pts.iter_mut().enumerate() {
+            if i % 8 == 0 {
+                seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                cur = ((seed >> 9) as f32 / 4194304.0) - 1.0;
+            }
+            *p = cur;
+        }
+    }
+    LfoCurve { pts }
+}
+
 fn lfo_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, st: &mut Gui, c: Rect, page: usize) {
     let w = (c.width() - 30.0) / 4.0;
     for i in page * 4..page * 4 + 4 {
@@ -2200,14 +2494,24 @@ fn lfo_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, 
                     let mut cv = LfoCurve { pts: curve.as_ref().map(|c| c.pts).unwrap_or_else(|| LfoCurve::default_curve().pts) };
                     let idx = (((pt.x - d.left()) / d.width()) * LFO_POINTS as f32).clamp(0.0, (LFO_POINTS - 1) as f32);
                     let v = ((d.center().y - pt.y) / (d.height() * 0.42)).clamp(-1.0, 1.0);
-                    let last: Option<(f32, f32)> = ui.data(|dd| dd.get_temp(egui::Id::new(("lfolast", i))));
-                    let (a, va) = if resp.drag_started() { (idx, v) } else { last.unwrap_or((idx, v)) };
-                    let (lo, hi, vl, vh) = if a <= idx { (a, idx, va, v) } else { (idx, a, v, va) };
-                    for k in (lo as usize)..=(hi as usize).min(LFO_POINTS - 1) {
-                        let f = if hi - lo < 0.5 { 1.0 } else { (k as f32 - lo) / (hi - lo) };
-                        cv.pts[k] = vl + (vh - vl) * f;
+                    let gsteps = [0usize, 4, 8, 16, 32][st.lfo_grid[i] as usize % 5];
+                    if gsteps > 0 {
+                        // stair-step drawing: a whole grid cell gets one value
+                        let cell_w = LFO_POINTS / gsteps;
+                        let c0 = (idx as usize / cell_w) * cell_w;
+                        for k in c0..(c0 + cell_w).min(LFO_POINTS) {
+                            cv.pts[k] = v;
+                        }
+                    } else {
+                        let last: Option<(f32, f32)> = ui.data(|dd| dd.get_temp(egui::Id::new(("lfolast", i))));
+                        let (a, va) = if resp.drag_started() { (idx, v) } else { last.unwrap_or((idx, v)) };
+                        let (lo, hi, vl, vh) = if a <= idx { (a, idx, va, v) } else { (idx, a, v, va) };
+                        for k in (lo as usize)..=(hi as usize).min(LFO_POINTS - 1) {
+                            let f = if hi - lo < 0.5 { 1.0 } else { (k as f32 - lo) / (hi - lo) };
+                            cv.pts[k] = vl + (vh - vl) * f;
+                        }
+                        ui.data_mut(|dd| dd.insert_temp(egui::Id::new(("lfolast", i)), (idx, v)));
                     }
-                    ui.data_mut(|dd| dd.insert_temp(egui::Id::new(("lfolast", i)), (idx, v)));
                     if let Ok(mut g) = l.draw.lock() {
                         *g = cv.encode();
                     }
@@ -2231,6 +2535,20 @@ fn lfo_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, 
             })
             .collect();
         painter.add(egui::Shape::line(pts, PathStroke::new(1.6_f32, WHITE)));
+        if shape == LfoShape::Custom {
+            let gl = ["GRID off", "GRID 4", "GRID 8", "GRID 16", "GRID 32"][st.lfo_grid[i] as usize % 5];
+            if pill_tip(ui, Rect::from_min_size(Pos2::new(d.right() - 144.0, d.top() + 3.0), Vec2::new(66.0, 16.0)), gl, st.lfo_grid[i] != 0, "Grid: draw in steps (the shape becomes a step sequencer). Click to change the number of steps.") {
+                st.lfo_grid[i] = (st.lfo_grid[i] + 1) % 5;
+            }
+            if pill_tip(ui, Rect::from_min_size(Pos2::new(d.right() - 74.0, d.top() + 3.0), Vec2::new(70.0, 16.0)), "SHAPES >", false, "Fill the drawing with a ready-made shape (click again for the next one)") {
+                st.lfo_pre[i] = (st.lfo_pre[i] + 1) % LFO_PRESETS.len() as u8;
+                let cv = lfo_preset(st.lfo_pre[i] as usize);
+                if let Ok(mut g) = l.draw.lock() {
+                    *g = cv.encode();
+                }
+                shared.lfo[i].set(Some(Arc::new(cv)));
+            }
+        }
         let ky = c.top() + 98.0;
         let kw = w / 3.0;
         if l.sync.value() {
@@ -2529,7 +2847,7 @@ fn strip(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, r: Re
     ui.painter().rect_filled(r, CornerRadius::same(6), PANEL);
     ui.painter().rect_stroke(r, CornerRadius::same(6), Stroke::new(1.0_f32, LINE), StrokeKind::Inside);
     ui.painter().text(Pos2::new(r.left() + 12.0, r.top() + 10.0), Align2::LEFT_CENTER, "MOD SOURCES  (drag onto any knob)", mono(9.5), DIM);
-    let chips: [(&str, ModSrc, &str); 26] = [
+    let chips: [(&str, ModSrc, &str); 32] = [
         ("ENV 1", ModSrc::Env1, "Amp envelope"),
         ("ENV 2", ModSrc::Env2, "Envelope 2"),
         ("ENV 3", ModSrc::Env3, "Envelope 3"),
@@ -2551,20 +2869,26 @@ fn strip(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, r: Re
         ("MACRO6", ModSrc::Macro6, "Macro knob 6"),
         ("MACRO7", ModSrc::Macro7, "Macro knob 7"),
         ("MACRO8", ModSrc::Macro8, "Macro knob 8"),
+        ("OSC A", ModSrc::OscA, "Output of oscillator A (cross-modulation, FM from anything)"),
+        ("OSC B", ModSrc::OscB, "Output of oscillator B"),
+        ("OSC C", ModSrc::OscC, "Output of oscillator C"),
+        ("LANE", ModSrc::ClipLane, "Automation lane of the active clip (SEQ tab)"),
+        ("FILT 1", ModSrc::Filt1, "Output of filter 1 (resonance-following, self-modulation)"),
+        ("FILT 2", ModSrc::Filt2, "Output of filter 2"),
         ("VEL", ModSrc::Vel, "Note velocity"),
         ("KEY", ModSrc::Key, "Note pitch"),
         ("AFTER", ModSrc::Aftertouch, "Channel aftertouch"),
         ("WHEEL", ModSrc::ModWheel, "Mod wheel (CC1)"),
         ("RANDOM", ModSrc::Random, "Random value per note"),
     ];
-    let cw = 54.0;
+    let cw = 46.0;
     for (n, (label, src, tip)) in chips.iter().enumerate() {
-        let (row, col) = (n / 13, n % 13);
+        let (row, col) = (n / 16, n % 16);
         let rr = Rect::from_min_size(Pos2::new(r.left() + 12.0 + (cw + 3.0) * col as f32, r.top() + 22.0 + 26.0 * row as f32), Vec2::new(cw, 22.0));
         source_chip(ui, setter, p, st, rr, label, *src, tip, now);
     }
     // macros
-    let mx = r.left() + 12.0 + (cw + 3.0) * 13.0 + 8.0;
+    let mx = r.left() + 12.0 + (cw + 3.0) * 16.0 + 8.0;
     ui.painter().vline(mx - 4.0, r.top() + 8.0..=r.bottom() - 8.0, Stroke::new(1.0_f32, LINE));
     ui.painter().text(Pos2::new(mx + 4.0, r.top() + 10.0), Align2::LEFT_CENTER, "MACROS", mono(9.5), DIM);
     for (i, m) in p.macros().iter().enumerate() {

@@ -32,9 +32,7 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
     let bus = st.fx_bus.min(1);
     let b = p.bank(bus);
     let md = |d: ModDst| {
-        if bus == 0 {
-            mdst(d);
-        }
+        mdst(if bus == 0 { d } else { d.bus2() });
     };
     let order: Vec<usize> = b.order_params().iter().map(|q| (q.value().clamp(0, 11)) as usize).collect();
     let cw = (c.width() - 11.0 * 4.0) / 12.0;
@@ -369,6 +367,40 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
             );
         }
     }
+
+    // ---- signal flow of the selected bus (fills the lower part of the page)
+    let fy = d.top() + 150.0;
+    ui.painter().text(Pos2::new(d.left() + 2.0, fy - 6.0), Align2::LEFT_CENTER, format!("SIGNAL FLOW  BUS {}", bus + 1), mono(9.0), DIM);
+    let bw = (d.width() - 70.0 - 11.0 * 14.0) / 12.0;
+    let by = fy + 6.0;
+    ui.painter().text(Pos2::new(d.left() + 12.0, by + 17.0), Align2::CENTER_CENTER, "IN", mono(9.0), WHITE);
+    for slot in 0..FX_SLOTS {
+        let m2 = order[slot];
+        let on = on_param(b, m2).value();
+        let x = d.left() + 30.0 + (bw + 14.0) * slot as f32;
+        let r = Rect::from_min_size(Pos2::new(x, by), Vec2::new(bw, 34.0));
+        let sel = st.fx_sel == m2;
+        let pnt = ui.painter();
+        pnt.rect_filled(r, CornerRadius::same(4), if sel { Color32::from_rgb(40, 40, 40) } else { Color32::from_rgb(14, 14, 14) });
+        pnt.rect_stroke(r, CornerRadius::same(4), Stroke::new(1.0_f32, if on { WHITE } else { Color32::from_rgb(48, 48, 48) }), StrokeKind::Inside);
+        pnt.text(r.center(), Align2::CENTER_CENTER, FX_NAMES[m2], mono(8.0), if on { WHITE } else { Color32::from_rgb(70, 70, 70) });
+        // arrow to the next box
+        let (ax, ay) = (r.right() + 1.0, r.center().y);
+        let col = if on { WHITE } else { Color32::from_rgb(48, 48, 48) };
+        pnt.line_segment([Pos2::new(ax, ay), Pos2::new(ax + 10.0, ay)], Stroke::new(1.0_f32, col));
+        if slot + 1 < FX_SLOTS {
+            pnt.line_segment([Pos2::new(ax + 10.0, ay), Pos2::new(ax + 6.5, ay - 3.0)], Stroke::new(1.0_f32, col));
+            pnt.line_segment([Pos2::new(ax + 10.0, ay), Pos2::new(ax + 6.5, ay + 3.0)], Stroke::new(1.0_f32, col));
+        }
+    }
+    let route = match p.fx_route.value() {
+        FxRoute::Series => "OUT  (bus 1 then bus 2)",
+        FxRoute::Parallel => "OUT  (bus 1 + bus 2)",
+        FxRoute::SplitLh => "OUT  (lows > bus 1, highs > bus 2)",
+        FxRoute::SplitLmh => "OUT  (lows > 1, mids > 2, highs dry)",
+        FxRoute::SplitMs => "OUT  (mid > bus 1, side > bus 2)",
+    };
+    ui.painter().text(Pos2::new(d.right() - 2.0, fy - 6.0), Align2::RIGHT_CENTER, route, mono(9.0), DIM);
 }
 
 fn graph(ui: &mut Ui, g: Rect, f: impl Fn(f32) -> f32, range: (f32, f32)) {

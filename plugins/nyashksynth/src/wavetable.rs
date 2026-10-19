@@ -13,6 +13,8 @@ pub const MAX_FRAMES: usize = 256;
 pub const MIPS: usize = 10;
 pub const TABLE_COUNT: usize = 8;
 const STRIDE: usize = N + 1; // one guard sample for interpolation
+/// Partials kept per frame for the spectral oscillator.
+pub const SH: usize = 64;
 
 pub const NAMES: [&str; TABLE_COUNT] = [
     "Basic Shapes",
@@ -38,6 +40,8 @@ pub type Spec = Vec<(f64, f64)>;
 pub struct Table {
     data: Vec<f32>, // [mip][frame][STRIDE]
     frames: usize,
+    /// first `SH` harmonics of every frame as (a_k, b_k) pairs, for the spectral oscillator
+    spec: Vec<f32>,
 }
 
 impl Table {
@@ -99,6 +103,17 @@ impl Table {
         MIPS - 1
     }
 
+    /// Blend of the first `SH` harmonics of two frames: `a[k-1]`, `b[k-1]` for harmonic k.
+    pub fn spectral_at(&self, f0: usize, ff: f32, a: &mut [f32; SH], b: &mut [f32; SH]) {
+        let f1 = (f0 + 1).min(self.frames - 1);
+        for k in 0..SH {
+            let (a0, b0) = (self.spec[(f0 * SH + k) * 2], self.spec[(f0 * SH + k) * 2 + 1]);
+            let (a1, b1) = (self.spec[(f1 * SH + k) * 2], self.spec[(f1 * SH + k) * 2 + 1]);
+            a[k] = a0 + (a1 - a0) * ff;
+            b[k] = b0 + (b1 - b0) * ff;
+        }
+    }
+
     /// Full-bandwidth frame for drawing (mip 0).
     pub fn display_frame(&self, pos: f32, out: &mut [f32]) {
         let n = out.len();
@@ -117,11 +132,16 @@ impl Table {
     }
 
     fn alloc(frames: usize) -> Table {
-        Table { data: vec![0.0; MIPS * frames * STRIDE], frames }
+        Table { data: vec![0.0; MIPS * frames * STRIDE], frames, spec: vec![0.0; frames * SH * 2] }
     }
 
     /// Write all mip levels of one frame from its spectrum. `scale` is applied to the output.
     fn fill(&mut self, fr: usize, spec: &Spec, scale: f64) {
+        for k in 1..=SH {
+            let (a, b) = spec.get(k).copied().unwrap_or((0.0, 0.0));
+            self.spec[(fr * SH + k - 1) * 2] = (a * scale) as f32;
+            self.spec[(fr * SH + k - 1) * 2 + 1] = (b * scale) as f32;
+        }
         let mut re = vec![0.0f64; N];
         let mut im = vec![0.0f64; N];
         for m in 0..MIPS {
@@ -704,5 +724,28 @@ mod tests {
         let z = vec![0.0f32; N];
         t2.set_frame(3, &z);
         assert!(t2.frame_time(3).iter().all(|v| v.abs() < 1e-6));
+    }
+}
+
+#[cfg(test)]
+mod spectral_tests {
+    use super::*;
+
+    #[test]
+    fn stored_harmonics_rebuild_the_frame() {
+        let t = &tables().t[0];
+        let (mut a, mut b) = ([0.0f32; SH], [0.0f32; SH]);
+        t.spectral_at(10, 0.0, &mut a, &mut b);
+        // basic shapes have few harmonics below 64, so the sum matches the mip-0 frame closely at most points
+        let fr = t.frame_time(10);
+        let mut err = 0.0f32;
+        let mut pw = 0.0f32;
+        for i in (0..N).step_by(37) {
+            let th = std::f32::consts::TAU * i as f32 / N as f32;
+            let s: f32 = (0..SH).map(|k| a[k] * ((k + 1) as f32 * th).cos() + b[k] * ((k + 1) as f32 * th).sin()).sum();
+            err += (s - fr[i]).abs();
+            pw += fr[i].abs();
+        }
+        assert!(err < pw * 0.35, "partials do not match the frame: err {err} vs {pw}");
     }
 }

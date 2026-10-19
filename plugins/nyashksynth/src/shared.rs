@@ -50,6 +50,7 @@ pub struct Shared {
     /// host sample rate (set in `initialize`, used to build impulse responses)
     pub fs: std::sync::atomic::AtomicU32,
     pub smp: [Slot<NSample>; 3],
+    pub ms: [Slot<crate::sample::MultiS>; 3],
     pub lfo: [Slot<LfoCurve>; NLFO],
     /// Bumped whenever a slot is changed from state/preset (lets the GUI notice host state loads).
     pub version: std::sync::atomic::AtomicU32,
@@ -57,7 +58,7 @@ pub struct Shared {
 
 impl Shared {
     pub fn new() -> Self {
-        Self { waves: [Slot::new(), Slot::new(), Slot::new()], noise: Slot::new(), ir: Slot::new(), fs: std::sync::atomic::AtomicU32::new(44100), smp: [Slot::new(), Slot::new(), Slot::new()], lfo: std::array::from_fn(|_| Slot::new()), version: std::sync::atomic::AtomicU32::new(0) }
+        Self { waves: [Slot::new(), Slot::new(), Slot::new()], noise: Slot::new(), ir: Slot::new(), fs: std::sync::atomic::AtomicU32::new(44100), smp: [Slot::new(), Slot::new(), Slot::new()], ms: [Slot::new(), Slot::new(), Slot::new()], lfo: std::array::from_fn(|_| Slot::new()), version: std::sync::atomic::AtomicU32::new(0) }
     }
 
     pub fn build_ir(&self, n: &NSample) -> crate::convolve::ConvIr {
@@ -70,6 +71,8 @@ impl Shared {
             let s = op.wave.lock().map(|g| g.clone()).unwrap_or_default();
             let sm = op.smp.lock().map(|g| g.clone()).unwrap_or_default();
             self.smp[i].set(if sm.is_empty() { None } else { NSample::decode(&sm).map(Arc::new) });
+            let mm = op.msmp.lock().map(|g| g.clone()).unwrap_or_default();
+            self.ms[i].set(if mm.is_empty() { None } else { crate::sample::MultiS::decode(&mm).map(Arc::new) });
             self.waves[i].set(if s.is_empty() { None } else { crate::wavetable::decode_table(&s).map(|(_, t)| Arc::new(t)) });
         }
         let s = p.noise_sample.lock().map(|g| g.clone()).unwrap_or_default();
