@@ -299,7 +299,7 @@ fn bode_shifts_frequencies() {
         let mut r = l.clone();
         for c in 0..n / 256 {
             let (a, b) = (c * 256, (c + 1) * 256);
-            rack.process(&p, &p, FxRoute::Series, 400.0, 0.0, &mut l[a..b], &mut r[a..b]);
+            rack.process(&p, &p, FxRoute::Series, 400.0, 3000.0, 0.0, &mut l[a..b], &mut r[a..b]);
         }
         let seg = &l[4096..];
         let (w, o, orig) = (goertzel(seg, want, fs), goertzel(seg, other, fs), goertzel(seg, 1000.0, fs));
@@ -316,7 +316,7 @@ fn rack_routing_keeps_level_sane() {
     let mut p = fx_patch_from(&sp, 120.0);
     p.on = [false; 12];
     p.on[11] = true; // utility only (unity gain)
-    for route in [FxRoute::Series, FxRoute::Parallel, FxRoute::SplitLh, FxRoute::SplitMs] {
+    for route in [FxRoute::Series, FxRoute::Parallel, FxRoute::SplitLh, FxRoute::SplitMs, FxRoute::SplitLmh] {
         let mut rack = FxRack::new(fs);
         let n = 8192;
         let mut l: Vec<f32> = (0..n).map(|i| (2.0 * std::f32::consts::PI * 220.0 * i as f32 / fs).sin() * 0.5 + (2.0 * std::f32::consts::PI * 3000.0 * i as f32 / fs).sin() * 0.2).collect();
@@ -324,7 +324,7 @@ fn rack_routing_keeps_level_sane() {
         let (l0, r0) = (l.clone(), r.clone());
         for c in 0..n / 256 {
             let (a, b) = (c * 256, (c + 1) * 256);
-            rack.process(&p, &p, route, 800.0, 1.0, &mut l[a..b], &mut r[a..b]);
+            rack.process(&p, &p, route, 800.0, 4000.0, 1.0, &mut l[a..b], &mut r[a..b]);
         }
         let e0: f32 = l0[4096..].iter().map(|v| v * v).sum();
         let e1: f32 = l[4096..].iter().map(|v| v * v).sum();
@@ -480,4 +480,61 @@ fn granular_oscillator_makes_a_cloud_at_pitch() {
     assert!(goertzel(seg2, f0 * 2.0, 48000.0) > goertzel(seg2, f0, 48000.0) * 6.0, "octave up wrong");
     // very dense clouds stay level-controlled
     assert!(rms(&run(60, 250.0)[24000..]) < 1.0);
+}
+
+#[test]
+fn new_fx_variants_are_stable_and_distinct() {
+    use nyashksynth::fx::FxRack;
+    use nyashksynth::params::{DistType, FxRoute, ReverbType, SynthParams};
+    let fs = 48000.0f32;
+    let sp = SynthParams::default();
+    let run = |setup: &dyn Fn(&mut nyashksynth::fx::FxPatch)| -> Vec<f32> {
+        let mut p = fx_patch_from(&sp, 120.0);
+        p.on = [false; 12];
+        setup(&mut p);
+        let mut rack = FxRack::new(fs);
+        let n = 24000;
+        let mut l: Vec<f32> = (0..n).map(|i| if i < 2000 { (2.0 * std::f32::consts::PI * 330.0 * i as f32 / fs).sin() * 0.5 } else { 0.0 }).collect();
+        let mut r = l.clone();
+        for c in 0..n / 256 {
+            let (a, b) = (c * 256, (c + 1) * 256);
+            rack.process(&p, &p, FxRoute::Series, 400.0, 3000.0, 1.0, &mut l[a..b], &mut r[a..b]);
+        }
+        assert!(l.iter().chain(r.iter()).all(|v| v.is_finite() && v.abs() < 8.0));
+        l
+    };
+    // reverb algorithms give different tails
+    let mut tails = vec![];
+    for t in [ReverbType::Plate, ReverbType::Vintage, ReverbType::Nitrous, ReverbType::Basin] {
+        let o = run(&|p| {
+            p.on[7] = true;
+            p.rv_type = t;
+            p.rv_mix = 0.5;
+            p.rv_size = 0.8;
+        });
+        assert!(o[6000..].iter().map(|v| v * v).sum::<f32>() > 1e-6, "{t:?} has a tail");
+        tails.push(o);
+    }
+    for i in 1..4 {
+        let d: f32 = tails[0].iter().zip(&tails[i]).map(|(a, b)| (a - b).abs()).sum();
+        assert!(d > 0.5, "reverb type {i} differs from plate ({d})");
+    }
+    // overdrive + bias stay finite; bias removes nothing audible but must not leave DC
+    let o = run(&|p| {
+        p.on[1] = true;
+        p.ds_type = DistType::Overdrive;
+        p.ds_drive = 0.9;
+        p.ds_bias = 0.8;
+        p.ds_mix = 1.0;
+    });
+    assert!(o[..2000].iter().any(|v| v.abs() > 0.1));
+    // HQ delay still echoes
+    let o = run(&|p| {
+        p.on[5] = true;
+        p.dl_hq = true;
+        p.dl_ms_l = 100.0;
+        p.dl_ms_r = 100.0;
+        p.dl_mix = 0.8;
+    });
+    assert!(o[4800..8000].iter().map(|v| v * v).sum::<f32>() > 1e-3);
 }

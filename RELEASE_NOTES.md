@@ -1,3 +1,10 @@
+## NyashkSynth v2.9.0
+
+- **Split Low / Mid / High routing**: two crossovers (LOW/MID, MID/HI); lows go to FX bus 1, mids to bus 2, highs stay dry.
+- **Distortion**: new **Overdrive** type and **DC BIAS** knob (asymmetry / even harmonics).
+- **Reverb algorithms**: Plate, Vintage, Nitrous, Basin.
+- **Delay HQ**: cubic interpolation and smooth time changes (tape-like glides).
+
 ## NyashkSynth v2.8.0
 
 - **Granular oscillator mode** (GRN): position, grain size, density (up to 256 grains/s), spray; works on a loaded sample.

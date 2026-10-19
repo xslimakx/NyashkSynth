@@ -1,7 +1,7 @@
 //! Effects rack: ten modules (hyper/dimension, distortion, flanger, phaser, chorus, delay,
 //! compressor, reverb, EQ, filter) that can be put in any order.
 
-use crate::params::{DistType, FxFilterType};
+use crate::params::{DistType, FxFilterType, ReverbType};
 use std::f32::consts::{PI, TAU};
 
 #[derive(Clone)]
@@ -20,6 +20,9 @@ pub struct FxPatch {
     pub ds_drive: f32,
     pub ds_tone: f32,
     pub ds_mix: f32,
+    pub ds_bias: f32,
+    pub rv_type: ReverbType,
+    pub dl_hq: bool,
 
     pub fg_rate: f32,
     pub fg_depth: f32,
@@ -145,6 +148,22 @@ impl DelayLine {
         let a = self.buf[i];
         let b = self.buf[(i + 1) % n];
         a + (b - a) * f
+    }
+    /// 4-point cubic read (used by the HQ delay).
+    #[inline]
+    fn read_cubic(&self, d: f32) -> f32 {
+        let n = self.buf.len();
+        let d = d.clamp(2.0, (n - 3) as f32);
+        let p = self.w as f32 - d;
+        let p = if p < 0.0 { p + n as f32 } else { p };
+        let i = p as usize % n;
+        let t = p - p.floor();
+        let g = |k: usize| self.buf[(i + n + k - 1) % n];
+        let (y0, y1, y2, y3) = (g(0), g(1), g(2), g(3));
+        let c1 = 0.5 * (y2 - y0);
+        let c2 = y0 - 2.5 * y1 + 2.0 * y2 - 0.5 * y3;
+        let c3 = 0.5 * (y3 - y0) + 1.5 * (y1 - y2);
+        ((c3 * t + c2) * t + c1) * t + y1
     }
     /// Integer tap.
     #[inline]
@@ -326,6 +345,7 @@ struct Chorus {
 }
 
 struct Delay {
+    cur: [f32; 2],
     dl: [DelayLine; 2],
     lp: [OnePole; 2],
     hp: [OnePole; 2],
@@ -466,7 +486,7 @@ impl Fx {
             flanger: Flanger { dl: [DelayLine::new(ms(fs, 30.0)), DelayLine::new(ms(fs, 30.0))], ph: 0.0, fb: [0.0; 2] },
             phaser: Phaser { z: [[0.0; 12]; 2], ph: 0.0, fb: [0.0; 2] },
             chorus: Chorus { dl: [DelayLine::new(ms(fs, 80.0)), DelayLine::new(ms(fs, 80.0))], ph: 0.0, fb: [0.0; 2], lp: [OnePole::default(); 2] },
-            delay: Delay { dl: [DelayLine::new((fs * 2.0) as usize + 8), DelayLine::new((fs * 2.0) as usize + 8)], lp: [OnePole::default(); 2], hp: [OnePole::default(); 2] },
+            delay: Delay { cur: [0.0; 2], dl: [DelayLine::new((fs * 2.0) as usize + 8), DelayLine::new((fs * 2.0) as usize + 8)], lp: [OnePole::default(); 2], hp: [OnePole::default(); 2] },
             comp: Comp { bands: [CompBand::default(); 3], lo: [[Bq::default(); 2]; 2], hi1: [[Bq::default(); 2]; 2], lo2: [[Bq::default(); 2]; 2], hi2: [[Bq::default(); 2]; 2] },
             plate: Plate::new(fs),
             eq: EqM { ls: [Bq::default(); 2], pk: [Bq::default(); 2], hs: [Bq::default(); 2] },
@@ -579,7 +599,8 @@ impl Fx {
                 false
             };
             for ch in 0..2 {
-                let x = if ch == 0 { l[i] } else { r[i] };
+                let x0 = if ch == 0 { l[i] } else { r[i] };
+                let x = x0 + p.ds_bias * 0.5;
                 let y = match p.ds_type {
                     DistType::Soft => (x * g).tanh() / g.sqrt().max(1.0),
                     DistType::Hard => (x * g).clamp(-1.0, 1.0) / g.sqrt().max(1.0),
@@ -617,6 +638,13 @@ impl Fx {
                         let v = x * (1.0 + p.ds_drive * 3.0);
                         v + (v.abs() - v) * p.ds_drive
                     }
+                    DistType::Overdrive => {
+                        // asymmetric soft clip: cubic knee below, hard-ish saturation above
+                        let v = (x * (1.0 + p.ds_drive * 12.0)).clamp(-3.0, 3.0);
+                        let a = v.abs();
+                        let s = if a < 1.0 { a - a * a * a / 3.0 } else { 2.0 / 3.0 + (a - 1.0).min(2.0) * 0.02 };
+                        v.signum() * s * 1.5 / (1.0 + p.ds_drive * 0.6)
+                    }
                     DistType::SineShaper => ((x * g).clamp(-1.0, 1.0) * PI * 0.5).sin() / g.sqrt().max(1.0),
                     DistType::Downsample => {
                         if tick {
@@ -627,7 +655,7 @@ impl Fx {
                 };
                 let y = d.tone[ch].lp(y, a_tone);
                 let y = d.dc[ch].hp(y, a_dc);
-                let o = x * (1.0 - p.ds_mix) + y * p.ds_mix;
+                let o = x0 * (1.0 - p.ds_mix) + y * p.ds_mix;
                 if ch == 0 {
                     l[i] = o;
                 } else {
@@ -740,9 +768,19 @@ impl Fx {
         let a_lp = op_coef(p.dl_lp, fs);
         let a_hp = op_coef(p.dl_hp, fs);
         let fbk = p.dl_fb.min(0.95);
+        let slew = 1.0 - (-1.0 / (0.03 * fs)).exp();
         for i in 0..l.len() {
             let dry = [l[i], r[i]];
-            let t = [d.dl[0].read(tl), d.dl[1].read(tr)];
+            let tgt = [tl, tr];
+            if p.dl_hq {
+                // slewed delay time (no zipper noise, tape-like glides) + cubic interpolation
+                for c in 0..2 {
+                    d.cur[c] += (tgt[c] - d.cur[c]) * slew;
+                }
+            } else {
+                d.cur = tgt;
+            }
+            let t = if p.dl_hq { [d.dl[0].read_cubic(d.cur[0]), d.dl[1].read_cubic(d.cur[1])] } else { [d.dl[0].read(tl), d.dl[1].read(tr)] };
             let mut f = [0.0f32; 2];
             for c in 0..2 {
                 let x = d.lp[c].lp(t[c], a_lp);
@@ -828,24 +866,30 @@ impl Fx {
         let fs = self.fs;
         let pl = &mut self.plate;
         let sc = pl.sc;
-        let decay = 0.35 + 0.62 * p.rv_size;
-        let damp = 0.02 + 0.9 * p.rv_damp;
+        let (dk, dp, md, mr, bwc, outg) = match p.rv_type {
+            ReverbType::Plate => (0.62, 1.0, 1.0, 1.0, 0.9995, 1.0),
+            ReverbType::Vintage => (0.55, 1.35, 0.0, 1.0, 0.72, 0.9),
+            ReverbType::Nitrous => (0.60, 0.45, 3.2, 1.8, 0.9998, 1.0),
+            ReverbType::Basin => (0.635, 1.25, 1.6, 0.35, 0.9, 0.85),
+        };
+        let decay = (0.35 + dk * p.rv_size).min(0.985);
+        let damp = (0.02 + 0.9 * p.rv_damp * dp).min(0.97);
         let a_lc = op_coef(p.rv_lowcut, fs);
         let a_hc = op_coef(p.rv_highcut, fs);
         let pre = (p.rv_pre * 0.001 * fs).max(1.0);
         let t = |x: f32| x * sc;
         for i in 0..l.len() {
-            pl.lfo += 0.7 / fs;
+            pl.lfo += 0.7 * mr / fs;
             if pl.lfo >= 1.0 {
                 pl.lfo -= 1.0;
             }
-            let m1 = (TAU * pl.lfo).sin() * t(8.0);
-            let m2 = (TAU * (pl.lfo + 0.37)).sin() * t(8.0);
+            let m1 = (TAU * pl.lfo).sin() * t(8.0) * md;
+            let m2 = (TAU * (pl.lfo + 0.37)).sin() * t(8.0) * md;
             let dry = [l[i], r[i]];
             pl.pre.push((dry[0] + dry[1]) * 0.5 * 0.5);
             let mut x = pl.pre.read(pre);
             // input bandwidth + diffusion
-            pl.bw += 0.9995 * (x - pl.bw);
+            pl.bw += bwc * (x - pl.bw);
             x = pl.bw;
             for (dl, g) in pl.inp_ap.iter_mut() {
                 let d = dl.buf.len() as f32 - 66.0;
@@ -874,7 +918,7 @@ impl Fx {
             let tp = |v: f32| (v * sc) as usize;
             let yl = pl.r_d1.tap(tp(266.0)) + pl.r_d1.tap(tp(2974.0)) - pl.r_ap2.tap(tp(1913.0)) + pl.r_d2.tap(tp(1996.0)) - pl.l_d1.tap(tp(1990.0)) - pl.l_ap2.tap(tp(187.0)) - pl.l_d2.tap(tp(1066.0));
             let yr = pl.l_d1.tap(tp(353.0)) + pl.l_d1.tap(tp(3627.0)) - pl.l_ap2.tap(tp(1228.0)) + pl.l_d2.tap(tp(2111.0)) - pl.r_d1.tap(tp(121.0)) - pl.r_ap2.tap(tp(335.0)) - pl.r_d2.tap(tp(1990.0));
-            let (mut wl, mut wr) = (yl * 0.6, yr * 0.6);
+            let (mut wl, mut wr) = (yl * 0.6 * outg, yr * 0.6 * outg);
             let (m, s) = ((wl + wr) * 0.5, (wl - wr) * 0.5 * p.rv_width);
             wl = m + s;
             wr = m - s;
@@ -1031,12 +1075,13 @@ pub struct FxRack {
     fs: f32,
     bus: [Fx; 2],
     xo: [[[Bq; 2]; 2]; 2], // [low/high][stage][channel]
-    tmp: [Vec<f32>; 4],
+    xo2: [[[Bq; 2]; 2]; 2],
+    tmp: [Vec<f32>; 6],
 }
 
 impl FxRack {
     pub fn new(fs: f32) -> Self {
-        Self { fs, bus: [Fx::new(fs), Fx::new(fs)], xo: [[[Bq::default(); 2]; 2]; 2], tmp: [Vec::new(), Vec::new(), Vec::new(), Vec::new()] }
+        Self { fs, bus: [Fx::new(fs), Fx::new(fs)], xo: [[[Bq::default(); 2]; 2]; 2], xo2: [[[Bq::default(); 2]; 2]; 2], tmp: Default::default() }
     }
 
     pub fn reset(&mut self) {
@@ -1046,7 +1091,7 @@ impl FxRack {
 
     /// Process one block through both busses. `p1` / `p2` are the bus patches.
     #[allow(clippy::too_many_arguments)]
-    pub fn process(&mut self, p1: &FxPatch, p2: &FxPatch, route: crate::params::FxRoute, split: f32, lvl2: f32, l: &mut [f32], r: &mut [f32]) {
+    pub fn process(&mut self, p1: &FxPatch, p2: &FxPatch, route: crate::params::FxRoute, split: f32, split2: f32, lvl2: f32, l: &mut [f32], r: &mut [f32]) {
         use crate::params::FxRoute;
         let (a1, a2) = (p1.any_on(), p2.any_on());
         if !a1 && !a2 {
@@ -1103,7 +1148,7 @@ impl FxRack {
                 let f = split.clamp(40.0, 0.45 * self.fs);
                 let lp = BqCoef::lowpass(f, 0.7071, self.fs);
                 let hp = BqCoef::highpass(f, 0.7071, self.fs);
-                let [lo_l, lo_r, hi_l, hi_r] = &mut self.tmp;
+                let [lo_l, lo_r, hi_l, hi_r, ..] = &mut self.tmp;
                 for i in 0..n {
                     for (ch, x) in [l[i], r[i]].iter().enumerate() {
                         let a0 = self.xo[0][0][ch].tick(&lp, *x);
@@ -1130,8 +1175,46 @@ impl FxRack {
                     r[i] = lo_r[i] + hi_r[i] * lvl2;
                 }
             }
+            FxRoute::SplitLmh => {
+                let f1 = split.clamp(40.0, 0.4 * self.fs);
+                let f2 = split2.clamp(f1 * 1.2, 0.45 * self.fs);
+                let (lp1, hp1) = (BqCoef::lowpass(f1, 0.7071, self.fs), BqCoef::highpass(f1, 0.7071, self.fs));
+                let (lp2, hp2) = (BqCoef::lowpass(f2, 0.7071, self.fs), BqCoef::highpass(f2, 0.7071, self.fs));
+                let [lo_l, lo_r, mi_l, mi_r, hi_l, hi_r] = &mut self.tmp;
+                for i in 0..n {
+                    for (ch, x) in [l[i], r[i]].iter().enumerate() {
+                        let a0 = self.xo[0][0][ch].tick(&lp1, *x);
+                        let lo = self.xo[0][1][ch].tick(&lp1, a0);
+                        let b0 = self.xo[1][0][ch].tick(&hp1, *x);
+                        let rest = self.xo[1][1][ch].tick(&hp1, b0);
+                        let m0 = self.xo2[0][0][ch].tick(&lp2, rest);
+                        let mid = self.xo2[0][1][ch].tick(&lp2, m0);
+                        let h0 = self.xo2[1][0][ch].tick(&hp2, rest);
+                        let hi = self.xo2[1][1][ch].tick(&hp2, h0);
+                        if ch == 0 {
+                            lo_l[i] = lo;
+                            mi_l[i] = mid;
+                            hi_l[i] = hi;
+                        } else {
+                            lo_r[i] = lo;
+                            mi_r[i] = mid;
+                            hi_r[i] = hi;
+                        }
+                    }
+                }
+                if a1 {
+                    self.bus[0].process(p1, &mut lo_l[..n], &mut lo_r[..n]);
+                }
+                if a2 {
+                    self.bus[1].process(p2, &mut mi_l[..n], &mut mi_r[..n]);
+                }
+                for i in 0..n {
+                    l[i] = lo_l[i] + (mi_l[i] * lvl2) + hi_l[i];
+                    r[i] = lo_r[i] + (mi_r[i] * lvl2) + hi_r[i];
+                }
+            }
             FxRoute::SplitMs => {
-                let [m_l, m_r, s_l, s_r] = &mut self.tmp;
+                let [m_l, m_r, s_l, s_r, ..] = &mut self.tmp;
                 for i in 0..n {
                     let (m, s) = ((l[i] + r[i]) * 0.5, (l[i] - r[i]) * 0.5);
                     m_l[i] = m;

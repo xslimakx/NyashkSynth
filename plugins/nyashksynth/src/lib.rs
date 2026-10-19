@@ -173,6 +173,9 @@ pub fn fx_patch_from_bank(p: &params::FxBank, bpm: f32) -> FxPatch {
             ds_drive: p.ds_drive.value(),
             ds_tone: p.ds_tone.value(),
             ds_mix: p.ds_mix.value(),
+            ds_bias: p.ds_bias.value(),
+            rv_type: p.rv_type.value(),
+            dl_hq: p.dl_hq.value(),
             fg_rate: rate(p.fg_rate.value(), p.fg_sync.value(), p.fg_div.value()),
             fg_depth: p.fg_depth.value(),
             fg_delay: p.fg_delay.value(),
@@ -319,7 +322,7 @@ impl Plugin for NyashkSynth {
         self.engine.patch = np;
         let fxp = fx_patch_from(&self.params, bpm);
         let fxp2 = fx_patch_from_bank(&self.params.fx2, bpm);
-        let (route, split, lvl2) = (self.params.fx_route.value(), self.params.fx_split.value(), self.params.fx2_level.value());
+        let (route, split, split2, lvl2) = (self.params.fx_route.value(), self.params.fx_split.value(), self.params.fx_split2.value(), self.params.fx2_level.value());
         let master = util::db_to_gain(self.params.master.value());
 
         // safety nets against stuck notes: GUI gone / frozen, or the PANIC click
@@ -439,7 +442,7 @@ impl Plugin for NyashkSynth {
         }
 
         match self.engine.fx_mod() {
-            None => self.fx.process(&fxp, &fxp2, route, split, lvl2, l_all, r_all),
+            None => self.fx.process(&fxp, &fxp2, route, split, split2, lvl2, l_all, r_all),
             Some(m) => {
                 // effect modulation: update the parameters every 64 samples
                 let mut fxp = fxp;
@@ -451,7 +454,7 @@ impl Plugin for NyashkSynth {
                     }
                     let mut cur = fxp.clone();
                     cur.apply_mod(&self.fx_mod_s);
-                    self.fx.process(&cur, &fxp2, route, split, lvl2, &mut l_all[s..e], &mut r_all[s..e]);
+                    self.fx.process(&cur, &fxp2, route, split, split2, lvl2, &mut l_all[s..e], &mut r_all[s..e]);
                     s = e;
                 }
                 let _ = &mut fxp;

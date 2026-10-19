@@ -517,6 +517,20 @@ pub enum DistType {
     SineShaper,
     #[name = "Downsample"]
     Downsample,
+    #[name = "Overdrive"]
+    Overdrive,
+}
+
+#[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
+pub enum ReverbType {
+    #[name = "Plate"]
+    Plate,
+    #[name = "Vintage"]
+    Vintage,
+    #[name = "Nitrous"]
+    Nitrous,
+    #[name = "Basin"]
+    Basin,
 }
 
 #[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
@@ -793,6 +807,12 @@ pub struct FxBank {
     pub ds_tone: FloatParam,
     #[id = "ds_mx"]
     pub ds_mix: FloatParam,
+    #[id = "ds_bs"]
+    pub ds_bias: FloatParam,
+    #[id = "rv_ty"]
+    pub rv_type: EnumParam<ReverbType>,
+    #[id = "dl_hq"]
+    pub dl_hq: BoolParam,
 
     // ---- flanger
     #[id = "fg_on"]
@@ -1009,6 +1029,9 @@ impl FxBank {
             ds_drive: unit_param("Dist Drive", 0.3),
             ds_tone: hz_param("Dist Tone", 20000.0, 200.0, 20000.0),
             ds_mix: unit_param("Dist Mix", 1.0),
+            ds_bias: FloatParam::new("Dist DC Bias", 0.0, FloatRange::Linear { min: -1.0, max: 1.0 }).with_value_to_string(formatters::v2s_f32_rounded(2)),
+            rv_type: EnumParam::new("Reverb Type", ReverbType::Plate),
+            dl_hq: BoolParam::new("Delay HQ", false),
 
             fg_on: BoolParam::new("Flanger On", false),
             fg_rate: rate_param("Flanger Rate", 0.3, 0.02, 8.0),
@@ -1127,6 +1150,8 @@ pub enum FxRoute {
     SplitLh,
     #[name = "Split Mid / Side"]
     SplitMs,
+    #[name = "Split Low / Mid / High"]
+    SplitLmh,
 }
 
 pub const FX_SLOTS: usize = 12;
@@ -1475,6 +1500,8 @@ pub struct SynthParams {
     pub fx_route: EnumParam<FxRoute>,
     #[id = "fxsp"]
     pub fx_split: FloatParam,
+    #[id = "fxs2"]
+    pub fx_split2: FloatParam,
     #[id = "fxl2"]
     pub fx2_level: FloatParam,
 
@@ -1585,6 +1612,7 @@ impl Default for SynthParams {
             fx2: FxBank::new(),
             fx_route: EnumParam::new("FX Routing", FxRoute::Series),
             fx_split: hz_param("FX Split Freq", 400.0, 40.0, 12000.0),
+            fx_split2: hz_param("FX Split Freq 2", 3000.0, 100.0, 16000.0),
             fx2_level: unit_param("FX Bus 2 Level", 1.0),
 
             arp_on: BoolParam::new("Arp On", false),

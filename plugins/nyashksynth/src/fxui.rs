@@ -110,7 +110,7 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
     ui.painter().text(Pos2::new(d.left() + 90.0, d.top() + 8.0), Align2::LEFT_CENTER, format!("slot {pos_in_chain}/12"), mono(9.0), DIM);
     // ---- busses and routing (right side of the header line)
     {
-        let bx = d.right() - 470.0;
+        let bx = d.right() - 526.0;
         for k in 0..2 {
             if pill_tip(ui, Rect::from_min_size(Pos2::new(bx + 62.0 * k as f32, d.top() - 3.0), Vec2::new(58.0, 22.0)), if k == 0 { "BUS 1" } else { "BUS 2" }, bus == k, "Switch between the two effect busses (each has the full set of modules)") {
                 st.fx_bus = k;
@@ -118,10 +118,17 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
         }
         ui.painter().text(Pos2::new(bx + 134.0, d.top() + 8.0), Align2::LEFT_CENTER, "ROUTING", mono(9.0), DIM);
         enum_combo(ui, setter, &p.fx_route, "fx_route", Rect::from_min_size(Pos2::new(bx + 190.0, d.top() - 3.0), Vec2::new(150.0, 22.0)));
-        if matches!(p.fx_route.value(), FxRoute::SplitLh) {
-            knob_s(ui, setter, &p.fx_split, "SPLIT", cell(bx + 346.0, d.top() - 16.0, 52.0), "Crossover: lows go to bus 1, highs to bus 2", false);
+        match p.fx_route.value() {
+            FxRoute::SplitLh => {
+                knob_s(ui, setter, &p.fx_split, "SPLIT", cell(bx + 346.0, d.top() - 16.0, 52.0), "Crossover: lows go to bus 1, highs to bus 2", false);
+            }
+            FxRoute::SplitLmh => {
+                knob_s(ui, setter, &p.fx_split, "LOW/MID", cell(bx + 346.0, d.top() - 16.0, 52.0), "Low / mid crossover. Lows go to bus 1", false);
+                knob_s(ui, setter, &p.fx_split2, "MID/HI", cell(bx + 402.0, d.top() - 16.0, 52.0), "Mid / high crossover. Mids go to bus 2, highs stay dry", false);
+            }
+            _ => {}
         }
-        knob_s(ui, setter, &p.fx2_level, "BUS 2", cell(bx + 402.0, d.top() - 16.0, 52.0), "Level of bus 2 in the mix", false);
+        knob_s(ui, setter, &p.fx2_level, "BUS 2", cell(bx + 458.0, d.top() - 16.0, 52.0), "Level of bus 2 in the mix", false);
     }
     let on_p = on_param(b, m);
     if pill_tip(ui, Rect::from_min_size(Pos2::new(d.left() + 160.0, d.top() - 3.0), Vec2::new(44.0, 22.0)), if on_p.value() { "ON" } else { "OFF" }, on_p.value(), "Module on/off") {
@@ -154,6 +161,7 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
             kn(ui, setter, &b.ds_tone, "TONE", x0 + w, y0 + 36.0, "Tilt: dark to bright");
             md(ModDst::FxDistMix);
             kn(ui, setter, &b.ds_mix, "MIX", x0 + w * 2.0, y0 + 36.0, "Dry / wet");
+            kn(ui, setter, &b.ds_bias, "DC BIAS", x0 + w * 3.0, y0 + 36.0, "Offset before the shaper: adds even harmonics / asymmetry");
             // transfer curve
             let g = Rect::from_min_size(Pos2::new(x0 + 340.0, y0), Vec2::new(150.0, 120.0));
             dark_box(ui, g);
@@ -247,6 +255,9 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
             if pill_tip(ui, Rect::from_min_size(Pos2::new(x0 + 120.0, y0 + 74.0), Vec2::new(80.0, 22.0)), "PINGPONG", b.dl_pp.value(), "Repeats bounce between left and right") {
                 set_b(setter, &b.dl_pp, !b.dl_pp.value());
             }
+            if pill_tip(ui, Rect::from_min_size(Pos2::new(x0 + 206.0, y0 + 74.0), Vec2::new(44.0, 22.0)), "HQ", b.dl_hq.value(), "High quality: cubic interpolation and smooth time changes (tape-like glides)") {
+                set_b(setter, &b.dl_hq, !b.dl_hq.value());
+            }
         }
         6 => {
             kn(ui, setter, &b.cp_thresh, "THRESH", x0, y0, "Threshold in dB");
@@ -285,6 +296,8 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
             kn(ui, setter, &b.rv_width, "WIDTH", x0 + w * 5.0, y0, "Stereo width");
             md(ModDst::FxReverbMix);
             kn(ui, setter, &b.rv_mix, "MIX", x0 + w * 6.0, y0, "Dry / wet");
+            ui.painter().text(Pos2::new(x0 + 2.0, y0 + 86.0), Align2::LEFT_CENTER, "ALGORITHM", mono(9.0), DIM);
+            enum_combo(ui, setter, &b.rv_type, "rv_type", Rect::from_min_size(Pos2::new(x0 + 70.0, y0 + 74.0), Vec2::new(130.0, 24.0)));
         }
         8 => {
             kn(ui, setter, &b.eq_lf, "LOW F", x0, y0, "Low shelf frequency");

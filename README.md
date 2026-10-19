@@ -29,7 +29,7 @@ A Serum-style wavetable synthesizer in the same black-and-white Nyashk design.
 | **Filter** | **two filters** (series or parallel) with 16 classic types (LP/HP/Band/Notch, Ladder, shelves, combs, phaser, formant) plus **Custom (points)**: up to 8 draggable EQ-style points (bell, shelves, HP/LP, notch, band) placed right on the response graph; routing per source |
 | **Envelopes / LFOs** | 4 envelopes with bendable slopes and invert-legato, 8 LFOs (12 shapes incl. Lorenz/Rössler chaos, drawable curve, delay, one-shot, tempo sync) |
 | **Mod matrix** | 16 slots, drag any source onto any knob, per-slot curve / uni / aux source, live modulation dots on the knobs, **FX parameters are modulatable** |
-| **Effects** | Hyper/Dimension, Distortion, Flanger, Phaser, Chorus, Delay, Compressor, Reverb, EQ, Filter, **Bode** frequency shifter, **Utility**: reorderable chain, **two FX buses** with series / parallel / low-high / mid-side routing |
+| **Effects** | Hyper/Dimension, Distortion, Flanger, Phaser, Chorus, Delay, Compressor, Reverb, EQ, Filter, **Bode** frequency shifter, **Utility**: reorderable chain, **two FX buses** with series / parallel / low-high / low-mid-high / mid-side routing; Overdrive + DC bias, 4 reverb algorithms, Delay HQ |
 | **Arpeggiator** | 7 patterns + **16-step Pattern editor**, 18 rates incl. triplets/dotted, gate, swing, octaves, hold |
 | **Sequencing** | **Clip sequencer**: 12 clips with piano roll, transposed from the held key |
 | **Browser** | categories, search, favorites, **star ratings and tags** |
