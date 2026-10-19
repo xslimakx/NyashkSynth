@@ -1215,7 +1215,7 @@ impl FxRack {
             }
             FxRoute::SplitLmh => {
                 let f1 = split.clamp(40.0, 0.4 * self.fs);
-                let f2 = split2.clamp(f1 * 1.2, 0.45 * self.fs);
+                let f2 = split2.max(f1 * 1.2).min(0.45 * self.fs);
                 let (lp1, hp1) = (BqCoef::lowpass(f1, 0.7071, self.fs), BqCoef::highpass(f1, 0.7071, self.fs));
                 let (lp2, hp2) = (BqCoef::lowpass(f2, 0.7071, self.fs), BqCoef::highpass(f2, 0.7071, self.fs));
                 let [lo_l, lo_r, mi_l, mi_r, hi_l, hi_r] = &mut self.tmp;

@@ -108,7 +108,7 @@ fn live_mod(dst: usize) -> f32 {
         let Some(p) = m.params.as_ref() else { return 0.0 };
         let mut sum = 0.0;
         for s in p.slot.iter() {
-            if s.dst.value() as usize == dst && s.src.value() != ModSrc::None {
+            if s.dst.value() as usize == dst && s.src.value() != ModSrc::None && s.on.value() {
                 let sl = crate::engine::SlotP { src: s.src.value(), dst: s.dst.value(), amount: s.amount.value(), aux: s.aux.value(), curve: s.curve.value(), uni: s.uni.value() };
                 sum += crate::engine::slot_value(&sl, |x| m.live[x as usize]);
             }
@@ -122,7 +122,7 @@ pub fn source_uses(src: ModSrc) -> usize {
     MC.with(|m| {
         let m = m.borrow();
         let Some(p) = m.params.as_ref() else { return 0 };
-        p.slot.iter().filter(|s| s.src.value() == src && s.dst.value() != ModDst::None).count()
+        p.slot.iter().filter(|s| s.src.value() == src && s.dst.value() != ModDst::None && s.on.value()).count()
     })
 }
 
@@ -132,7 +132,7 @@ fn mods_for(dst: usize) -> Vec<(usize, usize, f32)> {
         let Some(p) = m.params.as_ref() else { return Vec::new() };
         let mut v = Vec::new();
         for (i, s) in p.slot.iter().enumerate() {
-            if s.dst.value() as usize == dst && s.src.value() != ModSrc::None {
+            if s.dst.value() as usize == dst && s.src.value() != ModSrc::None && s.on.value() {
                 v.push((i, s.src.value() as usize, s.amount.value()));
             }
         }
@@ -515,7 +515,8 @@ pub fn enum_combo<E: Enum + PartialEq + 'static>(ui: &mut Ui, setter: &ParamSett
     ui.allocate_new_ui(UiBuilder::new().max_rect(rect), |ui| {
         egui::ComboBox::from_id_salt(id)
             .height(380.0)
-            .width(rect.width() - 22.0)
+            .width(rect.width() - 18.0)
+            .truncate()
             .selected_text(egui::RichText::new(names[idx]).font(mono(12.0)))
             .show_ui(ui, |ui| {
                 for (i, n) in names.iter().enumerate() {

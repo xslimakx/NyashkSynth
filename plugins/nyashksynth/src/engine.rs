@@ -784,6 +784,7 @@ struct Voice {
     mroot: [f32; 3],
     sub_ph: f32,
     rnd: u32,
+    seed: u32,
     rnd_val: f32,
     prev: [f32; 3],
     fprev: [f32; 2],
@@ -821,6 +822,7 @@ impl Voice {
             mroot: [0.0; 3],
             sub_ph: 0.0,
             rnd: 1,
+            seed: 1,
             rnd_val: 0.0,
             prev: [0.0; 3],
             fprev: [0.0; 2],
@@ -1190,7 +1192,7 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
     for i in 0..NLFO {
         let raw = if p.lfo[i].trig {
             let lp = &p.lfo[i];
-            let rate = if lp.sync { c.bpm / 60.0 / lp.div.beats() } else { lp.rate };
+            let rate = if lp.sync { c.bpm.max(20.0) / 60.0 / lp.div.beats() } else { lp.rate };
             if v.t < lp.delay_s {
                 0.0
             } else {
@@ -1199,7 +1201,7 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
                 if lp.oneshot {
                     ph = ph.min(0.9999);
                 }
-                let x = lfo_eval_c(lp.shape, ph + lp.phase0 as f64, v.rnd, p.lfo_curve[i].as_deref());
+                let x = lfo_eval_c(lp.shape, ph + lp.phase0 as f64, v.seed, p.lfo_curve[i].as_deref());
                 if lp.rise_s > 0.0 {
                     x * (t / lp.rise_s).min(1.0)
                 } else {
@@ -1210,7 +1212,8 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
             c.glfo[i]
         };
         let sm = p.lfo[i].smooth;
-        lfo[i] = if sm > 0.001 {
+        // free-running LFOs are already smoothed once in process_inner (c.glfo)
+        lfo[i] = if sm > 0.001 && p.lfo[i].trig {
             let alpha = (1.0 - sm).powi(3) + 0.0008;
             v.lfo_s[i] += (raw - v.lfo_s[i]) * alpha.min(1.0);
             v.lfo_s[i]
@@ -1317,7 +1320,7 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
         r.wmode2 = op.wmode2;
         r.warp2 = (op.warp2 + md[[23, 24, 43][o]]).clamp(0.0, 1.0);
         let spectral = op.mode == OscMode::Spectral;
-        let n = if spectral { 1 } else { op.uni };
+        let n = if spectral || r.grn { 1 } else { op.uni };
         r.n = n;
         let det = (op.detune + md[12]).clamp(0.0, 1.0);
         let cents_max = det.powf(1.5) * 100.0;
@@ -1329,7 +1332,7 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
         let mut ws = [0.0f32; MAX_UNI];
         let mut fmax = base;
         for j in 0..n {
-            let off = uni_offset(op.umode, j, n, v.rnd);
+            let off = uni_offset(op.umode, j, n, v.seed);
             let mut f = base * 2f32.powf(off * cents_max / 1200.0);
             if op.umode == UniMode::Stack {
                 f = base * 2f32.powf((STACK_ST[j % 16] + off * cents_max / 100.0) / 12.0);
@@ -1426,7 +1429,7 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
     }
     let vol = (1.0 + md[14]).clamp(0.0, 2.0);
     let vg = (0.25 + 0.75 * v.vel) * vol;
-    let sub_pan = p.sub_pan;
+    let sub_pan = (p.sub_pan + md[13]).clamp(-1.0, 1.0);
     let (sub_l, sub_r) = (1.0 - sub_pan.max(0.0), 1.0 + sub_pan.min(0.0));
     // noise sample playback rate
     let nz_rate = if p.noise_type == NoiseType::Sample {
@@ -1730,7 +1733,7 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
             let srcs = [sig[0][ch], sig[1][ch], sig[2][ch], sub[ch], noise[ch]];
             for (i, x) in srcs.iter().enumerate() {
                 let to1 = fcs[0].is_some() && p.fl[0].route[i];
-                let to2 = fcs[1].is_some() && p.fl[1].route[i] && !p.fl_serial;
+                let to2 = fcs[1].is_some() && p.fl[1].route[i] && (!p.fl_serial || fcs[0].is_none());
                 let g = if to1 && to2 { 0.5 } else { 1.0 }; // balanced split between the two filters
                 if to1 {
                     ro[0][ch] += *x * g;
@@ -1827,7 +1830,7 @@ pub struct Engine {
     dc_x: [f32; 2],
     dc_y: [f32; 2],
     pub out_ev: Vec<(u32, bool, u8, f32)>,
-    seg_off: usize,
+    pub(crate) seg_off: usize,
     counter: u64,
     rng: u32,
     arp: Arp,
@@ -1893,7 +1896,10 @@ impl Engine {
         self.stack.clear();
         self.sustained.clear();
         self.sustain = false;
-        self.arp.clear();
+        self.clip_stop();
+        self.arp_stop();
+        self.down = [false; 128];
+        self.out_ev.clear();
     }
 
     /// `norm` 0..1 with 0.5 as centre (as delivered by the host).
@@ -1942,7 +1948,8 @@ impl Engine {
         }
         self.stack.clear();
         self.sustained.clear();
-        self.arp.clear();
+        self.clip_stop();
+        self.arp_stop();
         self.down = [false; 128];
     }
 
@@ -1987,6 +1994,7 @@ impl Engine {
         v.freq = start;
         v.t = 0.0;
         v.rnd = ((r1 * 4_000_000_000.0) as u32) | 1;
+        v.seed = v.rnd;
         v.rnd_val = r2 * 2.0 - 1.0;
         for o in 0..3 {
             // multisample: choose the recording for this key
@@ -1995,9 +2003,15 @@ impl Engine {
                     if let Some(rg) = m.pick(note, (vel * 127.0).round() as u8) {
                         v.msel[o] = Some(rg.smp.clone());
                         v.mroot[o] = rg.root as f32 - 60.0;
+                    } else {
+                        v.msel[o] = None;
+                        v.mroot[o] = 0.0;
                     }
                 }
-                _ => v.msel[o] = None,
+                _ => {
+                    v.msel[o] = None;
+                    v.mroot[o] = 0.0;
+                }
             }
             for j in 0..MAX_UNI {
                 v.ph[o][j] = (patch.osc[o].phase + patch.osc[o].rand * phases[o * MAX_UNI + j]).fract();
@@ -2020,6 +2034,9 @@ impl Engine {
         v.grains = [[Grain::default(); GN]; 3];
         v.gtimer = [0.0; 3];
         for (i, e) in v.env.iter_mut().enumerate() {
+            if !was_sounding {
+                *e = Env::default();
+            }
             e.start(&patch.env[i]);
         }
         if !was_sounding {
@@ -2188,7 +2205,8 @@ impl Engine {
         self.down = [false; 128];
         self.stack.clear();
         self.sustained.clear();
-        self.arp.clear();
+        self.clip_stop();
+        self.arp_stop();
         for v in self.voices.iter_mut() {
             if v.active {
                 Self::release(v);
@@ -2250,9 +2268,7 @@ impl Engine {
             }
         }
         self.clip_pos = st + 1;
-        if c.has_lane {
-            self.clip_lane_t = c.lane[st] as f32 / 100.0;
-        }
+        self.clip_lane_t = if c.has_lane { c.lane[st] as f32 / 100.0 } else { 0.0 };
         let sw = c.swing as f64 * 0.5;
         let gap = if st % 2 == 0 { step_len * (1.0 + sw) } else { step_len * (1.0 - sw) };
         self.clip_step = self.clip_step.wrapping_add(1);
@@ -2450,6 +2466,9 @@ impl Engine {
 
     pub fn process(&mut self, l: &mut [f32], r: &mut [f32]) {
         self.seg_off = 0;
+        if !self.patch.arp.hold {
+            self.arp.unlatch();
+        }
         self.reconcile_notes();
         if !self.patch.clip.on && !self.clip_held.is_empty() {
             self.clip_stop();
@@ -2503,7 +2522,7 @@ impl Engine {
             let mut glfo = [0.0f32; NLFO];
             for k in 0..NLFO {
                 let lp = &self.patch.lfo[k];
-                let rate = if lp.sync { self.bpm / 60.0 / lp.div.beats() } else { lp.rate } as f64;
+                let rate = if lp.sync { self.bpm.max(20.0) / 60.0 / lp.div.beats() } else { lp.rate } as f64;
                 self.glfo_ph[k] += rate * m as f64 / fs as f64;
                 if self.glfo_ph[k] > 1.0e6 {
                     self.glfo_ph[k] -= 1.0e6;
@@ -2532,7 +2551,7 @@ impl Engine {
             // would eat headroom and click on note changes
             let rc = 1.0 - std::f32::consts::TAU * 5.0 / fs;
             for s in i..i + m {
-                let (xl, xr) = (l[s], r[s]);
+                let (xl, xr) = (if l[s].is_finite() { l[s] } else { 0.0 }, if r[s].is_finite() { r[s] } else { 0.0 });
                 let yl = xl - self.dc_x[0] + rc * self.dc_y[0];
                 let yr = xr - self.dc_x[1] + rc * self.dc_y[1];
                 self.dc_x = [xl, xr];

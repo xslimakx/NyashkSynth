@@ -812,7 +812,7 @@ fn parse_file(txt: &str) -> (Vec<(String, f32)>, Blobs) {
                 "lfo8" => bl.lfo[7] = v.to_string(),
                 _ => {}
             }
-        } else if let Ok(x) = v.parse::<f32>() {
+        } else if let Some(x) = v.parse::<f32>().ok().filter(|x| x.is_finite()) {
             vals.push((k.to_string(), x));
         }
     }
@@ -1073,9 +1073,22 @@ pub fn hybridize(setter: &ParamSetter, params: &SynthParams, shared: &Shared, ot
     let key = |id: &str, grp: &str| -> String {
         if grp.starts_with("FX") {
             let rest = id.strip_prefix("b2_").unwrap_or(id);
+            // the 12 chain-order parameters (fo1..fo12) must come from ONE preset, or modules drop out of the chain
+            let bus = if id.starts_with("b2_") { "2" } else { "1" };
+            if rest.len() > 2 && rest.starts_with("fo") && rest[2..].chars().all(|c| c.is_ascii_digit()) {
+                return format!("FX/order{bus}");
+            }
             format!("{grp}/{}", rest.split('_').next().unwrap_or(rest))
         } else if grp.is_empty() {
-            id.to_string()
+            if id.starts_with("ar_") {
+                "ARP".to_string()
+            } else if id.starts_with("noi_") {
+                "NOISE".to_string()
+            } else if id.starts_with("clp_") {
+                "CLIPSEQ".to_string()
+            } else {
+                id.to_string()
+            }
         } else {
             grp.to_string()
         }
@@ -1114,8 +1127,14 @@ pub fn hybridize(setter: &ParamSetter, params: &SynthParams, shared: &Shared, ot
     if choice.get("FX/rv").copied().unwrap_or(false) {
         bl.ir = blob_b.ir.clone();
     }
-    if choice.get("arp_pat").copied().unwrap_or(false) {
+    if choice.get("ARP").copied().unwrap_or(false) {
         bl.arp = blob_b.arp.clone();
+    }
+    if choice.get("NOISE").copied().unwrap_or(false) {
+        bl.noise = blob_b.noise.clone();
+    }
+    if choice.get("CLIPSEQ").copied().unwrap_or(false) {
+        bl.clips = blob_b.clips.clone();
     }
     bl.apply(params, shared);
     if let Ok(mut g) = params.preset_name.lock() {

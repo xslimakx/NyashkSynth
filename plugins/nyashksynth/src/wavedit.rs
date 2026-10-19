@@ -1069,6 +1069,9 @@ impl WavEdit {
                 self.line_start = Some((to_idx(pt.x), to_val(pt.y), self.time.clone()));
             }
         }
+        if resp.clicked() && !resp.dragged() {
+            self.push_undo(); // a plain click is an edit too
+        }
         if resp.dragged() || resp.clicked() {
             if let Some(pt) = resp.interact_pointer_pos() {
                 let (ix, v) = (to_idx(pt.x), to_val(pt.y));
@@ -1160,6 +1163,9 @@ impl WavEdit {
             self.last_pt = None;
         }
         let erase = ui.input(|i| i.pointer.secondary_down());
+        if resp.clicked() && !resp.dragged() {
+            self.push_undo(); // a plain click is an edit too
+        }
         if resp.dragged() || resp.clicked() {
             if let Some(pt) = resp.interact_pointer_pos() {
                 let k = to_k(pt.x);
@@ -1213,6 +1219,9 @@ impl WavEdit {
         if resp.drag_started() {
             self.push_undo();
             self.last_pt = None;
+        }
+        if resp.clicked() && !resp.dragged() {
+            self.push_undo(); // a plain click is an edit too
         }
         if resp.dragged() || resp.clicked() {
             if let Some(pt) = resp.interact_pointer_pos() {

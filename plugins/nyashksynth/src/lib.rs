@@ -137,6 +137,10 @@ pub struct NyashkSynth {
     fx_mod_s2: [f32; 12],
     gui_prev: [bool; 128],
     tmap: [u8; 128],
+    /// GUI keyboard: key -> sounding note, and how many held keys currently use each sounding note
+    gmap: [u8; 128],
+    mheld: [bool; 128],
+    nref: [u8; 128],
     cc_count: u32,
     gui_bend_prev: u32,
     gui_mod_prev: u32,
@@ -153,7 +157,7 @@ impl Default for NyashkSynth {
     fn default() -> Self {
         let params = Arc::new(SynthParams::default());
         let patch = Patch::read(&params, 44100.0);
-        Self { engine: Engine::new(44100.0, patch), fx: FxRack::new(44100.0), params, meters: Arc::new(Meters::new()), shared: Arc::new(shared::Shared::new()), fs: 44100.0, peak_hold: 0.0, fx_mod_s: [0.0; 12], fx_mod_s2: [0.0; 12], gui_prev: [false; 128], tmap: std::array::from_fn(|i| i as u8), cc_count: 1, gui_bend_prev: f32::NAN.to_bits(), gui_mod_prev: f32::NAN.to_bits(), beat_last: 0, beat_age: 0, dec_n: 0, dec_acc: 0.0, spec_pos: 0, cur_ir: None, beat_clock: 0.0 }
+        Self { engine: Engine::new(44100.0, patch), fx: FxRack::new(44100.0), params, meters: Arc::new(Meters::new()), shared: Arc::new(shared::Shared::new()), fs: 44100.0, peak_hold: 0.0, fx_mod_s: [0.0; 12], fx_mod_s2: [0.0; 12], gui_prev: [false; 128], tmap: std::array::from_fn(|i| i as u8), gmap: std::array::from_fn(|i| i as u8), mheld: [false; 128], nref: [0; 128], cc_count: 1, gui_bend_prev: f32::NAN.to_bits(), gui_mod_prev: f32::NAN.to_bits(), beat_last: 0, beat_age: 0, dec_n: 0, dec_acc: 0.0, spec_pos: 0, cur_ir: None, beat_clock: 0.0 }
     }
 }
 
@@ -162,11 +166,18 @@ pub fn fx_patch_from_bank(p: &params::FxBank, bpm: f32) -> FxPatch {
     {
         let beat_ms = 60000.0 / bpm.max(20.0);
         let rate = |hz: f32, sync: bool, div: Div| if sync { bpm.max(20.0) / 60.0 / div.beats() } else { hz };
-        let dl_l = if p.dl_sync.value() { beat_ms * p.dl_div.value().beats() } else { p.dl_time.value() };
+        // the delay line holds 1.9 s: a longer synced time is halved until it fits (same rhythm, one octave of repeats faster)
+        let fit = |mut ms: f32| {
+            while ms > 1800.0 {
+                ms *= 0.5;
+            }
+            ms
+        };
+        let dl_l = if p.dl_sync.value() { fit(beat_ms * p.dl_div.value().beats()) } else { p.dl_time.value() };
         let dl_r = if p.dl_link.value() {
             dl_l
         } else if p.dl_sync.value() {
-            beat_ms * p.dl_div_r.value().beats()
+            fit(beat_ms * p.dl_div_r.value().beats())
         } else {
             p.dl_time_r.value()
         };
@@ -279,6 +290,22 @@ impl NyashkSynth {
         }
     }
 
+    /// A key goes down on sounding note `t` (several keys can land on the same note after transpose / key lock).
+    fn t_on(&mut self, t: u8, vel: f32) {
+        let i = t as usize & 127;
+        self.nref[i] = self.nref[i].saturating_add(1);
+        self.engine.note_on(t, vel);
+    }
+
+    /// A key goes up: the note only stops when no other held key uses it.
+    fn t_off(&mut self, t: u8) {
+        let i = t as usize & 127;
+        self.nref[i] = self.nref[i].saturating_sub(1);
+        if self.nref[i] == 0 {
+            self.engine.note_off(t);
+        }
+    }
+
     fn transposed(&self, note: u8) -> u8 {
         let t = self.params.kb_octave.value() * 12 + self.params.kb_transpose.value();
         let n = (note as i32 + t).clamp(0, 127) as u8;
@@ -315,7 +342,7 @@ impl Plugin for NyashkSynth {
         main_output_channels: NonZeroU32::new(2),
         ..AudioIOLayout::const_default()
     }];
-    const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
+    const MIDI_INPUT: MidiConfig = MidiConfig::MidiCCs;
     const MIDI_OUTPUT: MidiConfig = MidiConfig::Basic;
     const SAMPLE_ACCURATE_AUTOMATION: bool = false;
 
@@ -347,6 +374,7 @@ impl Plugin for NyashkSynth {
     fn reset(&mut self) {
         self.engine.reset();
         self.fx.reset();
+        self.cur_ir = None;
     }
 
     fn process(&mut self, buffer: &mut Buffer, _aux: &mut AuxiliaryBuffers, ctx: &mut impl ProcessContext<Self>) -> ProcessStatus {
@@ -385,6 +413,8 @@ impl Plugin for NyashkSynth {
             }
             self.engine.all_notes_off();
             self.engine.sound_off();
+            self.nref = [0; 128];
+            self.mheld = [false; 128];
         }
         for k in 0..128usize {
             if gui_dead && self.meters.gui_keys[k].load(Ordering::Relaxed) {
@@ -395,10 +425,11 @@ impl Plugin for NyashkSynth {
                 self.gui_prev[k] = want;
                 if want {
                     let t = self.transposed(k as u8);
-                    self.tmap[k] = t;
-                    self.engine.note_on(t, 0.8);
+                    self.gmap[k] = t;
+                    self.engine.host_beat = None;
+                    self.t_on(t, 0.8);
                 } else {
-                    self.engine.note_off(self.tmap[k]);
+                    self.t_off(self.gmap[k]);
                 }
             }
         }
@@ -439,6 +470,7 @@ impl Plugin for NyashkSynth {
         }
         while pos < n {
             // handle all events at or before `pos`, then render until the next event
+            self.engine.seg_off = 0;
             while let Some(ev) = next {
                 if ev.timing() as usize > pos {
                     break;
@@ -455,14 +487,24 @@ impl Plugin for NyashkSynth {
                 match ev {
                     NoteEvent::NoteOn { note, velocity, .. } => {
                         let t = self.transposed(note);
-                        self.tmap[note as usize & 127] = t;
+                        let ki = note as usize & 127;
+                        if self.mheld[ki] {
+                            // the same key again without a note-off: let go of the old sounding note first
+                            self.t_off(self.tmap[ki]);
+                        }
+                        self.mheld[ki] = true;
+                        self.tmap[ki] = t;
                         self.engine.host_beat = beats0.map(|b| b + ev.timing() as f64 * beat_per_sample);
                         self.record_event(true, note, velocity, ev.timing() as usize, beat_per_sample);
-                        self.engine.note_on(t, velocity)
+                        self.t_on(t, velocity)
                     }
                     NoteEvent::NoteOff { note, .. } => {
                         self.record_event(false, note, 0.0, ev.timing() as usize, beat_per_sample);
-                        self.engine.note_off(self.tmap[note as usize & 127])
+                        let ki = note as usize & 127;
+                        if self.mheld[ki] {
+                            self.mheld[ki] = false;
+                            self.t_off(self.tmap[ki]);
+                        }
                     }
                     NoteEvent::MidiPitchBend { value, .. } => self.engine.set_bend(value),
                     NoteEvent::MidiChannelPressure { pressure, .. } => self.engine.set_aftertouch(pressure),
@@ -482,9 +524,17 @@ impl Plugin for NyashkSynth {
                         match cc {
                             1 => self.engine.set_modwheel(value),
                             64 => self.engine.set_sustain(value >= 0.5),
-                            120 => self.engine.sound_off(),
+                            120 => {
+                                self.engine.sound_off();
+                                self.nref = [0; 128];
+                                self.mheld = [false; 128];
+                            }
                             121 => self.engine.reset_controllers(),
-                            123 => self.engine.all_notes_off(),
+                            123 => {
+                                self.engine.all_notes_off();
+                                self.nref = [0; 128];
+                                self.mheld = [false; 128];
+                            }
                             _ => {}
                         }
                     }

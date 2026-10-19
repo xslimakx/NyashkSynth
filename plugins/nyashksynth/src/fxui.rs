@@ -256,6 +256,8 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
             if pill_tip(ui, Rect::from_min_size(Pos2::new(x0 + 206.0, y0 + 74.0), Vec2::new(44.0, 22.0)), "HQ", b.dl_hq.value(), "High quality: cubic interpolation and smooth time changes (tape-like glides)") {
                 set_b(setter, &b.dl_hq, !b.dl_hq.value());
             }
+            let g = Rect::from_min_size(Pos2::new(x0, y0 + 110.0), Vec2::new(d.width() - 4.0, d.top() + 260.0 - (y0 + 110.0)));
+            delay_taps(ui, g, &fp);
         }
         6 => {
             kn(ui, setter, &b.cp_thresh, "THRESH", x0, y0, "Threshold in dB");
@@ -271,18 +273,9 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
                 kn(ui, setter, &b.cp_f1, "LOW/MID", x0 + w * 6.0, y0, "Crossover 1");
                 kn(ui, setter, &b.cp_f2, "MID/HI", x0 + w * 7.0, y0, "Crossover 2");
             }
-            // static curve
-            let g = Rect::from_min_size(Pos2::new(x0 + 340.0, y0 + 74.0), Vec2::new(110.0, 52.0));
-            dark_box(ui, g);
-            let pa = ui.painter().with_clip_rect(g.shrink(1.0));
-            let pts: Vec<Pos2> = (0..=60)
-                .map(|i| {
-                    let inp = -60.0 + 60.0 * i as f32 / 60.0;
-                    let out = if inp > fp.cp_thresh { fp.cp_thresh + (inp - fp.cp_thresh) / fp.cp_ratio.max(1.0) } else { inp };
-                    Pos2::new(g.left() + g.width() * i as f32 / 60.0, g.bottom() - g.height() * ((out + 60.0) / 60.0).clamp(0.0, 1.0))
-                })
-                .collect();
-            pa.add(egui::Shape::line(pts, PathStroke::new(1.5_f32, WHITE)));
+            // static curve (input level -> output level)
+            let g = Rect::from_min_size(Pos2::new(x0, y0 + 110.0), Vec2::new(d.width() - 4.0, d.top() + 260.0 - (y0 + 110.0)));
+            comp_curve(ui, g, &fp);
         }
         7 => {
             md(ModDst::FxReverbSize);
@@ -306,6 +299,8 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
                     ui.painter().text(Pos2::new(x0 + 2.0, y0 + 112.0), Align2::LEFT_CENTER, "No impulse response loaded: pick a .wav to hear it.", mono(9.5), DIM);
                 }
             }
+            let g = Rect::from_min_size(Pos2::new(x0, y0 + 124.0), Vec2::new(d.width() - 4.0, d.top() + 260.0 - (y0 + 124.0)));
+            reverb_decay(ui, g, &fp);
         }
         8 => {
             kn(ui, setter, &b.eq_lf, "LOW F", x0, y0, "Low shelf frequency");
@@ -315,8 +310,8 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
             kn(ui, setter, &b.eq_mg, "MID dB", x0 + w * 4.0, y0, "Mid gain");
             kn(ui, setter, &b.eq_hf, "HIGH F", x0 + w * 5.0, y0, "High shelf frequency");
             kn(ui, setter, &b.eq_hg, "HIGH dB", x0 + w * 6.0, y0, "High shelf gain");
-            let g = Rect::from_min_size(Pos2::new(x0, y0 + 72.0), Vec2::new(d.width() - 4.0, d.bottom() - y0 - 78.0));
-            graph(ui, g, |f| eq_response_db(&fp, f, 48000.0), (-18.0, 18.0));
+            let g = Rect::from_min_size(Pos2::new(x0, y0 + 80.0), Vec2::new(d.width() - 4.0, d.top() + 260.0 - (y0 + 80.0)));
+            graph(ui, g, |f| eq_response_db(&fp, f, 48000.0), (-18.0, 18.0), Some((&st.spec, st.spec_fs)));
             eq_nodes(ui, setter, b, g);
         }
         10 => {
@@ -345,7 +340,7 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
             kn(ui, setter, &b.ff_res, "RES", x0 + w * 3.0, y0, "Resonance");
             kn(ui, setter, &b.ff_drive, "DRIVE", x0 + w * 4.0, y0, "Drive");
             kn(ui, setter, &b.ff_mix, "MIX", x0 + w * 5.0, y0, "Dry / wet");
-            let g = Rect::from_min_size(Pos2::new(x0, y0 + 72.0), Vec2::new(d.width() - 4.0, d.bottom() - y0 - 78.0));
+            let g = Rect::from_min_size(Pos2::new(x0, y0 + 80.0), Vec2::new(d.width() - 4.0, d.top() + 260.0 - (y0 + 80.0)));
             let (fc, q, ty) = (fp.ff_cut, 0.5 + fp.ff_res * 9.0, fp.ff_type);
             graph(
                 ui,
@@ -364,12 +359,14 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
                     20.0 * m.max(1e-6).log10()
                 },
                 (-36.0, 18.0),
+                Some((&st.spec, st.spec_fs)),
             );
+            ff_node(ui, setter, b, g);
         }
     }
 
     // ---- signal flow of the selected bus (fills the lower part of the page)
-    let fy = d.top() + 150.0;
+    let fy = d.top() + 282.0;
     ui.painter().text(Pos2::new(d.left() + 2.0, fy - 6.0), Align2::LEFT_CENTER, format!("SIGNAL FLOW  BUS {}", bus + 1), mono(9.0), DIM);
     let bw = (d.width() - 70.0 - 11.0 * 14.0) / 12.0;
     let by = fy + 6.0;
@@ -403,9 +400,12 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
     ui.painter().text(Pos2::new(d.right() - 2.0, fy - 6.0), Align2::RIGHT_CENTER, route, mono(9.0), DIM);
 }
 
-fn graph(ui: &mut Ui, g: Rect, f: impl Fn(f32) -> f32, range: (f32, f32)) {
+fn graph(ui: &mut Ui, g: Rect, f: impl Fn(f32) -> f32, range: (f32, f32), spec: Option<(&[f32], f32)>) {
     dark_box(ui, g);
     let pa = ui.painter().with_clip_rect(g.shrink(1.0));
+    if let Some((sp, fs)) = spec {
+        crate::editor::draw_spectrum(&pa, g.shrink(1.0), sp, fs, -80.0, Color32::from_rgb(46, 46, 46));
+    }
     let (lo, hi) = (20.0f32, 20000.0f32);
     let xf = |fr: f32| g.left() + g.width() * ((fr / lo).ln() / (hi / lo).ln());
     let yd = |db: f32| g.bottom() - g.height() * ((db.clamp(range.0, range.1) - range.0) / (range.1 - range.0));
@@ -433,12 +433,18 @@ fn eq_nodes(ui: &mut Ui, setter: &ParamSetter, b: &FxBank, g: Rect) {
         let c = Pos2::new(xf(fp.value()), yd(gp.value()));
         let hit = Rect::from_center_size(c, Vec2::splat(20.0));
         let resp = ui.interact(hit, egui::Id::new(("eqnode", i)), Sense::click_and_drag()).on_hover_text(format!("{name} band: drag = frequency / gain{}", if i == 1 { ", wheel = Q" } else { "" }));
+        let offk = egui::Id::new(("eqnode_off", i));
         if resp.drag_started() {
             setter.begin_set_parameter(*fp);
             setter.begin_set_parameter(*gp);
+            // keep the grab point: the node must not jump to the pointer
+            let off = resp.interact_pointer_pos().map_or(Vec2::ZERO, |pp| pp - c);
+            ui.data_mut(|d| d.insert_temp(offk, off));
         }
         if resp.dragged() {
             if let Some(pt) = resp.interact_pointer_pos() {
+                let off = ui.data(|d| d.get_temp::<Vec2>(offk)).unwrap_or(Vec2::ZERO);
+                let pt = pt - off;
                 setter.set_parameter(*fp, fx(pt.x));
                 setter.set_parameter(*gp, dbf(pt.y));
             }
@@ -462,4 +468,136 @@ fn eq_nodes(ui: &mut Ui, setter: &ParamSetter, b: &FxBank, g: Rect) {
         ui.painter().circle_stroke(c, if hot { 7.0 } else { 5.5 }, Stroke::new(1.6_f32, WHITE));
         ui.painter().text(c + Vec2::new(0.0, -13.0), Align2::CENTER_CENTER, format!("{}", i + 1), mono(8.5), DIM);
     }
+}
+
+/// Draggable node on the FX filter graph: left / right = cutoff, up / down = resonance.
+/// For the low / high pass and band types the node sits on the curve (its height is the resonance peak in dB).
+fn ff_node(ui: &mut Ui, setter: &ParamSetter, b: &FxBank, g: Rect) {
+    let (lo, hi) = (20.0f32, 20000.0f32);
+    let (dlo, dhi) = (-36.0f32, 18.0f32);
+    let xf = |fr: f32| g.left() + g.width() * ((fr / lo).ln() / (hi / lo).ln());
+    // dB of the peak at the cutoff for a given resonance, and its inverse (None = this type has no resonance peak)
+    let ty = b.ff_type.value();
+    let pw = match ty {
+        FxFilterType::Lp24 | FxFilterType::Hp24 => Some(2.0f32),
+        FxFilterType::Lp12 | FxFilterType::Hp12 | FxFilterType::Band => Some(1.0),
+        _ => None,
+    };
+    let yd = |db: f32| g.bottom() - g.height() * ((db.clamp(dlo, dhi) - dlo) / (dhi - dlo));
+    let res = b.ff_res.unmodulated_normalized_value();
+    let y_of_res = |r: f32| -> f32 {
+        match pw {
+            Some(p) => yd(20.0 * p * (0.5 + r * 9.0).log10()),
+            None => g.bottom() - 6.0 - (g.height() - 12.0) * r,
+        }
+    };
+    let res_of_y = |y: f32| -> f32 {
+        match pw {
+            Some(p) => {
+                let db = dlo + (dhi - dlo) * ((g.bottom() - y) / g.height()).clamp(0.0, 1.0);
+                (((10f32.powf(db / (20.0 * p))) - 0.5) / 9.0).clamp(0.0, 1.0)
+            }
+            None => ((g.bottom() - 6.0 - y) / (g.height() - 12.0)).clamp(0.0, 1.0),
+        }
+    };
+    let c = Pos2::new(xf(b.ff_cut.value()).clamp(g.left() + 7.0, g.right() - 7.0), y_of_res(res).clamp(g.top() + 7.0, g.bottom() - 7.0));
+    let area = ui.interact(g, egui::Id::new("ffgraph"), Sense::click_and_drag()).on_hover_text("Drag: left / right = cutoff, up / down = resonance");
+    let offk = egui::Id::new("ffnode_off");
+    if area.drag_started() {
+        setter.begin_set_parameter(&b.ff_cut);
+        setter.begin_set_parameter(&b.ff_res);
+        // grabbing the dot itself keeps the grab point; grabbing elsewhere jumps the dot there
+        let off = area.interact_pointer_pos().map_or(Vec2::ZERO, |pp| if (pp - c).length() < 16.0 { pp - c } else { Vec2::ZERO });
+        ui.data_mut(|d| d.insert_temp(offk, off));
+    }
+    if area.dragged() {
+        if let Some(pt) = area.interact_pointer_pos() {
+            let pt = pt - ui.data(|d| d.get_temp::<Vec2>(offk)).unwrap_or(Vec2::ZERO);
+            let fx = ((pt.x - g.left()) / g.width()).clamp(0.0, 1.0);
+            setter.set_parameter(&b.ff_cut, lo * (hi / lo).powf(fx));
+            setter.set_parameter_normalized(&b.ff_res, res_of_y(pt.y));
+        }
+    }
+    if area.drag_stopped() {
+        setter.end_set_parameter(&b.ff_cut);
+        setter.end_set_parameter(&b.ff_res);
+    }
+    let hot = area.hovered() || area.dragged();
+    ui.painter().circle_filled(c, if hot { 7.0 } else { 5.5 }, Color32::BLACK);
+    ui.painter().circle_stroke(c, if hot { 7.0 } else { 5.5 }, Stroke::new(1.6_f32, WHITE));
+}
+
+fn comp_curve(ui: &mut Ui, g: Rect, fp: &crate::fx::FxPatch) {
+    dark_box(ui, g);
+    let pa = ui.painter().with_clip_rect(g.shrink(1.0));
+    let side = g.height().min(g.width()) - 16.0;
+    let sq = Rect::from_min_size(Pos2::new(g.left() + 14.0, g.top() + 8.0), Vec2::splat(side));
+    let xy = |inp: f32, out: f32| Pos2::new(sq.left() + sq.width() * ((inp + 60.0) / 60.0).clamp(0.0, 1.0), sq.bottom() - sq.height() * ((out + 60.0) / 60.0).clamp(0.0, 1.0));
+    for db in [-48.0f32, -36.0, -24.0, -12.0] {
+        pa.line_segment([xy(db, -60.0), xy(db, 0.0)], Stroke::new(1.0_f32, Color32::from_rgb(22, 22, 22)));
+        pa.line_segment([xy(-60.0, db), xy(0.0, db)], Stroke::new(1.0_f32, Color32::from_rgb(22, 22, 22)));
+    }
+    pa.line_segment([xy(-60.0, -60.0), xy(0.0, 0.0)], Stroke::new(1.0_f32, Color32::from_rgb(44, 44, 44)));
+    let pts: Vec<Pos2> = (0..=60)
+        .map(|i| {
+            let inp = -60.0 + i as f32;
+            let out = if inp > fp.cp_thresh { fp.cp_thresh + (inp - fp.cp_thresh) / fp.cp_ratio.max(1.0) } else { inp } + fp.cp_gain;
+            xy(inp, out)
+        })
+        .collect();
+    pa.add(egui::Shape::line(pts, PathStroke::new(1.8_f32, WHITE)));
+    let tp = xy(fp.cp_thresh, fp.cp_thresh + fp.cp_gain);
+    pa.circle_filled(tp, 4.0, Color32::BLACK);
+    pa.circle_stroke(tp, 4.0, Stroke::new(1.5_f32, WHITE));
+    pa.text(Pos2::new(sq.right() + 14.0, sq.top() + 6.0), Align2::LEFT_CENTER, "INPUT dB  >  OUTPUT dB (dot = threshold)", mono(9.0), DIM);
+}
+
+/// Repeats of the delay: bar height = level, left channel up, right channel down.
+fn delay_taps(ui: &mut Ui, g: Rect, fp: &crate::fx::FxPatch) {
+    dark_box(ui, g);
+    let pa = ui.painter().with_clip_rect(g.shrink(1.0));
+    let (l, r) = (fp.dl_ms_l.max(1.0), fp.dl_ms_r.max(1.0));
+    let tmax = (l.max(r) * 8.0).max(400.0);
+    let mid = g.center().y;
+    pa.line_segment([Pos2::new(g.left(), mid), Pos2::new(g.right(), mid)], Stroke::new(1.0_f32, Color32::from_rgb(34, 34, 34)));
+    let xt = |t: f32| g.left() + 14.0 + (g.width() - 28.0) * (t / tmax);
+    let h = g.height() * 0.42;
+    pa.line_segment([Pos2::new(xt(0.0), mid - h), Pos2::new(xt(0.0), mid + h)], Stroke::new(3.0_f32, WHITE));
+    let fb = fp.dl_fb.clamp(0.0, 0.98);
+    let mut amp = 1.0f32;
+    for k in 1..=64 {
+        amp *= if k == 1 { 1.0 } else { fb };
+        if amp < 0.02 {
+            break;
+        }
+        // ping-pong: odd repeats on the left, even on the right; otherwise both channels repeat together
+        let (tl, tr) = (l * k as f32, r * k as f32);
+        let (show_l, show_r) = if fp.dl_pp { (k % 2 == 1, k % 2 == 0) } else { (true, true) };
+        if show_l && tl <= tmax {
+            pa.line_segment([Pos2::new(xt(tl), mid), Pos2::new(xt(tl), mid - h * amp)], Stroke::new(3.0_f32, Color32::from_rgb(220, 220, 220)));
+        }
+        if show_r && tr <= tmax {
+            pa.line_segment([Pos2::new(xt(tr) + 4.0, mid), Pos2::new(xt(tr) + 4.0, mid + h * amp)], Stroke::new(3.0_f32, Color32::from_rgb(150, 150, 150)));
+        }
+    }
+    pa.text(Pos2::new(g.left() + 8.0, g.top() + 9.0), Align2::LEFT_CENTER, format!("REPEATS  (L up, R down)   0 - {:.0} ms", tmax), mono(9.0), DIM);
+}
+
+/// Rough decay curve of the reverb (level over time).
+fn reverb_decay(ui: &mut Ui, g: Rect, fp: &crate::fx::FxPatch) {
+    dark_box(ui, g);
+    let pa = ui.painter().with_clip_rect(g.shrink(1.0));
+    let t60 = 0.3 + fp.rv_size.clamp(0.0, 1.0) * 7.0;
+    let tmax = 8.0f32;
+    let pre = fp.rv_pre * 0.001;
+    let pts: Vec<Pos2> = (0..=200)
+        .map(|i| {
+            let t = tmax * i as f32 / 200.0;
+            let db = if t < pre { -80.0 } else { -60.0 * (t - pre) / t60 };
+            Pos2::new(g.left() + 14.0 + (g.width() - 28.0) * t / tmax, g.bottom() - 10.0 - (g.height() - 30.0) * ((db + 60.0) / 60.0).clamp(0.0, 1.0))
+        })
+        .collect();
+    fill_under(&pa, &pts, g.bottom() - 10.0, Color32::from_rgb(30, 30, 30));
+    pa.add(egui::Shape::line(pts, PathStroke::new(1.8_f32, WHITE)));
+    pa.text(Pos2::new(g.left() + 8.0, g.top() + 9.0), Align2::LEFT_CENTER, format!("DECAY (about {:.1} s to -60 dB)   axis 0 - 8 s", t60 + pre), mono(9.0), DIM);
 }

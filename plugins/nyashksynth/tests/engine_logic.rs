@@ -791,3 +791,88 @@ fn fx_bus2_and_point_filter_destinations_work() {
     assert!(boosted > flat * 1.05, "gain mod should boost: {flat} -> {boosted}");
     assert!(cut < flat * 0.97, "negative gain mod should cut: {flat} -> {cut}");
 }
+
+#[test]
+fn serial_filter_two_works_when_filter_one_is_off() {
+    use nyashksynth::params::FilterType;
+    let run = |f2: bool| {
+        let mut e = engine();
+        e.patch.sub_on = false;
+        e.patch.fl[0].on = false;
+        e.patch.fl[1].on = f2;
+        e.patch.fl[1].ty = FilterType::Lp12;
+        e.patch.fl[1].cutoff = 400.0;
+        e.patch.fl[1].res = 0.0;
+        e.patch.fl[1].route = [true; 5];
+        e.patch.fl_serial = true;
+        e.note_on(84, 1.0);
+        let v = render_vec(&mut e, 48000 / 2);
+        rms(&v[v.len() / 2..])
+    };
+    let (open, filtered) = (run(false), run(true));
+    assert!(filtered < open * 0.5, "filter 2 must filter in serial mode even if filter 1 is off: {filtered} vs {open}");
+}
+
+#[test]
+fn arp_hold_off_lets_the_latched_chord_go() {
+    let mut e = engine();
+    e.patch.env[0].r_coef = (-1.0f32 / (0.02 * 48000.0 / 4.6)).exp();
+    e.patch.arp = ArpP { on: true, beats: 0.25, hold: true, ..Default::default() };
+    e.bpm = 120.0;
+    for n in [60u8, 64, 67] {
+        e.note_on(n, 1.0);
+    }
+    render_vec(&mut e, 4800);
+    for n in [60u8, 64, 67] {
+        e.note_off(n);
+    }
+    render_vec(&mut e, 24000);
+    assert!(e.active_voices() > 0, "HOLD keeps the pattern running");
+    e.patch.arp.hold = false;
+    render_vec(&mut e, 48000);
+    assert_eq!(e.active_voices(), 0, "switching HOLD off must release the latched chord");
+}
+
+#[test]
+fn panic_stops_the_clip_sequencer() {
+    use nyashksynth::clip::{CNote, Clip, ClipP};
+    let mut e = engine();
+    e.patch.env[0].r_coef = (-1.0f32 / (0.02 * 48000.0 / 4.6)).exp();
+    let clip = Clip { bars: 1, notes: vec![CNote { start: 0, len: 2, pitch: 0, vel: 100 }, CNote { start: 4, len: 2, pitch: 0, vel: 100 }], lane: vec![] };
+    e.patch.clip = ClipP::from_clip(true, 0.25, &clip);
+    e.bpm = 120.0;
+    e.note_on(60, 1.0);
+    render_vec(&mut e, 12000);
+    e.all_notes_off();
+    render_vec(&mut e, 24000);
+    assert_eq!(e.active_voices(), 0, "the clip must not keep retriggering after all-notes-off");
+}
+
+#[test]
+fn granular_with_unison_is_not_one_sided() {
+    use nyashksynth::params::OscMode;
+    use nyashksynth::sample::NSample;
+    use std::sync::Arc;
+    let data: Vec<f32> = (0..44100).map(|i| (std::f32::consts::TAU * 261.6 * i as f32 / 44100.0).sin() * 0.8).collect();
+    let mut e = engine();
+    e.patch.sub_on = false;
+    e.patch.fl[0].on = false;
+    e.patch.osc[1].on = false;
+    e.patch.osc[0].mode = OscMode::Granular;
+    e.patch.osc[0].uni = 4;
+    e.patch.osc[0].spread = 1.0;
+    e.patch.osc[0].g_dens = 40.0;
+    e.patch.osc[0].sample = Some(Arc::new(NSample { name: "t".into(), data }));
+    e.note_on(60, 1.0);
+    let (mut sl, mut sr) = (0.0f32, 0.0f32);
+    let mut l = vec![0.0f32; 64];
+    let mut r = vec![0.0f32; 64];
+    for c in 0..(48000 / 64) {
+        e.process(&mut l, &mut r);
+        if c > 300 {
+            sl += l.iter().map(|x| x * x).sum::<f32>();
+            sr += r.iter().map(|x| x * x).sum::<f32>();
+        }
+    }
+    assert!(sl > 0.0 && sr > 0.3 * sl, "granular must be centred, not left-only: L {sl} R {sr}");
+}

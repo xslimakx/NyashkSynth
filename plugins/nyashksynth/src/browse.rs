@@ -30,7 +30,14 @@ pub enum BAct {
 }
 
 pub const FAV_CAT: &str = "\u{2605} Favorites";
-pub const TOP_CAT: &str = "\u{2605} 4+ stars";
+/// Category key of the "exactly N stars" folder (N = 1..=5).
+pub fn star_cat(n: u8) -> String {
+    format!("{} {} star{}", "\u{2605}".repeat(n as usize), n, if n == 1 { "" } else { "s" })
+}
+
+fn star_of(cat: &str) -> Option<u8> {
+    (1..=5u8).find(|n| star_cat(*n) == cat)
+}
 
 /// Rectangle of the footer area (below the lists) for caller-drawn controls.
 pub fn footer(rect: Rect) -> Rect {
@@ -66,7 +73,9 @@ pub fn browser(ui: &mut Ui, rect: Rect, title: &str, items: &[BItem], sel: Optio
     let mut cat_rows: Vec<(String, String)> = vec![(String::new(), format!("ALL  ({})", items.len()))];
     if allow_fav {
         cat_rows.push((FAV_CAT.to_string(), format!("{}  ({})", FAV_CAT, items.iter().filter(|i| i.fav).count())));
-        cat_rows.push((TOP_CAT.to_string(), format!("{}  ({})", TOP_CAT, items.iter().filter(|i| i.rating >= 4).count())));
+        for n in (1..=5u8).rev() {
+            cat_rows.push((star_cat(n), format!("{}  ({})", star_cat(n), items.iter().filter(|i| i.rating == n).count())));
+        }
     }
     for c in cats {
         let n = items.iter().filter(|i| i.cat == c).count();
@@ -117,7 +126,7 @@ pub fn browser(ui: &mut Ui, rect: Rect, title: &str, items: &[BItem], sel: Optio
         .iter()
         .enumerate()
         .filter(|(_, it)| {
-            (st.cat.is_empty() || (st.cat == FAV_CAT && it.fav) || (st.cat == TOP_CAT && it.rating >= 4) || (st.cat.starts_with('#') && it.tags.iter().any(|t| *t == st.cat[1..])) || it.cat == st.cat) && (q.is_empty() || it.name.to_lowercase().contains(&q) || it.cat.to_lowercase().contains(&q) || it.tags.iter().any(|t| t.contains(&q)))
+            (st.cat.is_empty() || (st.cat == FAV_CAT && it.fav) || star_of(&st.cat).map(|n| it.rating == n).unwrap_or(false) || (st.cat.starts_with('#') && it.tags.iter().any(|t| *t == st.cat[1..])) || (star_of(&st.cat).is_none() && it.cat == st.cat)) && (q.is_empty() || it.name.to_lowercase().contains(&q) || it.cat.to_lowercase().contains(&q) || it.tags.iter().any(|t| t.contains(&q)))
         })
         .map(|(i, _)| i)
         .collect();
@@ -129,7 +138,8 @@ pub fn browser(ui: &mut Ui, rect: Rect, title: &str, items: &[BItem], sel: Optio
     }
     // keyboard: up / down moves the selection
     let (up, down) = ui.input(|i| (i.key_pressed(egui::Key::ArrowUp), i.key_pressed(egui::Key::ArrowDown)));
-    if up || down {
+    let typing = ui.memory(|m| m.focused().is_some());
+    if (up || down) && !typing {
         if let Some(pos) = sel.and_then(|s| vis_idx.iter().position(|v| *v == s)) {
             let np = if down { (pos + 1).min(vis_idx.len().saturating_sub(1)) } else { pos.saturating_sub(1) };
             if np != pos {
@@ -183,7 +193,7 @@ pub fn browser(ui: &mut Ui, rect: Rect, title: &str, items: &[BItem], sel: Optio
                 lpt.text(Pos2::new(rr.right() - 262.0, rr.center().y), Align2::RIGHT_CENTER, t, mono(9.0), if on { Color32::from_rgb(70, 70, 70) } else { DIM });
             }
         }
-        if st.cat.is_empty() || st.cat == FAV_CAT {
+        if st.cat.is_empty() || st.cat == FAV_CAT || star_of(&st.cat).is_some() {
             lpt.text(Pos2::new(rr.right() - 70.0, rr.center().y), Align2::RIGHT_CENTER, &it.cat, mono(9.5), if on { Color32::from_rgb(60, 60, 60) } else { DIM });
         }
         if it.user {

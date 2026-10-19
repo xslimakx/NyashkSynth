@@ -622,7 +622,7 @@ pub fn from_audio(x: &[f32], clm: Option<usize>, frame_size: usize) -> Option<Ta
         return None;
     }
     let fsz = if frame_size > 0 {
-        frame_size
+        frame_size.min(x.len())
     } else if let Some(c) = clm.filter(|c| *c >= 64 && x.len() % *c == 0) {
         c
     } else if x.len() >= N && x.len() % N == 0 {

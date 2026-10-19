@@ -148,7 +148,7 @@ pub enum FilterType {
     PhaserF,
     #[name = "Formant"]
     Formant,
-    #[name = "Custom (points)"]
+    #[name = "Points (EQ)"]
     Custom,
 }
 

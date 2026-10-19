@@ -148,6 +148,14 @@ impl Arp {
         }
     }
 
+    /// HOLD was switched off while a chord was latched: let it go.
+    pub fn unlatch(&mut self) {
+        if self.latched && self.down.is_empty() {
+            self.held.clear();
+        }
+        self.latched = false;
+    }
+
     pub fn release(&mut self, note: u8, hold: bool) {
         self.down.retain(|n| *n != note);
         if hold {

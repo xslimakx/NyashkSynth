@@ -45,7 +45,7 @@ impl NSample {
         let name = it.next()?.to_string();
         let len: usize = it.next()?.parse().ok()?;
         let bytes = b64_decode(it.next()?)?;
-        if bytes.len() < len * 2 || len < 16 {
+        if len < 16 || len > 50_000_000 || bytes.len() < len * 2 {
             return None;
         }
         let data = (0..len).map(|i| i16::from_le_bytes([bytes[i * 2], bytes[i * 2 + 1]]) as f32 / 32767.0).collect();
@@ -155,7 +155,7 @@ impl MultiS {
     /// Minimal SFZ reader: `<control> default_path`, `<group>` / `<region>` with
     /// `sample`, `lokey`, `hikey`, `key`, `pitch_keycenter`.
     pub fn from_sfz(path: &std::path::Path) -> Result<MultiS, String> {
-        let txt = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+        let txt = String::from_utf8_lossy(&std::fs::read(path).map_err(|e| e.to_string())?).into_owned();
         let dir = path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
         #[derive(Clone, Default)]
         struct Ops {
@@ -167,6 +167,8 @@ impl MultiS {
             hv: Option<u8>,
         }
         let mut default_path = String::new();
+        let mut global = Ops::default();
+        let mut master = Ops::default();
         let mut group = Ops::default();
         let mut cur: Option<Ops> = None;
         let mut regions: Vec<Ops> = Vec::new();
@@ -235,7 +237,16 @@ impl MultiS {
                 }
                 section = t.trim_matches(|c| c == '<' || c == '>').to_string();
                 match section.as_str() {
-                    "group" => group = Ops::default(),
+                    "global" => {
+                        global = Ops::default();
+                        master = global.clone();
+                        group = master.clone();
+                    }
+                    "master" => {
+                        master = global.clone();
+                        group = master.clone();
+                    }
+                    "group" => group = master.clone(),
                     "region" => cur = Some(group.clone()),
                     _ => {}
                 }
@@ -246,7 +257,16 @@ impl MultiS {
                             default_path = v.to_string();
                         }
                     }
-                    "group" | "global" | "master" => apply(&mut group, k, v),
+                    "global" => {
+                        apply(&mut global, k, v);
+                        apply(&mut master, k, v);
+                        apply(&mut group, k, v);
+                    }
+                    "master" => {
+                        apply(&mut master, k, v);
+                        apply(&mut group, k, v);
+                    }
+                    "group" => apply(&mut group, k, v),
                     "region" => {
                         if let Some(c) = cur.as_mut() {
                             apply(c, k, v);
@@ -295,7 +315,7 @@ impl MultiS {
                 cache.insert(rel.clone(), a.clone());
                 a
             };
-            let root = r.root.or(r.lo).unwrap_or(60);
+            let root = r.root.unwrap_or(60);
             out.push(Region { lo: r.lo.unwrap_or(0), hi: r.hi.unwrap_or(127), root, lv: r.lv.unwrap_or(1).clamp(1, 127), hv: r.hv.unwrap_or(127).clamp(1, 127), smp });
         }
         if out.is_empty() {
