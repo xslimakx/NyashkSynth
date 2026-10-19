@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 pub mod arp;
 pub mod clip;
+pub mod convolve;
 pub mod spectrum;
 pub mod engine;
 mod editor;
@@ -134,13 +135,14 @@ pub struct NyashkSynth {
     dec_n: u32,
     dec_acc: f32,
     spec_pos: usize,
+    cur_ir: Option<Arc<convolve::ConvIr>>,
 }
 
 impl Default for NyashkSynth {
     fn default() -> Self {
         let params = Arc::new(SynthParams::default());
         let patch = Patch::read(&params, 44100.0);
-        Self { engine: Engine::new(44100.0, patch), fx: FxRack::new(44100.0), params, meters: Arc::new(Meters::new()), shared: Arc::new(shared::Shared::new()), fs: 44100.0, peak_hold: 0.0, fx_mod_s: [0.0; 12], gui_prev: [false; 128], tmap: std::array::from_fn(|i| i as u8), cc_count: 1, gui_bend_prev: f32::NAN.to_bits(), gui_mod_prev: f32::NAN.to_bits(), beat_last: 0, beat_age: 0, dec_n: 0, dec_acc: 0.0, spec_pos: 0 }
+        Self { engine: Engine::new(44100.0, patch), fx: FxRack::new(44100.0), params, meters: Arc::new(Meters::new()), shared: Arc::new(shared::Shared::new()), fs: 44100.0, peak_hold: 0.0, fx_mod_s: [0.0; 12], gui_prev: [false; 128], tmap: std::array::from_fn(|i| i as u8), cc_count: 1, gui_bend_prev: f32::NAN.to_bits(), gui_mod_prev: f32::NAN.to_bits(), beat_last: 0, beat_age: 0, dec_n: 0, dec_acc: 0.0, spec_pos: 0, cur_ir: None }
     }
 }
 
@@ -302,10 +304,12 @@ impl Plugin for NyashkSynth {
     fn initialize(&mut self, _layout: &AudioIOLayout, cfg: &BufferConfig, _ctx: &mut impl InitContext<Self>) -> bool {
         self.fs = cfg.sample_rate;
         self.meters.fs.store(cfg.sample_rate as u32, Ordering::Relaxed);
+        self.shared.fs.store(cfg.sample_rate as u32, Ordering::Relaxed);
         self.shared.sync_from_params(&self.params);
         let patch = Patch::read_with(&self.params, self.fs, Some(&self.shared), None);
         self.engine = Engine::new(self.fs, patch);
         self.fx = FxRack::new(self.fs);
+        self.cur_ir = None;
         rebuild_cc_map(&self.params, &self.meters);
         let _ = wavetable::tables();
         true
@@ -321,6 +325,17 @@ impl Plugin for NyashkSynth {
         self.engine.bpm = bpm;
         let np = Patch::read_with(&self.params, self.fs, Some(&self.shared), Some(&self.engine.patch));
         self.engine.patch = np;
+        if let Some(v) = self.shared.ir.try_get() {
+            let same = match (&v, &self.cur_ir) {
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                (None, None) => true,
+                _ => false,
+            };
+            if !same {
+                self.fx.set_ir(v.clone());
+                self.cur_ir = v;
+            }
+        }
         let fxp = fx_patch_from(&self.params, bpm);
         let fxp2 = fx_patch_from_bank(&self.params.fx2, bpm);
         let (route, split, split2, lvl2) = (self.params.fx_route.value(), self.params.fx_split.value(), self.params.fx_split2.value(), self.params.fx2_level.value());

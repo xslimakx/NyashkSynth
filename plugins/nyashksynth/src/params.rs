@@ -531,6 +531,8 @@ pub enum ReverbType {
     Nitrous,
     #[name = "Basin"]
     Basin,
+    #[name = "Convolve"]
+    Convolve,
 }
 
 /// Key lock: incoming MIDI notes are moved to the nearest note of the scale.
@@ -628,6 +630,17 @@ impl Tuning {
         };
         std::array::from_fn(|i| t[i] - 100.0 * i as f32)
     }
+}
+
+/// How an oscillator's pitch offset is entered.
+#[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
+pub enum OscTune {
+    #[name = "Semitone"]
+    Semitone,
+    #[name = "Harmonic"]
+    Harmonic,
+    #[name = "Ratio"]
+    Ratio,
 }
 
 #[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
@@ -1287,6 +1300,12 @@ pub struct OscParams {
     pub g_dens: FloatParam,
     #[id = "gy"]
     pub g_spray: FloatParam,
+    #[id = "tm"]
+    pub tune_mode: EnumParam<OscTune>,
+    #[id = "tr"]
+    pub ratio: FloatParam,
+    #[id = "th"]
+    pub harm: IntParam,
 }
 
 impl OscParams {
@@ -1324,6 +1343,9 @@ impl OscParams {
             g_size: FloatParam::new("Grain Size", 80.0, FloatRange::Skewed { min: 5.0, max: 500.0, factor: FloatRange::skew_factor(-1.0) }).with_unit(" ms").with_step_size(0.1),
             g_dens: FloatParam::new("Grain Density", 30.0, FloatRange::Skewed { min: 1.0, max: 256.0, factor: FloatRange::skew_factor(-1.0) }).with_unit(" /s").with_step_size(0.1),
             g_spray: unit_param("Grain Spray", 0.1),
+            tune_mode: EnumParam::new("Tune Mode", OscTune::Semitone),
+            ratio: FloatParam::new("Freq Ratio", 1.0, FloatRange::Skewed { min: 0.25, max: 16.0, factor: FloatRange::skew_factor(-1.5) }).with_step_size(0.01).with_value_to_string(formatters::v2s_f32_rounded(2)),
+            harm: IntParam::new("Harmonic", 1, IntRange::Linear { min: 1, max: 32 }),
         }
     }
 }
@@ -1592,6 +1614,8 @@ pub struct SynthParams {
     pub arp_swing: FloatParam,
     #[id = "ar_hd"]
     pub arp_hold: BoolParam,
+    #[persist = "ir"]
+    pub ir: Arc<std::sync::Mutex<String>>,
     #[persist = "arp-pat"]
     pub arp_pat: Arc<std::sync::Mutex<String>>,
     #[persist = "clips"]
@@ -1702,6 +1726,7 @@ impl Default for SynthParams {
             arp_gate: FloatParam::new("Arp Gate", 0.6, FloatRange::Linear { min: 0.05, max: 1.0 }).with_step_size(0.01).with_value_to_string(Arc::new(|v| format!("{:.0}%", v * 100.0))),
             arp_swing: unit_param("Arp Swing", 0.0),
             arp_hold: BoolParam::new("Arp Hold", false),
+            ir: Arc::new(std::sync::Mutex::new(String::new())),
             arp_pat: Arc::new(std::sync::Mutex::new(String::new())),
             clips: Arc::new(std::sync::Mutex::new(String::new())),
             clip_on: BoolParam::new("Clip On", false),

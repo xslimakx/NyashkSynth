@@ -157,3 +157,8 @@ UNDO and REDO (header, or Ctrl+Z / Ctrl+Y) step through your parameter changes, 
 - **KEY LOCK** (SETTINGS page): choose a scale and root; played notes snap to the nearest scale note.
 - **Matrix rows**: click the row number to bypass the row, `^` / `v` move it up or down, `x` clears it.
 - **COPY / PASTE** buttons in each oscillator header.
+
+## What is new in 3.1
+
+- **Convolve reverb** (FX page, REVERB, ALGORITHM = Convolve): press LOAD IR and pick a .wav. SIZE shortens the tail, MIX sets the wet level, LOW/HIGH CUT shape it.
+- **Tuning modes**: click the label under the SEMI knob of an oscillator: SEMI -> HARM (harmonic number) -> RATIO (frequency ratio).

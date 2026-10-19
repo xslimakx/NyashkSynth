@@ -32,6 +32,9 @@ pub struct OscP {
     pub pan: f32,
     pub oct: i32,
     pub semi: i32,
+    pub tmode: crate::params::OscTune,
+    pub ratio: f32,
+    pub harm: i32,
     pub fine: f32,
     pub uni: usize,
     pub detune: f32,
@@ -214,6 +217,9 @@ fn osc_read(o: &OscParams, tbl: Arc<Table>, sample: Option<Arc<NSample>>) -> Osc
         pan: o.pan.value(),
         oct: o.oct.value(),
         semi: o.semi.value(),
+        tmode: o.tune_mode.value(),
+        ratio: o.ratio.value(),
+        harm: o.harm.value(),
         fine: o.fine.value(),
         uni: o.uni.value().clamp(1, MAX_UNI as i32) as usize,
         detune: o.detune.value(),
@@ -1217,7 +1223,12 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
             continue;
         }
         let (pos_i, lvl_i, pit_i, wrp_i, pan_i, bl_i) = [(1, 3, 5, 7, 17, 19), (2, 4, 6, 8, 18, 20), (37, 38, 39, 40, 41, 42)][o];
-        let semis = (op.oct * 12 + op.semi) as f32 + op.fine * 0.01 + md[pit_i] * 24.0 + c.bend;
+        let tune_st = match op.tmode {
+            crate::params::OscTune::Semitone => op.semi as f32,
+            crate::params::OscTune::Harmonic => 12.0 * (op.harm.max(1) as f32).log2(),
+            crate::params::OscTune::Ratio => 12.0 * op.ratio.max(0.01).log2(),
+        };
+        let semis = (op.oct * 12) as f32 + tune_st + op.fine * 0.01 + md[pit_i] * 24.0 + c.bend;
         let base = v.freq * c.tune * 2f32.powf(semis / 12.0);
         let r = &mut run[o];
         r.on = true;

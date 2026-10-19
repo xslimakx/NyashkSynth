@@ -570,3 +570,58 @@ fn bypassed_matrix_slot_does_nothing() {
     assert!(matches!(sl.clone().into_enabled(false).src, ModSrc::None));
     assert!(matches!(sl.into_enabled(true).src, ModSrc::Lfo1));
 }
+
+#[test]
+fn oscillator_tune_modes_set_pitch() {
+    use nyashksynth::params::OscTune;
+    let freq_of = |mode: OscTune, harm: i32, ratio: f32| -> f32 {
+        let mut e = engine();
+        e.patch.sub_on = false;
+        e.patch.fl[0].on = false;
+        e.patch.osc[1].on = false;
+        e.patch.osc[0].tmode = mode;
+        e.patch.osc[0].harm = harm;
+        e.patch.osc[0].ratio = ratio;
+        e.note_on(57, 1.0); // A3 = 220 Hz
+        let v = render_vec(&mut e, 48000);
+        let seg = &v[24000..24000 + 16000];
+        (0..1200).map(|i| 100.0 + i as f32).max_by(|a, b| goertzel(seg, *a, 48000.0).partial_cmp(&goertzel(seg, *b, 48000.0)).unwrap()).unwrap()
+    };
+    assert!((freq_of(OscTune::Semitone, 1, 1.0) - 220.0).abs() < 3.0);
+    assert!((freq_of(OscTune::Harmonic, 3, 1.0) - 660.0).abs() < 4.0);
+    assert!((freq_of(OscTune::Ratio, 1, 1.5) - 330.0).abs() < 4.0);
+}
+
+#[test]
+fn convolve_reverb_uses_impulse_response() {
+    use nyashksynth::convolve::ConvIr;
+    use nyashksynth::fx::FxRack;
+    use nyashksynth::params::{FxRoute, ReverbType, SynthParams};
+    let fs = 48000.0f32;
+    let sp = SynthParams::default();
+    let mut p = fx_patch_from(&sp, 120.0);
+    p.on = [false; 12];
+    p.on[7] = true;
+    p.rv_type = ReverbType::Convolve;
+    p.rv_mix = 1.0;
+    p.rv_size = 1.0;
+    p.rv_lowcut = 20.0;
+    p.rv_highcut = 20000.0;
+    // IR: a single click 3000 samples late -> an echo of the input there
+    let mut ir = vec![0.0f32; 6000];
+    ir[3000] = 1.0;
+    let mut rack = FxRack::new(fs);
+    rack.set_ir(Some(std::sync::Arc::new(ConvIr::build(&ir, fs, fs, "echo"))));
+    let n = 12000;
+    let mut l = vec![0.0f32; n];
+    l[100] = 1.0;
+    let mut r = l.clone();
+    for c in 0..n / 250 {
+        let (a, b) = (c * 250, (c + 1) * 250);
+        rack.process(&p, &p, FxRoute::Series, 400.0, 3000.0, 1.0, &mut l[a..b], &mut r[a..b]);
+    }
+    let echo = 100 + 3000 + 256;
+    let peak = (0..n).filter(|i| *i != 100).max_by(|a, b| l[*a].abs().partial_cmp(&l[*b].abs()).unwrap()).unwrap();
+    assert!((peak as i32 - echo as i32).abs() <= 4, "echo at {peak}, expected {echo}");
+    assert!(l.iter().all(|v| v.is_finite()));
+}

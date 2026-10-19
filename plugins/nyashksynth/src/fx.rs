@@ -407,6 +407,8 @@ pub struct Fx {
     eq: EqM,
     ff: FiltFx,
     bode: Bode,
+    conv: crate::convolve::Conv,
+    ir: Option<std::sync::Arc<crate::convolve::ConvIr>>,
 }
 
 /// Frequency shifter state: two all-pass chains giving a 90 degree phase difference (Hilbert pair).
@@ -492,12 +494,16 @@ impl Fx {
             eq: EqM { ls: [Bq::default(); 2], pk: [Bq::default(); 2], hs: [Bq::default(); 2] },
             ff: FiltFx { s: [[0.0; 2]; 4] },
             bode: Bode { c1: [[Ap::default(); 4]; 2], c2: [[Ap::default(); 4]; 2], d: [0.0; 2], fb: [0.0; 2], ph: 0.0 },
+            conv: crate::convolve::Conv::new(),
+            ir: None,
         }
     }
 
     pub fn reset(&mut self) {
         let fs = self.fs;
+        let ir = self.ir.take();
         *self = Fx::new(fs);
+        self.ir = ir;
     }
 
     pub fn process(&mut self, p: &FxPatch, l: &mut [f32], r: &mut [f32]) {
@@ -862,7 +868,31 @@ impl Fx {
     }
 
     // ------------------------------------------------------------ reverb (plate)
+    fn run_conv(&mut self, p: &FxPatch, l: &mut [f32], r: &mut [f32]) {
+        let fs = self.fs;
+        let Some(ir) = self.ir.clone() else { return };
+        let np = ((ir.parts.len() as f32) * (0.1 + 0.9 * p.rv_size)).ceil() as usize;
+        let pl = &mut self.plate;
+        let a_lc = op_coef(p.rv_lowcut, fs);
+        let a_hc = op_coef(p.rv_highcut, fs);
+        for i in 0..l.len() {
+            let dry = [l[i], r[i]];
+            let (cl, cr) = self.conv.tick(dry[0], dry[1], &ir, np);
+            let (mut wl, mut wr) = (cl, cr);
+            let (m, s) = ((wl + wr) * 0.5, (wl - wr) * 0.5 * p.rv_width);
+            wl = m + s;
+            wr = m - s;
+            wl = pl.highcut[0].lp(pl.lowcut[0].hp(wl, a_lc), a_hc);
+            wr = pl.highcut[1].lp(pl.lowcut[1].hp(wr, a_lc), a_hc);
+            l[i] = dry[0] + wl * p.rv_mix * 2.0;
+            r[i] = dry[1] + wr * p.rv_mix * 2.0;
+        }
+    }
+
     fn run_reverb(&mut self, p: &FxPatch, l: &mut [f32], r: &mut [f32]) {
+        if p.rv_type == ReverbType::Convolve {
+            return self.run_conv(p, l, r);
+        }
         let fs = self.fs;
         let pl = &mut self.plate;
         let sc = pl.sc;
@@ -871,6 +901,7 @@ impl Fx {
             ReverbType::Vintage => (0.55, 1.35, 0.0, 1.0, 0.72, 0.9),
             ReverbType::Nitrous => (0.60, 0.45, 3.2, 1.8, 0.9998, 1.0),
             ReverbType::Basin => (0.635, 1.25, 1.6, 0.35, 0.9, 0.85),
+            ReverbType::Convolve => (0.62, 1.0, 1.0, 1.0, 0.9995, 1.0),
         };
         let decay = (0.35 + dk * p.rv_size).min(0.985);
         let damp = (0.02 + 0.9 * p.rv_damp * dp).min(0.97);
@@ -1080,6 +1111,13 @@ pub struct FxRack {
 }
 
 impl FxRack {
+    /// Hand a new impulse response (built on the GUI thread) to both busses.
+    pub fn set_ir(&mut self, ir: Option<std::sync::Arc<crate::convolve::ConvIr>>) {
+        for b in self.bus.iter_mut() {
+            b.ir = ir.clone();
+        }
+    }
+
     pub fn new(fs: f32) -> Self {
         Self { fs, bus: [Fx::new(fs), Fx::new(fs)], xo: [[[Bq::default(); 2]; 2]; 2], xo2: [[[Bq::default(); 2]; 2]; 2], tmp: Default::default() }
     }

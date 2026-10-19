@@ -1,3 +1,9 @@
+## NyashkSynth v3.1.0
+
+- **Convolve reverb**: choose "Convolve" in the REVERB algorithm list and load any .wav as an impulse response (room, hall, cabinet, anything). Partitioned FFT convolution, up to ~1.4 s of IR; SIZE trims the tail. The IR is saved with presets and projects.
+- **Oscillator tuning modes**: click the SEMI label of an oscillator to switch between SEMI (semitones), HARM (harmonic number 1-32) and RATIO (free frequency ratio 0.25-16).
+- Oscillator header: COPY / PASTE are now compact `C` / `P` buttons so they no longer overlap the WT / SMP / GRN buttons.
+
 ## NyashkSynth v3.0.0
 
 - **Arp pattern banks**: 12 pattern slots (BANK 1-12) on the SEQ page, saved with the preset.

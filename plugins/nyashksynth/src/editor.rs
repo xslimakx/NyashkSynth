@@ -153,6 +153,16 @@ fn load_table(setter: &ParamSetter, p: &SynthParams, shared: &Shared, o: usize, 
     }
 }
 
+fn load_ir(p: &SynthParams, shared: &Shared, path: &std::path::Path) -> Result<String, String> {
+    let s = NSample::from_file(path)?;
+    let name = s.name.clone();
+    if let Ok(mut g) = p.ir.lock() {
+        *g = s.encode();
+    }
+    shared.ir.set(Some(Arc::new(shared.build_ir(&s))));
+    Ok(name)
+}
+
 fn load_noise(setter: &ParamSetter, p: &SynthParams, shared: &Shared, path: &std::path::Path) -> Result<String, String> {
     let s = NSample::from_file(path)?;
     let name = s.name.clone();
@@ -293,6 +303,12 @@ impl Gui {
     fn say(&mut self, now: f64, t: impl Into<String>) {
         self.status = t.into();
         self.status_until = now + 4.0;
+    }
+
+    pub fn open_ir(&mut self) {
+        self.rescan();
+        self.smp_target = Some(99);
+        self.overlay = Overlay::Noises;
     }
 
     fn rescan(&mut self) {
@@ -959,6 +975,7 @@ fn noise_overlay(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Sh
         BAct::Pick(i) => {
             if let Some(e) = st.noises.get(i).cloned() {
                 let res = match st.smp_target {
+                    Some(99) => load_ir(p, shared, &e.path),
                     Some(o) => load_osc_sample(setter, p, shared, o, &e.path),
                     None => load_noise(setter, p, shared, &e.path),
                 };
@@ -1059,13 +1076,13 @@ fn osc_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared
     let name = OSC_NAMES[o];
     panel(ui, r, ["01", "02", "03"][o], &format!("OSC {name}"));
     on_pill(ui, setter, &op.on, Rect::from_min_size(Pos2::new(r.right() - 56.0, r.top() + 6.0), Vec2::new(44.0, 22.0)), "Oscillator on/off");
-    if pill_tip(ui, Rect::from_min_size(Pos2::new(r.left() + 110.0, r.top() + 6.0), Vec2::new(48.0, 22.0)), "COPY", false, "Copy every setting of this oscillator (wavetable / sample included)") {
+    if pill_tip(ui, Rect::from_min_size(Pos2::new(r.left() + 100.0, r.top() + 6.0), Vec2::new(20.0, 22.0)), "C", false, "COPY: every setting of this oscillator (wavetable / sample included)") {
         let vals: Vec<f32> = op.param_map().iter().map(|(_, ptr, _)| unsafe { ptr.unmodulated_normalized_value() }).collect();
         let w = op.wave.lock().map(|g| g.clone()).unwrap_or_default();
         let sm = op.smp.lock().map(|g| g.clone()).unwrap_or_default();
         st.osc_clip = Some((vals, w, sm));
     }
-    if st.osc_clip.is_some() && pill_tip(ui, Rect::from_min_size(Pos2::new(r.left() + 162.0, r.top() + 6.0), Vec2::new(54.0, 22.0)), "PASTE", false, "Paste the copied oscillator settings here") {
+    if st.osc_clip.is_some() && pill_tip(ui, Rect::from_min_size(Pos2::new(r.left() + 121.0, r.top() + 6.0), Vec2::new(20.0, 22.0)), "P", false, "PASTE the copied oscillator settings here") {
         paste_osc(setter, p, shared, st, o);
     }
     let sm = op.mode.value() != OscMode::Wavetable;
@@ -1151,7 +1168,26 @@ fn osc_knobs(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, r: Rect, o: usi
     knob_s(ui, setter, &op.pan, "PAN", cell(x0 + w * 4.0, y0, w), "Stereo balance", true);
     let y1 = y0 + dy;
     knob_s(ui, setter, &op.oct, "OCT", cell(x0, y1, w), "Octave", false);
-    knob_s(ui, setter, &op.semi, "SEMI", cell(x0 + w, y1, w), "Semitones", false);
+    match op.tune_mode.value() {
+        OscTune::Semitone => { knob_s(ui, setter, &op.semi, "SEMI", cell(x0 + w, y1, w), "Semitones (click the label to switch to HARM / RATIO tuning)", false); }
+        OscTune::Harmonic => { knob_s(ui, setter, &op.harm, "HARM", cell(x0 + w, y1, w), "Harmonic number: 1 = the played pitch, 2 = an octave up, 3 = octave + fifth ... (click the label to switch)", false); }
+        OscTune::Ratio => { knob_s(ui, setter, &op.ratio, "RATIO", cell(x0 + w, y1, w), "Frequency ratio to the played pitch, e.g. 1.5 = a fifth up (click the label to switch)", false); }
+    }
+    {
+        let lr = Rect::from_min_size(Pos2::new(x0 + w + 8.0, y1 + 46.0), Vec2::new(w - 16.0, 16.0));
+        let resp = ui.interact(lr, egui::Id::new(("tunemode", o)), Sense::click()).on_hover_text("Click: switch between SEMI (semitones), HARM (harmonic number) and RATIO (free frequency ratio)");
+        if resp.hovered() {
+            ui.painter().rect_stroke(lr, CornerRadius::same(3), Stroke::new(1.0_f32, MID), StrokeKind::Inside);
+        }
+        if resp.clicked() {
+            let next = match op.tune_mode.value() {
+                OscTune::Semitone => OscTune::Harmonic,
+                OscTune::Harmonic => OscTune::Ratio,
+                OscTune::Ratio => OscTune::Semitone,
+            };
+            set_e(setter, &op.tune_mode, next);
+        }
+    }
     mdst(pit_d);
     knob_s(ui, setter, &op.fine, "FINE", cell(x0 + w * 2.0, y1, w), "Fine tune in cents (modulation: +-24 semitones)", true);
     knob_s(ui, setter, &op.uni, "UNISON", cell(x0 + w * 3.0, y1, w), "Number of unison voices", false);

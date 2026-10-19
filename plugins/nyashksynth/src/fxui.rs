@@ -298,6 +298,16 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
             kn(ui, setter, &b.rv_mix, "MIX", x0 + w * 6.0, y0, "Dry / wet");
             ui.painter().text(Pos2::new(x0 + 2.0, y0 + 86.0), Align2::LEFT_CENTER, "ALGORITHM", mono(9.0), DIM);
             enum_combo(ui, setter, &b.rv_type, "rv_type", Rect::from_min_size(Pos2::new(x0 + 70.0, y0 + 74.0), Vec2::new(130.0, 24.0)));
+            if b.rv_type.value() == crate::params::ReverbType::Convolve {
+                let nm = p.ir.lock().map(|g| crate::sample::encoded_name(&g)).unwrap_or_default();
+                let label: String = if nm.is_empty() { "LOAD IR...".to_string() } else { nm.chars().take(18).collect() };
+                if pill_tip(ui, Rect::from_min_size(Pos2::new(x0 + 214.0, y0 + 74.0), Vec2::new(150.0, 24.0)), &label, !nm.is_empty(), "Load a .wav impulse response (room, hall, cabinet, anything). SIZE trims the tail, MIX sets the wet level.") {
+                    st.open_ir();
+                }
+                if nm.is_empty() {
+                    ui.painter().text(Pos2::new(x0 + 2.0, y0 + 112.0), Align2::LEFT_CENTER, "No impulse response loaded: pick a .wav to hear it.", mono(9.5), DIM);
+                }
+            }
         }
         8 => {
             kn(ui, setter, &b.eq_lf, "LOW F", x0, y0, "Low shelf frequency");

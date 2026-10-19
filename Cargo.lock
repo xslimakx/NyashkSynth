@@ -1835,7 +1835,7 @@ dependencies = [
 
 [[package]]
 name = "nyashksynth"
-version = "3.0.0"
+version = "3.1.0"
 dependencies = [
  "nih_plug",
  "nih_plug_egui",
