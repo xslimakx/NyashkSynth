@@ -3354,6 +3354,10 @@ fn wheel(ui: &mut Ui, r: Rect, id: &str, pos: f32, out: &std::sync::atomic::Atom
         pn.line_segment([Pos2::new(r.left() + 3.0, y), Pos2::new(r.right() - 3.0, y)], Stroke::new(1.0_f32, Color32::from_rgb(26, 26, 26)));
     }
     let y = r.bottom() - 4.0 - (r.height() - 8.0) * pos.clamp(0.0, 1.0);
+    // level fill from the rest position (bottom for the mod wheel, centre for the pitch wheel) up to the handle
+    let y0 = r.bottom() - 4.0 - (r.height() - 8.0) * spring.unwrap_or(0.0);
+    let fill = Rect::from_x_y_ranges((r.left() + 3.0)..=(r.right() - 3.0), y.min(y0)..=y.max(y0));
+    pn.rect_filled(fill, CornerRadius::same(1), Color32::from_rgb(70, 70, 70));
     pn.rect_filled(Rect::from_center_size(Pos2::new(r.center().x, y), Vec2::new(r.width() - 4.0, 6.0)), CornerRadius::same(2), WHITE);
 }
 
@@ -3367,8 +3371,17 @@ fn wheels_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, meters: &Met
     spinner(ui, setter, &p.kb_transpose, Rect::from_min_size(Pos2::new(r.left() + 28.0, r.top() + 29.0), Vec2::new(44.0, 22.0)), "kb_semi", "Transpose in semitones (affects MIDI input and the on-screen keys)");
     let bend = f32::from_bits(meters.bend_val.load(std::sync::atomic::Ordering::Relaxed));
     let modw = f32::from_bits(meters.mod_val.load(std::sync::atomic::Ordering::Relaxed));
-    wheel(ui, Rect::from_min_size(Pos2::new(r.left() + 78.0, r.top()), Vec2::new(18.0, r.height())), "wheel_bend", bend * 0.5 + 0.5, &meters.gui_bend, Some(0.5), "Pitch wheel (springs back)");
-    wheel(ui, Rect::from_min_size(Pos2::new(r.left() + 100.0, r.top()), Vec2::new(18.0, r.height())), "wheel_mod", modw, &meters.gui_mod, None, "Mod wheel (stays where you leave it)");
+    let wh = r.height() - 12.0;
+    let semis = bend * p.bend.value() as f32;
+    let bend_txt = if semis.abs() >= 9.95 { format!("{semis:+.0}") } else { format!("{semis:+.1}") };
+    let mod_txt = format!("{}", (modw * 127.0).round() as i32);
+    let br = Rect::from_min_size(Pos2::new(r.left() + 78.0, r.top()), Vec2::new(18.0, wh));
+    let mr = Rect::from_min_size(Pos2::new(r.left() + 100.0, r.top()), Vec2::new(18.0, wh));
+    wheel(ui, br, "wheel_bend", bend * 0.5 + 0.5, &meters.gui_bend, Some(0.5), &format!("Pitch wheel: {bend_txt} semitones (range {} st, set by BEND).\nFollows your keyboard's pitch bend, springs back. Double-click = centre.", p.bend.value()));
+    wheel(ui, mr, "wheel_mod", modw, &meters.gui_mod, None, &format!("Mod wheel: {mod_txt} / 127.\nFollows CC 1 of your keyboard. It does nothing by itself: drag the WHEEL chip (bottom strip) onto any knob.\nDouble-click = 0."));
+    let tcol = |active: bool| if active { WHITE } else { DIM };
+    ui.painter().text(Pos2::new(br.center().x, r.bottom() - 4.0), Align2::CENTER_CENTER, &bend_txt, mono(8.0), tcol(semis.abs() > 0.05));
+    ui.painter().text(Pos2::new(mr.center().x, r.bottom() - 4.0), Align2::CENTER_CENTER, &mod_txt, mono(8.0), tcol(modw > 0.004));
 }
 
 fn keyboard(ui: &mut Ui, meters: &Meters, r: Rect) {

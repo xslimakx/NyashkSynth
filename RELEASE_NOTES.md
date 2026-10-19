@@ -1,3 +1,7 @@
+# NyashkSynth v1.0.8
+
+- **Wheels show their values:** under the pitch wheel the current bend in semitones, under the mod wheel the value 0-127; both wheels have a level fill and a tooltip that explains them (the mod wheel only acts once the `WHEEL` chip is dragged onto a knob).
+
 # NyashkSynth v1.0.7
 
 - **Wheels back to standard:** the on-screen pitch and mod wheels cannot be MIDI-learned any more (v1.0.6 allowed it for the mod wheel). They simply follow your keyboard: pitch bend moves the pitch wheel, CC 1 moves the mod wheel. A wheel binding saved by v1.0.6 is dropped automatically.
