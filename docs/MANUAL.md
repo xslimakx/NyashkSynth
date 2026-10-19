@@ -148,3 +148,12 @@ UNDO and REDO (header, or Ctrl+Z / Ctrl+Y) step through your parameter changes, 
 | Tuning (A4, scales), MIDI channel, velocity curve | done |
 | Arp banks (12 slots), oscillator mapping editor | not yet |
 | Convolve, reverb types, preset tags and ratings | not yet |
+
+
+## What is new in 3.0
+
+- **Arp BANK 1-12** (SEQ page, Pattern mode): twelve pattern slots; click a number to edit another pattern. A dot marks an edited slot.
+- **Clip SWING** slider next to the clip STEP selector.
+- **KEY LOCK** (SETTINGS page): choose a scale and root; played notes snap to the nearest scale note.
+- **Matrix rows**: click the row number to bypass the row, `^` / `v` move it up or down, `x` clears it.
+- **COPY / PASTE** buttons in each oscillator header.

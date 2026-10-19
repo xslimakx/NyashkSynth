@@ -538,3 +538,35 @@ fn new_fx_variants_are_stable_and_distinct() {
     });
     assert!(o[4800..8000].iter().map(|v| v * v).sum::<f32>() > 1e-3);
 }
+
+#[test]
+fn key_lock_quantizes_to_scale() {
+    use nyashksynth::params::ScaleType;
+    // C major: C# (61) goes down to C (60), F# (66) goes down to F (65), black keys never survive
+    for n in 36u8..96 {
+        let q = ScaleType::Major.quantize(n, 0);
+        assert!([0, 2, 4, 5, 7, 9, 11].contains(&(q as i32 % 12)), "{n} -> {q}");
+        assert!((q as i32 - n as i32).abs() <= 1);
+    }
+    assert_eq!(ScaleType::Major.quantize(61, 0), 60);
+    assert_eq!(ScaleType::Major.quantize(66, 0), 65);
+    // root shifts the scale: D major has F#
+    assert_eq!(ScaleType::Major.quantize(66, 2), 66);
+    assert_eq!(ScaleType::Off.quantize(61, 0), 61);
+    // sparse scales always find a note
+    for sc in [ScaleType::PentMaj, ScaleType::PentMin, ScaleType::Blues, ScaleType::WholeTone] {
+        for n in 0u8..=127 {
+            let q = sc.quantize(n, 5);
+            assert!(sc.degrees().contains(&((q as i32 - 5).rem_euclid(12))));
+        }
+    }
+}
+
+#[test]
+fn bypassed_matrix_slot_does_nothing() {
+    use nyashksynth::engine::SlotP;
+    use nyashksynth::params::ModSrc;
+    let sl = SlotP { src: ModSrc::Lfo1, dst: nyashksynth::params::ModDst::None, amount: 0.5, aux: ModSrc::None, curve: 0.0, uni: false };
+    assert!(matches!(sl.clone().into_enabled(false).src, ModSrc::None));
+    assert!(matches!(sl.into_enabled(true).src, ModSrc::Lfo1));
+}

@@ -1,3 +1,11 @@
+## NyashkSynth v3.0.0
+
+- **Arp pattern banks**: 12 pattern slots (BANK 1-12) on the SEQ page, saved with the preset.
+- **Clip swing**: delays every second step of the clip sequencer.
+- **Key lock**: SETTINGS -> KEY LOCK moves every incoming note to the nearest note of a scale (12 scales + root). Also feeds the arp and clips.
+- **Matrix**: every row has an on/bypass button (the row number) and ^ / v buttons to reorder rows.
+- **Oscillator COPY / PASTE** in every oscillator header: copies all settings including wavetable and sample.
+
 ## NyashkSynth v2.9.0
 
 - **Split Low / Mid / High routing**: two crossovers (LOW/MID, MID/HI); lows go to FX bus 1, mids to bus 2, highs stay dry.

@@ -47,6 +47,7 @@ pub struct Gui {
     pub filt_sel: usize,
     pub clip_len: u8,
     pub smp_target: Option<usize>,
+    osc_clip: Option<(Vec<f32>, String, String)>,
     smp_dev: bool,
     arp_dev: bool,
     undo: Vec<Vec<f32>>,
@@ -163,6 +164,34 @@ fn load_noise(setter: &ParamSetter, p: &SynthParams, shared: &Shared, path: &std
     Ok(name)
 }
 
+fn paste_osc(setter: &ParamSetter, p: &SynthParams, shared: &Shared, st: &mut Gui, o: usize) {
+    let Some((vals, w, sm)) = st.osc_clip.clone() else { return };
+    let op = osc(p, o);
+    let map = op.param_map();
+    if map.len() != vals.len() {
+        return;
+    }
+    for ((_, ptr, _), v) in map.iter().zip(vals.iter()) {
+        // SAFETY: valid pointers into `params`; GUI thread only.
+        unsafe {
+            if ptr.unmodulated_normalized_value() != *v {
+                setter.raw_context.raw_begin_set_parameter(*ptr);
+                setter.raw_context.raw_set_parameter_normalized(*ptr, *v);
+                setter.raw_context.raw_end_set_parameter(*ptr);
+            }
+        }
+    }
+    if let Ok(mut g) = op.wave.lock() {
+        *g = w.clone();
+    }
+    if let Ok(mut g) = op.smp.lock() {
+        *g = sm.clone();
+    }
+    shared.smp[o].set(if sm.is_empty() { None } else { NSample::decode(&sm).map(Arc::new) });
+    shared.waves[o].set(if w.is_empty() { None } else { wavetable::decode_table(&w).map(|(_, t)| Arc::new(t)) });
+    shared.version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
 fn load_osc_sample(setter: &ParamSetter, p: &SynthParams, shared: &Shared, o: usize, path: &std::path::Path) -> Result<String, String> {
     let s = NSample::from_file(path)?;
     let name = s.name.clone();
@@ -216,6 +245,7 @@ impl Gui {
             filt_sel: 0,
             clip_len: 1,
             smp_target: None,
+            osc_clip: None,
             smp_dev: false,
             arp_dev: false,
             undo: Vec::new(),
@@ -1029,6 +1059,15 @@ fn osc_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared
     let name = OSC_NAMES[o];
     panel(ui, r, ["01", "02", "03"][o], &format!("OSC {name}"));
     on_pill(ui, setter, &op.on, Rect::from_min_size(Pos2::new(r.right() - 56.0, r.top() + 6.0), Vec2::new(44.0, 22.0)), "Oscillator on/off");
+    if pill_tip(ui, Rect::from_min_size(Pos2::new(r.left() + 110.0, r.top() + 6.0), Vec2::new(48.0, 22.0)), "COPY", false, "Copy every setting of this oscillator (wavetable / sample included)") {
+        let vals: Vec<f32> = op.param_map().iter().map(|(_, ptr, _)| unsafe { ptr.unmodulated_normalized_value() }).collect();
+        let w = op.wave.lock().map(|g| g.clone()).unwrap_or_default();
+        let sm = op.smp.lock().map(|g| g.clone()).unwrap_or_default();
+        st.osc_clip = Some((vals, w, sm));
+    }
+    if st.osc_clip.is_some() && pill_tip(ui, Rect::from_min_size(Pos2::new(r.left() + 162.0, r.top() + 6.0), Vec2::new(54.0, 22.0)), "PASTE", false, "Paste the copied oscillator settings here") {
+        paste_osc(setter, p, shared, st, o);
+    }
     let sm = op.mode.value() != OscMode::Wavetable;
     for (k, (lbl, want)) in [("WT", OscMode::Wavetable), ("SMP", OscMode::Sample), ("GRN", OscMode::Granular)].iter().enumerate() {
         let pr = Rect::from_min_size(Pos2::new(r.right() - 208.0 + k as f32 * 48.0, r.top() + 6.0), Vec2::new(44.0, 22.0));
@@ -1884,6 +1923,9 @@ fn clip_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, c:
     }
     ui.painter().text(Pos2::new(bx + 118.0, c.top() + 10.0), Align2::LEFT_CENTER, "STEP", mono(9.5), DIM);
     enum_combo(ui, setter, &p.clip_div, "clip_div", Rect::from_min_size(Pos2::new(bx + 152.0, c.top() - 2.0), Vec2::new(74.0, 24.0)));
+    ui.painter().text(Pos2::new(bx + 244.0, c.top() + 10.0), Align2::LEFT_CENTER, "SWING", mono(9.5), DIM);
+    h_slider(ui, setter, &p.clip_swing, Rect::from_min_size(Pos2::new(bx + 292.0, c.top() + 3.0), Vec2::new(80.0, 14.0)), "clip_swing", false, "Delays every second step of the clip (double-click to reset)");
+    ui.painter().text(Pos2::new(bx + 380.0, c.top() + 10.0), Align2::LEFT_CENTER, format!("{:.0}%", p.clip_swing.value() * 100.0), mono(9.5), WHITE);
     if pill_tip(ui, Rect::from_min_size(Pos2::new(c.right() - 70.0, c.top() - 2.0), Vec2::new(66.0, 24.0)), "CLEAR", false, "Delete every note of this clip") {
         clips[sel].notes.clear();
         changed = true;
@@ -2057,6 +2099,18 @@ fn settings_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, meters: &Met
     knob_s(ui, setter, &p.vel_curve, "VEL CURVE", cell(x1, c.top() + 62.0, 78.0), "Velocity response: negative = you have to hit harder, positive = soft playing is already loud", true);
     knob_s(ui, setter, &p.bend, "BEND RANGE", cell(x1 + 80.0, c.top() + 62.0, 78.0), "Pitch-bend range in semitones", false);
     knob_s(ui, setter, &p.glide, "GLIDE", cell(x1 + 160.0, c.top() + 62.0, 78.0), "Portamento time", false);
+    // key lock
+    let kt = c.top() + 250.0;
+    ui.painter().text(Pos2::new(x0, kt - 14.0), Align2::LEFT_CENTER, "KEY LOCK", mono(10.5), WHITE);
+    ui.painter().text(Pos2::new(x0, kt + 11.0), Align2::LEFT_CENTER, "SCALE", mono(9.5), DIM);
+    enum_combo(ui, setter, &p.key_scale, "key_scale", Rect::from_min_size(Pos2::new(x0 + 48.0, kt), Vec2::new(170.0, 24.0)));
+    ui.painter().text(Pos2::new(x0, kt + 40.0), Align2::LEFT_CENTER, "ROOT", mono(9.5), DIM);
+    for (k, nm) in ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"].iter().enumerate() {
+        if pill(ui, Rect::from_min_size(Pos2::new(x0 + 48.0 + 26.0 * k as f32, kt + 29.0), Vec2::new(24.0, 22.0)), nm, p.key_root.value() == k as i32) {
+            set_i(setter, &p.key_root, k as i32);
+        }
+    }
+    ui.painter().text(Pos2::new(x0, kt + 66.0), Align2::LEFT_TOP, "Key lock moves every incoming note to the nearest note of the scale,\nso wrong keys can not happen (also feeds the arpeggiator and clips).", mono(8.5), DIM);
     ui.painter().text(Pos2::new(x1, c.top() + 148.0), Align2::LEFT_TOP, "Transpose / octave: use the OCT and SEMI spinners left of the keyboard.\nMod wheel = CC1, sustain = CC64, aftertouch and pitch bend are always on.\nCtrl+Z / Ctrl+Y: undo / redo.  Right-click a knob\nmodulation ring: remove it.", mono(8.5), DIM);
     // ---------------- MIDI bindings list
     let x2 = c.left() + 704.0;
@@ -2192,7 +2246,9 @@ fn matrix_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
         if active {
             ui.painter().rect_filled(Rect::from_min_size(Pos2::new(c.left(), y - 1.0), Vec2::new(c.width(), rh - 2.0)), CornerRadius::same(4), Color32::from_rgb(16, 16, 16));
         }
-        ui.painter().text(Pos2::new(c.left() + 6.0, y + 12.0), Align2::LEFT_CENTER, format!("{:>2}", i + 1), mono(10.5), if active { WHITE } else { DIM });
+        if pill_tip(ui, Rect::from_min_size(Pos2::new(c.left(), y + 1.0), Vec2::new(24.0, 21.0)), &format!("{}", i + 1), s.on.value(), "Slot on / bypassed (click to toggle). Bypassed slots keep their settings but make no sound change.") {
+            set_b(setter, &s.on, !s.on.value());
+        }
         enum_combo(ui, setter, &s.src, &format!("msrc{i}"), Rect::from_min_size(Pos2::new(c.left() + 26.0, y), Vec2::new(116.0, 23.0)));
         ui.painter().text(Pos2::new(c.left() + 154.0, y + 12.0), Align2::CENTER_CENTER, "->", mono(11.0), if active { WHITE } else { DIM });
         enum_combo(ui, setter, &s.dst, &format!("mdst{i}"), Rect::from_min_size(Pos2::new(c.left() + 168.0, y), Vec2::new(150.0, 23.0)));
@@ -2202,7 +2258,13 @@ fn matrix_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
         if pill_tip(ui, Rect::from_min_size(Pos2::new(c.left() + 518.0, y + 1.0), Vec2::new(30.0, 21.0)), "UNI", s.uni.value(), "Unipolar: the source only pushes one way (LFO 0..1 instead of -1..1)") {
             set_b(setter, &s.uni, !s.uni.value());
         }
-        enum_combo(ui, setter, &s.aux, &format!("maux{i}"), Rect::from_min_size(Pos2::new(c.left() + 554.0, y), Vec2::new(104.0, 23.0)));
+        enum_combo(ui, setter, &s.aux, &format!("maux{i}"), Rect::from_min_size(Pos2::new(c.left() + 554.0, y), Vec2::new(78.0, 23.0)));
+        if i > 0 && pill_tip(ui, Rect::from_min_size(Pos2::new(c.right() - 56.0, y + 1.0), Vec2::new(16.0, 21.0)), "^", false, "Move this slot up") {
+            swap_slots(setter, p, i, i - 1);
+        }
+        if i + 1 < MOD_SLOTS && pill_tip(ui, Rect::from_min_size(Pos2::new(c.right() - 38.0, y + 1.0), Vec2::new(16.0, 21.0)), "v", false, "Move this slot down") {
+            swap_slots(setter, p, i, i + 1);
+        }
         if pill_tip(ui, Rect::from_min_size(Pos2::new(c.right() - 22.0, y + 1.0), Vec2::new(22.0, 21.0)), "x", false, "Clear this slot") {
             set_e(setter, &s.src, ModSrc::None);
             set_e(setter, &s.dst, ModDst::None);
@@ -2210,8 +2272,30 @@ fn matrix_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
             set_e(setter, &s.aux, ModSrc::None);
             set_f(setter, &s.curve, 0.0);
             set_b(setter, &s.uni, false);
+            set_b(setter, &s.on, true);
         }
     }
+}
+
+/// Swap two matrix rows (reorder).
+fn swap_slots(setter: &ParamSetter, p: &SynthParams, a: usize, b: usize) {
+    let (x, y) = (&p.slot[a], &p.slot[b]);
+    let (xs, xd, xa, xx, xc, xu, xo) = (x.src.value(), x.dst.value(), x.amount.value(), x.aux.value(), x.curve.value(), x.uni.value(), x.on.value());
+    let (ys, yd, ya, yx, yc, yu, yo) = (y.src.value(), y.dst.value(), y.amount.value(), y.aux.value(), y.curve.value(), y.uni.value(), y.on.value());
+    set_e(setter, &x.src, ys);
+    set_e(setter, &x.dst, yd);
+    set_f(setter, &x.amount, ya);
+    set_e(setter, &x.aux, yx);
+    set_f(setter, &x.curve, yc);
+    set_b(setter, &x.uni, yu);
+    set_b(setter, &x.on, yo);
+    set_e(setter, &y.src, xs);
+    set_e(setter, &y.dst, xd);
+    set_f(setter, &y.amount, xa);
+    set_e(setter, &y.aux, xx);
+    set_f(setter, &y.curve, xc);
+    set_b(setter, &y.uni, xu);
+    set_b(setter, &y.on, xo);
 }
 
 // ===================================================================== ARP tab
@@ -2235,6 +2319,19 @@ fn arp_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, meters: &Meters, 
     knob_s(ui, setter, &p.arp_gate, "GATE", cell(x0 + w, ky, w), "Note length relative to the step", false);
     knob_s(ui, setter, &p.arp_swing, "SWING", cell(x0 + w * 2.0, ky, w), "Delays every second step", false);
     if p.arp_mode.value() == ArpMode::Pattern {
+        let bank = p.arp_pat.lock().map(|g| g.clone()).unwrap_or_default();
+        let cur = (p.arp_sel.value().clamp(1, 12) - 1) as usize;
+        ui.painter().text(Pos2::new(x0 + 490.0, c.top() + 15.0), Align2::LEFT_CENTER, "BANK", mono(10.0), DIM);
+        for k in 0..12usize {
+            let has = bank.split('#').nth(k).map_or(false, |t| !t.trim().is_empty());
+            let pr = Rect::from_min_size(Pos2::new(x0 + 536.0 + 32.0 * k as f32, c.top() + 3.0), Vec2::new(30.0, 24.0));
+            if pill_tip(ui, pr, &format!("{}", k + 1), k == cur, &format!("Pattern slot {}{}", k + 1, if has { " (edited)" } else { " (default)" })) {
+                set_i(setter, &p.arp_sel, k as i32 + 1);
+            }
+            if has && k != cur {
+                ui.painter().circle_filled(Pos2::new(pr.right() - 5.0, pr.top() + 5.0), 2.0, WHITE);
+            }
+        }
         pattern_editor(ui, p, Rect::from_min_size(Pos2::new(x0 + 270.0, c.top() + 36.0), Vec2::new(c.right() - x0 - 280.0, 210.0)));
         ui.painter().text(Pos2::new(x0, ky + 150.0), Align2::LEFT_TOP, "PATTERN: every step plays one of the held\nnotes (NOTE 1 = lowest, wraps round the\nchord) plus TRANSPOSE semitones.\nClick a step number: on / rest.\nRight-click a number: pattern ends there.", mono(9.0), DIM);
         return;
@@ -2295,7 +2392,9 @@ fn arp_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, meters: &Meters, 
 /// 16-step arpeggiator pattern: on/rest, velocity, which chord note, transposition.
 fn pattern_editor(ui: &mut Ui, p: &SynthParams, r: Rect) {
     use crate::arp::{encode_pattern, parse_pattern, PAT_STEPS};
-    let txt = p.arp_pat.lock().map(|g| g.clone()).unwrap_or_default();
+    let bank_txt = p.arp_pat.lock().map(|g| g.clone()).unwrap_or_default();
+    let slot = (p.arp_sel.value().clamp(1, 12) - 1) as usize;
+    let txt = bank_txt.split('#').nth(slot).unwrap_or("").to_string();
     let (mut pat, mut plen) = parse_pattern(&txt);
     let mut changed = false;
     dark_box(ui, r);
@@ -2380,7 +2479,10 @@ fn pattern_editor(ui: &mut Ui, p: &SynthParams, r: Rect) {
     ui.painter().text(Pos2::new(r.right() - 8.0, r.bottom() - 10.0), Align2::RIGHT_CENTER, format!("LENGTH {plen}"), mono(9.0), DIM);
     if changed {
         if let Ok(mut g) = p.arp_pat.lock() {
-            *g = encode_pattern(&pat, plen);
+            let mut parts: Vec<String> = g.split('#').map(|t| t.to_string()).collect();
+            parts.resize(12, String::new());
+            parts[slot] = encode_pattern(&pat, plen);
+            *g = parts.join("#");
         }
     }
 }

@@ -251,7 +251,8 @@ impl NyashkSynth {
     /// Incoming note + keyboard transposition (octave + semitones).
     fn transposed(&self, note: u8) -> u8 {
         let t = self.params.kb_octave.value() * 12 + self.params.kb_transpose.value();
-        (note as i32 + t).clamp(0, 127) as u8
+        let n = (note as i32 + t).clamp(0, 127) as u8;
+        self.params.key_scale.value().quantize(n, self.params.key_root.value())
     }
 }
 

@@ -533,6 +533,75 @@ pub enum ReverbType {
     Basin,
 }
 
+/// Key lock: incoming MIDI notes are moved to the nearest note of the scale.
+#[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
+pub enum ScaleType {
+    #[name = "Off"]
+    Off,
+    #[name = "Major"]
+    Major,
+    #[name = "Natural minor"]
+    Minor,
+    #[name = "Harmonic minor"]
+    HarmMinor,
+    #[name = "Melodic minor"]
+    MelMinor,
+    #[name = "Dorian"]
+    Dorian,
+    #[name = "Phrygian"]
+    Phrygian,
+    #[name = "Lydian"]
+    Lydian,
+    #[name = "Mixolydian"]
+    Mixolydian,
+    #[name = "Pentatonic major"]
+    PentMaj,
+    #[name = "Pentatonic minor"]
+    PentMin,
+    #[name = "Blues"]
+    Blues,
+    #[name = "Whole tone"]
+    WholeTone,
+}
+
+impl ScaleType {
+    /// Semitone offsets (0..12) that belong to the scale.
+    pub fn degrees(self) -> &'static [i32] {
+        match self {
+            ScaleType::Off => &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+            ScaleType::Major => &[0, 2, 4, 5, 7, 9, 11],
+            ScaleType::Minor => &[0, 2, 3, 5, 7, 8, 10],
+            ScaleType::HarmMinor => &[0, 2, 3, 5, 7, 8, 11],
+            ScaleType::MelMinor => &[0, 2, 3, 5, 7, 9, 11],
+            ScaleType::Dorian => &[0, 2, 3, 5, 7, 9, 10],
+            ScaleType::Phrygian => &[0, 1, 3, 5, 7, 8, 10],
+            ScaleType::Lydian => &[0, 2, 4, 6, 7, 9, 11],
+            ScaleType::Mixolydian => &[0, 2, 4, 5, 7, 9, 10],
+            ScaleType::PentMaj => &[0, 2, 4, 7, 9],
+            ScaleType::PentMin => &[0, 3, 5, 7, 10],
+            ScaleType::Blues => &[0, 3, 5, 6, 7, 10],
+            ScaleType::WholeTone => &[0, 2, 4, 6, 8, 10],
+        }
+    }
+
+    /// Nearest in-scale note (ties go down).
+    pub fn quantize(self, note: u8, root: i32) -> u8 {
+        if self == ScaleType::Off {
+            return note;
+        }
+        let deg = self.degrees();
+        for d in 0..=6i32 {
+            for s in [-d, d] {
+                let n = note as i32 + s;
+                if (0..=127).contains(&n) && deg.contains(&(n - root).rem_euclid(12)) {
+                    return n as u8;
+                }
+            }
+        }
+        note
+    }
+}
+
 #[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
 pub enum Tuning {
     #[name = "Equal (12-TET)"]
@@ -1360,6 +1429,8 @@ pub struct ModSlot {
     pub curve: FloatParam,
     #[id = "mu"]
     pub uni: BoolParam,
+    #[id = "mo"]
+    pub on: BoolParam,
 }
 
 impl ModSlot {
@@ -1373,6 +1444,7 @@ impl ModSlot {
             aux: EnumParam::new("Amount Scaled By", ModSrc::None),
             curve: bi_param("Curve", 0.0),
             uni: BoolParam::new("Unipolar", false),
+            on: BoolParam::new("Slot Enabled", true),
         }
     }
 }
@@ -1530,6 +1602,14 @@ pub struct SynthParams {
     pub clip_sel: IntParam,
     #[id = "clp_dv"]
     pub clip_div: EnumParam<Div>,
+    #[id = "clp_sw"]
+    pub clip_swing: FloatParam,
+    #[id = "arp_sl"]
+    pub arp_sel: IntParam,
+    #[id = "scl"]
+    pub key_scale: EnumParam<ScaleType>,
+    #[id = "scr"]
+    pub key_root: IntParam,
 }
 
 impl SynthParams {
@@ -1627,6 +1707,10 @@ impl Default for SynthParams {
             clip_on: BoolParam::new("Clip On", false),
             clip_sel: IntParam::new("Clip Slot", 1, IntRange::Linear { min: 1, max: 12 }),
             clip_div: EnumParam::new("Clip Step", Div::D16),
+            clip_swing: unit_param("Clip Swing", 0.0),
+            arp_sel: IntParam::new("Arp Pattern Slot", 1, IntRange::Linear { min: 1, max: 12 }),
+            key_scale: EnumParam::new("Key Lock Scale", ScaleType::Off),
+            key_root: IntParam::new("Key Lock Root", 0, IntRange::Linear { min: 0, max: 11 }),
         }
     }
 }

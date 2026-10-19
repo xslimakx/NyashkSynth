@@ -76,6 +76,16 @@ pub struct SlotP {
     pub uni: bool,
 }
 
+impl SlotP {
+    /// A bypassed slot behaves like an empty one.
+    pub fn into_enabled(mut self, on: bool) -> Self {
+        if !on {
+            self.src = ModSrc::None;
+        }
+        self
+    }
+}
+
 #[derive(Clone)]
 pub struct LfoP {
     pub shape: LfoShape,
@@ -283,21 +293,26 @@ impl Patch {
             env: [env_read(&p.e1, fs), env_read(&p.e2, fs), env_read(&p.e3, fs), env_read(&p.e4, fs)],
             lfo: std::array::from_fn(|i| lfo_read(&p.lfo[i])),
             lfo_curve,
-            slots: std::array::from_fn(|i| SlotP { src: p.slot[i].src.value(), dst: p.slot[i].dst.value(), amount: p.slot[i].amount.value(), aux: p.slot[i].aux.value(), curve: p.slot[i].curve.value(), uni: p.slot[i].uni.value() }),
+            slots: std::array::from_fn(|i| SlotP { src: p.slot[i].src.value(), dst: p.slot[i].dst.value(), amount: p.slot[i].amount.value(), aux: p.slot[i].aux.value(), curve: p.slot[i].curve.value(), uni: p.slot[i].uni.value() }.into_enabled(p.slot[i].on.value())),
             clip: {
                 let sel = (p.clip_sel.value().clamp(1, 12) - 1) as usize;
                 match p.clips.try_lock() {
-                    Ok(g) => crate::clip::ClipP::from_clip(p.clip_on.value(), p.clip_div.value().beats(), &crate::clip::Clip::decode(g.split('#').nth(sel).unwrap_or(""))),
+                    Ok(g) => {
+                        let mut c = crate::clip::ClipP::from_clip(p.clip_on.value(), p.clip_div.value().beats(), &crate::clip::Clip::decode(g.split('#').nth(sel).unwrap_or("")));
+                        c.swing = p.clip_swing.value();
+                        c
+                    }
                     Err(_) => {
                         let mut c = prev.map(|pp| pp.clip).unwrap_or_default();
                         c.on = p.clip_on.value();
+                        c.swing = p.clip_swing.value();
                         c
                     }
                 }
             },
             arp: {
                 let (pat, plen) = match p.arp_pat.try_lock() {
-                    Ok(g) => crate::arp::parse_pattern(&g),
+                    Ok(g) => crate::arp::parse_pattern(g.split('#').nth((p.arp_sel.value().clamp(1, 12) - 1) as usize).unwrap_or("")),
                     Err(_) => prev.map(|pp| (pp.arp.pat, pp.arp.plen)).unwrap_or_else(crate::arp::default_pattern),
                 };
                 ArpP { pat, plen, on: p.arp_on.value(), mode: p.arp_mode.value(), beats: p.arp_div.value().beats(), octs: p.arp_oct.value().clamp(1, 4) as usize, gate: p.arp_gate.value(), swing: p.arp_swing.value(), hold: p.arp_hold.value() }
@@ -2019,8 +2034,10 @@ impl Engine {
                 self.clip_act.push((note, (nt.len as f64 * step_len * 0.97).max(8.0)));
             }
         }
+        let sw = c.swing as f64 * 0.5;
+        let gap = if st % 2 == 0 { step_len * (1.0 + sw) } else { step_len * (1.0 - sw) };
         self.clip_step = self.clip_step.wrapping_add(1);
-        self.clip_timer += step_len;
+        self.clip_timer += gap.max(8.0);
     }
 
     fn process_clip(&mut self, l: &mut [f32], r: &mut [f32]) {

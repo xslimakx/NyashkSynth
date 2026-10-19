@@ -82,12 +82,13 @@ pub struct ClipP {
     pub n: usize,
     pub steps: usize,
     pub beats: f32,
+    pub swing: f32,
     pub notes: [CNote; MAX_NOTES],
 }
 
 impl Default for ClipP {
     fn default() -> Self {
-        ClipP { on: false, n: 0, steps: STEPS_PER_BAR, beats: 0.25, notes: [CNote { start: 0, len: 1, pitch: 0, vel: 100 }; MAX_NOTES] }
+        ClipP { on: false, n: 0, steps: STEPS_PER_BAR, beats: 0.25, swing: 0.0, notes: [CNote { start: 0, len: 1, pitch: 0, vel: 100 }; MAX_NOTES] }
     }
 }
 
