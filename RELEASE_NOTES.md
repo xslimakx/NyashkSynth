@@ -1,7 +1,10 @@
-# NyashkSynth v1.0.6
+# NyashkSynth v1.0.7
 
-- **Mod wheel can be MIDI-learned:** MIDI LEARN, click the on-screen mod wheel, move any control on your keyboard; that CC then drives the wheel (a `CCn` tag shows it, right-click while learning goes back to CC 1). Useful when a controller has no mod wheel. Saved with the plugin state, listed in SETTINGS > MIDI bindings, removed by CLEAR.
-- Pitch wheel follows your keyboard's pitch bend (a fixed MIDI message, not re-assignable).
+- **Wheels back to standard:** the on-screen pitch and mod wheels cannot be MIDI-learned any more (v1.0.6 allowed it for the mod wheel). They simply follow your keyboard: pitch bend moves the pitch wheel, CC 1 moves the mod wheel. A wheel binding saved by v1.0.6 is dropped automatically.
+
+# v1.0.6 (withdrawn)
+
+- Mod wheel MIDI-learn; removed again in 1.0.7.
 
 # v1.0.5
 
