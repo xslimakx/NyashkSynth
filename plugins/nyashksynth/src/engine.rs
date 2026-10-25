@@ -29,6 +29,8 @@ pub struct OscP {
     pub warp: f32,
     pub wmode2: WarpMode,
     pub warp2: f32,
+    pub fm_src: crate::params::FmSrc,
+    pub fm_src2: crate::params::FmSrc,
     pub level: f32,
     pub pan: f32,
     pub oct: i32,
@@ -172,6 +174,7 @@ pub fn cband_coef_m(b: &CbP, shift: f32, dgain: f32, qmul: f32, fs: f32) -> BqCo
 #[derive(Clone)]
 pub struct Patch {
     pub osc: [OscP; 3],
+    pub quality: crate::params::OscQuality,
     pub sub_on: bool,
     pub sub_wave: SubWave,
     pub sub_oct: i32,
@@ -231,6 +234,8 @@ fn osc_read(o: &OscParams, tbl: Arc<Table>, sample: Option<Arc<NSample>>, multi:
         warp: o.warp.value(),
         wmode2: o.warp2_mode.value(),
         warp2: o.warp2.value(),
+        fm_src: o.fm_src.value(),
+        fm_src2: o.fm_src2.value(),
         level: o.level.value(),
         pan: o.pan.value(),
         oct: o.oct.value(),
@@ -305,6 +310,7 @@ impl Patch {
         });
         Patch {
             osc: [osc_read(&p.a, pick(0, p.a.table.value().to_index()), pick_s(0), pick_m(0)), osc_read(&p.b, pick(1, p.b.table.value().to_index()), pick_s(1), pick_m(1)), osc_read(&p.c, pick(2, p.c.table.value().to_index()), pick_s(2), pick_m(2))],
+            quality: p.quality.value(),
             sub_on: p.sub_on.value(),
             sub_wave: p.sub_wave.value(),
             sub_oct: p.sub_oct.value(),
@@ -763,6 +769,77 @@ impl Fst {
     }
 }
 
+/// Stereo ring buffer + FIR for the decimation of an oversampled oscillator.
+#[derive(Clone)]
+struct OsDec {
+    buf: [[f32; DEC_MAX]; 2],
+    pos: usize,
+}
+
+const DEC_MAX: usize = 128;
+
+impl OsDec {
+    fn new() -> Self {
+        Self { buf: [[0.0; DEC_MAX]; 2], pos: 0 }
+    }
+    #[inline]
+    fn push(&mut self, l: f32, r: f32) {
+        self.pos = (self.pos + 1) & (DEC_MAX - 1);
+        self.buf[0][self.pos] = l;
+        self.buf[1][self.pos] = r;
+    }
+    /// FIR output (linear phase low-pass just under the base Nyquist).
+    #[inline]
+    fn out(&self, taps: &[f32]) -> [f32; 2] {
+        let (mut l, mut r) = (0.0f32, 0.0f32);
+        for (k, t) in taps.iter().enumerate() {
+            let i = (self.pos.wrapping_sub(k)) & (DEC_MAX - 1);
+            l += t * self.buf[0][i];
+            r += t * self.buf[1][i];
+        }
+        [l, r]
+    }
+}
+
+/// Kaiser-windowed sinc half-band style filter for 2x / 4x / 8x decimation (length 16 * K, DC gain 1).
+fn dec_taps(k: usize) -> &'static [f32] {
+    use std::sync::OnceLock;
+    static T: OnceLock<[Vec<f32>; 3]> = OnceLock::new();
+    let t = T.get_or_init(|| {
+        let mk = |k: usize| -> Vec<f32> {
+            let n = 16 * k;
+            let fc = 0.455 / k as f64; // cycles per oversampled sample: pass up to ~0.455 fs
+            let beta = 9.0f64;
+            let i0 = |x: f64| -> f64 {
+                let (mut s, mut t) = (1.0f64, 1.0f64);
+                for m in 1..40 {
+                    t *= (x / (2.0 * m as f64)).powi(2);
+                    s += t;
+                }
+                s
+            };
+            let mid = (n as f64 - 1.0) / 2.0;
+            let mut h: Vec<f64> = (0..n)
+                .map(|i| {
+                    let x = i as f64 - mid;
+                    let sinc = if x.abs() < 1e-9 { 2.0 * fc } else { (2.0 * std::f64::consts::PI * fc * x).sin() / (std::f64::consts::PI * x) };
+                    let w = i0(beta * (1.0 - (x / (mid + 0.5)).powi(2)).max(0.0).sqrt()) / i0(beta);
+                    sinc * w
+                })
+                .collect();
+            let sum: f64 = h.iter().sum();
+            h.iter_mut().for_each(|v| *v /= sum);
+            h.iter().map(|v| *v as f32).collect()
+        };
+        [mk(2), mk(4), mk(8)]
+    });
+    match k {
+        2 => &t[0],
+        4 => &t[1],
+        _ => &t[2],
+    }
+}
+
 #[derive(Clone)]
 struct Voice {
     active: bool,
@@ -787,11 +864,17 @@ struct Voice {
     seed: u32,
     rnd_val: f32,
     prev: [f32; 3],
+    /// last modulator value of every oscillator (pre-level), at the end of the previous sample
+    mlast: [f32; 3],
+    fmn: u32,
+    /// anti-alias decimators of the oversampled oscillators
+    dec: [OsDec; 3],
     fprev: [f32; 2],
     nz: [f32; 10],
     nph: f32,
     nplaying: bool,
     lfo_s: [f32; NLFO],
+    chaos: [crate::chaos::Chaos; NLFO],
     last_lfo: [f32; NLFO],
     fl: [Fst; 2],
     /// de-click on retrigger: the old output level decays away while the new note fades in
@@ -825,6 +908,9 @@ impl Voice {
             seed: 1,
             rnd_val: 0.0,
             prev: [0.0; 3],
+            mlast: [0.0; 3],
+            fmn: 0x1234_5679,
+            dec: [OsDec::new(), OsDec::new(), OsDec::new()],
             fprev: [0.0; 2],
             dc: [0.0; 2],
             last: [0.0; 2],
@@ -833,6 +919,7 @@ impl Voice {
             nph: 0.0,
             nplaying: false,
             lfo_s: [0.0; NLFO],
+            chaos: [crate::chaos::Chaos::idle(); NLFO],
             last_lfo: [0.0; NLFO],
             fl: [Fst::new(comb_len), Fst::new(comb_len)],
         }
@@ -898,11 +985,13 @@ struct OscRun {
     inc: [f32; MAX_UNI],
     gl: [f32; MAX_UNI],
     gr: [f32; MAX_UNI],
+    /// unison weights without level / pan: the signal this oscillator offers as a modulator
+    mg: [f32; MAX_UNI],
 }
 
 impl OscRun {
     fn off() -> Self {
-        Self { on: false, mip: 0, pos: 0.0, f0: 0, ff: 0.0, wmode: WarpMode::Off, warp: 0.0, wmode2: WarpMode::Off, warp2: 0.0, smp: false, grn: false, spec: false, kn: 0, sa: [0.0; SH], sb: [0.0; SH], sdk: [0.0; SH], g_len: 1.0, g_rate: 0.0, g_spray: 0.0, g_pos: 0.0, g_norm: 1.0, s0: 0.0, s1: 1.0, sloop: SampleLoop::Loop, sxf: 0.0, n: 1, inc: [0.0; MAX_UNI], gl: [0.0; MAX_UNI], gr: [0.0; MAX_UNI] }
+        Self { on: false, mip: 0, pos: 0.0, f0: 0, ff: 0.0, wmode: WarpMode::Off, warp: 0.0, wmode2: WarpMode::Off, warp2: 0.0, smp: false, grn: false, spec: false, kn: 0, sa: [0.0; SH], sb: [0.0; SH], sdk: [0.0; SH], g_len: 1.0, g_rate: 0.0, g_spray: 0.0, g_pos: 0.0, g_norm: 1.0, s0: 0.0, s1: 1.0, sloop: SampleLoop::Loop, sxf: 0.0, n: 1, inc: [0.0; MAX_UNI], gl: [0.0; MAX_UNI], gr: [0.0; MAX_UNI], mg: [0.0; MAX_UNI] }
     }
 }
 
@@ -917,6 +1006,9 @@ fn uni_offset(mode: UniMode, j: usize, n: usize, seed: u32) -> f32 {
         UniMode::Super => lin.signum() * lin.abs().powf(0.6),
         UniMode::Random => hash01(seed.wrapping_add(j as u32 * 7919)) * 2.0 - 1.0,
         UniMode::Stack => lin * 0.15,
+        // Exp: voices bunch near the centre, outer ones fly far; Inv: bunched at the edges
+        UniMode::Exp => lin.signum() * lin.abs().powi(2),
+        UniMode::Inv => lin.signum() * (1.0 - (1.0 - lin.abs()).powi(2)),
     }
 }
 
@@ -1178,6 +1270,14 @@ fn hermite_read(d: &[f32], pos: f32) -> f32 {
     ((c3 * f + c2) * f + c1) * f + y0
 }
 
+fn chaos_kind(sh: LfoShape) -> Option<i8> {
+    match sh {
+        LfoShape::Lorenz => Some(0),
+        LfoShape::Rossler => Some(1),
+        _ => None,
+    }
+}
+
 fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mut [f32]) {
     let m = out_l.len();
     let fs = c.fs;
@@ -1201,7 +1301,16 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
                 if lp.oneshot {
                     ph = ph.min(0.9999);
                 }
-                let x = lfo_eval_c(lp.shape, ph + lp.phase0 as f64, v.seed, p.lfo_curve[i].as_deref());
+                let x = if let Some(k) = chaos_kind(lp.shape) {
+                    let ch = &mut v.chaos[i];
+                    ch.ensure(k, v.seed.wrapping_add(i as u32 * 131));
+                    if !lp.oneshot || ch.cyc < 1.0 {
+                        ch.advance(rate as f64 * m as f64 / fs as f64);
+                    }
+                    ch.out()
+                } else {
+                    lfo_eval_c(lp.shape, ph + lp.phase0 as f64, v.seed, p.lfo_curve[i].as_deref())
+                };
                 if lp.rise_s > 0.0 {
                     x * (t / lp.rise_s).min(1.0)
                 } else {
@@ -1267,6 +1376,26 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
         }
     }
 
+    // ---- oversampling: only wavetable oscillators with an active warp need it (FM, sync, fold ...)
+    let mut os_needed = false;
+    let mut os_heavy = false;
+    for op in p.osc.iter() {
+        if op.on && op.mode == OscMode::Wavetable && (op.wmode != WarpMode::Off || op.wmode2 != WarpMode::Off) {
+            os_needed = true;
+            let fmish = |m: WarpMode| matches!(m, WarpMode::Fm | WarpMode::SelfFm | WarpMode::Sync | WarpMode::Am | WarpMode::Rm | WarpMode::SelfAm | WarpMode::SelfRm);
+            if fmish(op.wmode) || fmish(op.wmode2) {
+                os_heavy = true;
+            }
+        }
+    }
+    use crate::params::OscQuality as Oq;
+    let kos: usize = match p.quality {
+        Oq::X1 => 1,
+        Oq::X2 => if os_needed { 2 } else { 1 },
+        Oq::X4 => if os_needed { 4 } else { 1 },
+        Oq::X8 => if os_needed { 8 } else { 1 },
+        Oq::Auto => if !os_needed { 1 } else if os_heavy { 4 } else { 2 },
+    };
     // ---- oscillators set-up
     let mut run = [OscRun::off(), OscRun::off(), OscRun::off()];
     for o in 0..3 {
@@ -1349,10 +1478,12 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
         }
         let norm = level / wsum.sqrt().max(1e-3);
         // wide unison keeps its average level; one voice stays at unity
+        let mnorm = 1.0 / wsum.sqrt().max(1e-3);
         for j in 0..n {
             let g = ws[j] * norm;
             r.gl[j] *= g;
             r.gr[j] *= g;
+            r.mg[j] = ws[j] * mnorm;
         }
         if spectral {
             r.spec = true;
@@ -1393,13 +1524,13 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
             }
         }
         if !r.smp && !r.grn && !r.spec {
-            r.mip = op.tbl.mip_for(fmax * warp_bandwidth(r.wmode, r.warp) * warp_bandwidth(r.wmode2, r.warp2), fs);
+            r.mip = op.tbl.mip_for(fmax * warp_bandwidth(r.wmode, r.warp) * warp_bandwidth(r.wmode2, r.warp2), fs * kos as f32);
         }
     }
 
     // ---- sub / noise / filter set-up
     let sub_level = (p.sub_level + md[15]).clamp(0.0, 1.0);
-    let noise_level = (p.noise + md[16]).clamp(0.0, 1.0);
+    let noise_level = if p.noise_type == NoiseType::None { 0.0 } else { (p.noise + md[16]).clamp(0.0, 1.0) };
     let sub_inc = v.freq * c.tune * 2f32.powf((p.sub_oct * 12) as f32 / 12.0 + c.bend / 12.0) / fs;
     let sub_inc = sub_inc.clamp(0.0, 0.49);
     let comb_len = v.fl[0].comb[0].len();
@@ -1458,9 +1589,62 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
             }
         }
     }
+    // ---- FM routing and oversampling set-up for the wavetable oscillators
+    #[derive(Clone, Copy, PartialEq)]
+    enum FmSel {
+        None,
+        Osc(usize),
+        Sub,
+        Noise,
+    }
+    let is_wt = [0, 1, 2].map(|o| run[o].on && !run[o].spec && !run[o].grn && !run[o].smp);
+    // every warp slot has its own FM / AM / RM source (FM from B on slot 1 and AM from C on slot 2 work together)
+    let mut fm_sel = [[FmSel::None; 2]; 3];
+    for o in 0..3 {
+        use crate::params::FmSrc;
+        for (k, src) in [p.osc[o].fm_src, p.osc[o].fm_src2].into_iter().enumerate() {
+            let s = match src {
+                FmSrc::Auto => FmSel::Osc([1, 0, 1][o]),
+                FmSrc::A => FmSel::Osc(0),
+                FmSrc::B => FmSel::Osc(1),
+                FmSrc::C => FmSel::Osc(2),
+                FmSrc::Sub => FmSel::Sub,
+                FmSrc::Noise => FmSel::Noise,
+            };
+            fm_sel[o][k] = if s == FmSel::Osc(o) { FmSel::None } else { s };
+        }
+    }
+    // a modulator is rendered before the oscillator it modulates (no one-sample delay), when the routing allows it
+    let mut order = [0usize; 3];
+    {
+        let mut done = [false; 3];
+        let mut n = 0;
+        for _ in 0..3 {
+            for o in 0..3 {
+                let dep_open = fm_sel[o].iter().any(|s| matches!(s, FmSel::Osc(i) if is_wt[*i] && !done[*i]));
+                if !done[o] && !dep_open {
+                    order[n] = o;
+                    n += 1;
+                    done[o] = true;
+                }
+            }
+        }
+        for o in 0..3 {
+            if !done[o] {
+                order[n] = o;
+                n += 1;
+            }
+        }
+    }
+    let need_sub_fm = (0..3).any(|o| is_wt[o] && fm_sel[o].contains(&FmSel::Sub) && p.sub_on);
+    let need_nz_fm = (0..3).any(|o| is_wt[o] && fm_sel[o].contains(&FmSel::Noise));
+    let inc_k = 1.0 / kos as f32;
+    let taps: &[f32] = if kos > 1 { dec_taps(kos) } else { &[] };
+    let cubic = p.quality != Oq::X1;
     for s in 0..m {
         // oscillators
         let mut sig = [[0.0f32; 2]; 3]; // [osc][ch]
+        let mut msig = [0.0f32; 3]; // what each oscillator offers as a modulator (before level / pan)
         for o in 0..3 {
             let r = &run[o];
             if !r.on {
@@ -1476,6 +1660,7 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
                 }
                 v.ph[o][0] = (v.ph[o][0] + r.inc[0]).fract();
                 sig[o] = [x * r.gl[0], x * r.gr[0]];
+                msig[o] = (x * r.mg[0]).clamp(-1.0, 1.0);
                 continue;
             }
             if r.grn {
@@ -1522,6 +1707,7 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
                 }
                 let x = acc * r.g_norm;
                 sig[o] = [x * r.gl[0], x * r.gr[0]];
+                msig[o] = (x * r.mg[0]).clamp(-1.0, 1.0);
                 continue;
             }
             if r.smp {
@@ -1530,7 +1716,7 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
                     Some(a) if p.osc[o].mode == OscMode::Multisample => &a.data,
                     _ => &p.osc[o].sample.as_ref().unwrap().data,
                 };
-                let (mut l, mut rr) = (0.0, 0.0);
+                let (mut l, mut rr, mut mm) = (0.0, 0.0, 0.0f32);
                 for j in 0..r.n {
                     let mut pos = v.sp[o][j];
                     let mut dir = v.sdir[o][j];
@@ -1569,38 +1755,85 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
                     }
                     l += smp * r.gl[j];
                     rr += smp * r.gr[j];
+                    mm += smp * r.mg[j];
                 }
                 sig[o] = [l, rr];
+                msig[o] = mm.clamp(-1.0, 1.0);
                 continue;
             }
-            let t = &p.osc[o].tbl;
-            let fm = v.prev[[1, 0, 1][o]].clamp(-1.0, 1.0);
-            let (mut l, mut rr) = (0.0, 0.0);
-            for j in 0..r.n {
-                let ph = &mut v.ph[o][j];
-                *ph += r.inc[j];
-                if *ph >= 1.0 {
-                    *ph -= 1.0;
-                }
-                let mut w = *ph;
-                let own = v.prev[o].clamp(-1.0, 1.0);
-                if r.wmode != WarpMode::Off {
-                    w = warp_phase(r.wmode, r.warp, w, if r.wmode == WarpMode::SelfFm { own } else { fm });
-                }
-                if r.wmode2 != WarpMode::Off {
-                    w = warp_phase(r.wmode2, r.warp2, w, if r.wmode2 == WarpMode::SelfFm { own } else { fm });
-                }
-                let mut smp = t.sample_fr(r.mip, r.f0, r.ff, w);
-                if r.wmode != WarpMode::Off {
-                    smp = amp_warp(r.wmode, r.warp, smp, *ph, fm, own);
-                }
-                if r.wmode2 != WarpMode::Off {
-                    smp = amp_warp(r.wmode2, r.warp2, smp, *ph, fm, own);
-                }
-                l += smp * r.gl[j];
-                rr += smp * r.gr[j];
+            // wavetable oscillators are rendered below (they may run oversampled)
+        }
+        {
+            let mut cm = [0.0f32; 3];
+            for o in 0..3 {
+                cm[o] = if is_wt[o] { v.mlast[o] } else { msig[o] };
             }
-            sig[o] = [l, rr];
+            let sph0 = v.sub_ph;
+            let mut wt_out = [[0.0f32; 2]; 3];
+            for u in 0..kos {
+                let subv = if need_sub_fm { sub_wave(p.sub_wave, (sph0 + sub_inc * (u + 1) as f32 * inc_k).fract(), (sub_inc * inc_k).min(0.45)) * 0.9 } else { 0.0 };
+                let nzv = if need_nz_fm {
+                    v.fmn ^= v.fmn << 13;
+                    v.fmn ^= v.fmn >> 17;
+                    v.fmn ^= v.fmn << 5;
+                    (v.fmn as f32 / u32::MAX as f32) * 2.0 - 1.0
+                } else {
+                    0.0
+                };
+                for &o in order.iter() {
+                    if !is_wt[o] {
+                        continue;
+                    }
+                    let r = &run[o];
+                    let t = &p.osc[o].tbl;
+                    let pick = |s: FmSel| match s {
+                        FmSel::Osc(i) => cm[i],
+                        FmSel::Sub => subv,
+                        FmSel::Noise => nzv,
+                        FmSel::None => 0.0,
+                    };
+                    let fm1 = pick(fm_sel[o][0]);
+                    let fm2 = pick(fm_sel[o][1]);
+                    let own = cm[o];
+                    let (mut l, mut rr, mut mm) = (0.0f32, 0.0f32, 0.0f32);
+                    for j in 0..r.n {
+                        let ph = &mut v.ph[o][j];
+                        *ph += r.inc[j] * inc_k;
+                        if *ph >= 1.0 {
+                            *ph -= 1.0;
+                        }
+                        let mut w = *ph;
+                        if r.wmode != WarpMode::Off {
+                            w = warp_phase(r.wmode, r.warp, w, if r.wmode == WarpMode::SelfFm { own } else { fm1 });
+                        }
+                        if r.wmode2 != WarpMode::Off {
+                            w = warp_phase(r.wmode2, r.warp2, w, if r.wmode2 == WarpMode::SelfFm { own } else { fm2 });
+                        }
+                        let mut smp = if cubic { t.sample_fr_cubic(r.mip, r.f0, r.ff, w) } else { t.sample_fr(r.mip, r.f0, r.ff, w) };
+                        if r.wmode != WarpMode::Off {
+                            smp = amp_warp(r.wmode, r.warp, smp, *ph, fm1, own);
+                        }
+                        if r.wmode2 != WarpMode::Off {
+                            smp = amp_warp(r.wmode2, r.warp2, smp, *ph, fm2, own);
+                        }
+                        l += smp * r.gl[j];
+                        rr += smp * r.gr[j];
+                        mm += smp * r.mg[j];
+                    }
+                    cm[o] = mm.clamp(-1.0, 1.0);
+                    if kos > 1 {
+                        v.dec[o].push(l, rr);
+                    } else {
+                        wt_out[o] = [l, rr];
+                    }
+                }
+            }
+            for o in 0..3 {
+                if is_wt[o] {
+                    sig[o] = if kos > 1 { v.dec[o].out(taps) } else { wt_out[o] };
+                    v.mlast[o] = cm[o];
+                }
+            }
         }
         v.prev = [(sig[0][0] + sig[0][1]) * 0.5, (sig[1][0] + sig[1][1]) * 0.5, (sig[2][0] + sig[2][1]) * 0.5];
 
@@ -1699,6 +1932,7 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
                     }
                     v.nz[7]
                 }
+                NoiseType::None => 0.0,
                 NoiseType::Sample => {
                     if let Some(sm) = p.sample.as_ref().filter(|_| v.nplaying) {
                         let len = sm.data.len() as f32;
@@ -1806,6 +2040,7 @@ pub struct Engine {
     pub patch: Patch,
     glfo_ph: [f64; NLFO],
     glfo_s: [f32; NLFO],
+    gchaos: [crate::chaos::Chaos; NLFO],
     glfo_out: [f32; NLFO],
     bend_norm: f32,
     modwheel: f32,
@@ -1850,6 +2085,7 @@ impl Engine {
             patch,
             glfo_ph: [0.0; NLFO],
             glfo_s: [0.0; NLFO],
+            gchaos: [crate::chaos::Chaos::idle(); NLFO],
             glfo_out: [0.0; NLFO],
             bend_norm: 0.0,
             modwheel: 0.0,
@@ -2042,9 +2278,12 @@ impl Engine {
         if !was_sounding {
             v.fl[0].clear();
             v.fl[1].clear();
+            v.dec = [OsDec::new(), OsDec::new(), OsDec::new()];
+            v.mlast = [0.0; 3];
         }
         v.nz = [0.0; 10];
         v.lfo_s = [0.0; NLFO];
+        v.chaos = [crate::chaos::Chaos::idle(); NLFO];
         if let Some(sm) = patch.sample.as_ref() {
             v.nph = ((patch.noise_phase + patch.noise_rand * r3).fract() * sm.data.len() as f32).min(sm.data.len() as f32 - 1.0);
             v.nplaying = true;
@@ -2179,9 +2418,16 @@ impl Engine {
         if self.patch.vmode != VoiceMode::Poly {
             self.stack.retain(|n| *n != note);
             if let Some(&top) = self.stack.last() {
-                self.voices[0].tfreq = midi_freq(&self.patch, top as f32);
-                self.voices[0].note = top;
-                self.last_freq = self.voices[0].tfreq;
+                if self.patch.vmode == VoiceMode::Mono && self.voices[0].note != top {
+                    // Mono: going back to a key that is still held plays it again (envelopes restart, pitch glides);
+                    // Legato just changes the pitch of the sounding note
+                    let vel = self.last_vel;
+                    self.trigger(0, top, vel);
+                } else {
+                    self.voices[0].tfreq = midi_freq(&self.patch, top as f32);
+                    self.voices[0].note = top;
+                    self.last_freq = self.voices[0].tfreq;
+                }
             } else {
                 Self::release(&mut self.voices[0]);
             }
@@ -2348,6 +2594,23 @@ impl Engine {
         self.arp.odd = !self.arp.odd;
         self.arp.timer += len.max(8.0);
         self.arp.gate = len * (ap.gate as f64).clamp(0.05, 1.0);
+    }
+
+    /// For the GUI: per LFO `[picture x, picture y, phase 0..1]` (x/y only for the chaos shapes).
+    pub fn lfo_view(&self) -> [[f32; 3]; NLFO] {
+        let mut o = [[0.0f32; 3]; NLFO];
+        let newest = self.voices.iter().filter(|v| v.active).max_by_key(|v| v.order);
+        for i in 0..NLFO {
+            let lp = &self.patch.lfo[i];
+            let rate = if lp.sync { self.bpm.max(20.0) / 60.0 / lp.div.beats() } else { lp.rate } as f64;
+            let (ch, ph) = match newest {
+                Some(v) if lp.trig => (&v.chaos[i], ((v.t - lp.delay_s).max(0.0) as f64 * rate + lp.phase0 as f64).rem_euclid(1.0)),
+                _ => (&self.gchaos[i], (self.glfo_ph[i] + lp.phase0 as f64).rem_euclid(1.0)),
+            };
+            let (x, y) = if chaos_kind(lp.shape).is_some() && ch.kind >= 0 { ch.xy() } else { (0.0, 0.0) };
+            o[i] = [x, y, ph as f32];
+        }
+        o
     }
 
     /// Current value of every modulation source (index = `ModSrc` index) for the GUI.
@@ -2527,7 +2790,14 @@ impl Engine {
                 if self.glfo_ph[k] > 1.0e6 {
                     self.glfo_ph[k] -= 1.0e6;
                 }
-                let raw = lfo_eval_c(lp.shape, self.glfo_ph[k] + lp.phase0 as f64, 0x51ED_u32 + k as u32 * 977, self.patch.lfo_curve[k].as_deref());
+                let raw = if let Some(ck) = chaos_kind(lp.shape) {
+                    let ch = &mut self.gchaos[k];
+                    ch.ensure(ck, 0x51ED_u32 + k as u32 * 977);
+                    ch.advance(rate * m as f64 / fs as f64);
+                    ch.out()
+                } else {
+                    lfo_eval_c(lp.shape, self.glfo_ph[k] + lp.phase0 as f64, 0x51ED_u32 + k as u32 * 977, self.patch.lfo_curve[k].as_deref())
+                };
                 glfo[k] = if lp.smooth > 0.001 {
                     let alpha = ((1.0 - lp.smooth).powi(3) + 0.0008).min(1.0);
                     self.glfo_s[k] += (raw - self.glfo_s[k]) * alpha;
@@ -2561,5 +2831,24 @@ impl Engine {
             }
             i += m;
         }
+    }
+}
+
+#[cfg(test)]
+mod uni_tests {
+    use super::*;
+    #[test]
+    fn unison_modes_are_bounded_and_ordered() {
+        for m in [UniMode::Linear, UniMode::Super, UniMode::Exp, UniMode::Inv] {
+            for n in 2..=16 {
+                let v: Vec<f32> = (0..n).map(|j| uni_offset(m, j, n, 1)).collect();
+                assert!(v.iter().all(|x| x.abs() <= 1.0 + 1e-6), "{m:?}");
+                assert!(v.windows(2).all(|w| w[0] <= w[1] + 1e-6), "{m:?} not monotonic");
+                assert!((v[0] + v[n - 1]).abs() < 1e-5, "{m:?} not symmetric");
+            }
+        }
+        // Exp keeps the inner voices closer to the centre than Linear, Inv pushes them out
+        let (l, e, i) = (uni_offset(UniMode::Linear, 3, 8, 0), uni_offset(UniMode::Exp, 3, 8, 0), uni_offset(UniMode::Inv, 3, 8, 0));
+        assert!(e.abs() < l.abs() && i.abs() > l.abs());
     }
 }

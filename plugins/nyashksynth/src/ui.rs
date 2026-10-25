@@ -1,7 +1,7 @@
 //! Shared NyashkTune widgets: palette, knob (drag / shift-fine / wheel / double-click reset / click-to-type),
 //! pill buttons, section titles.
 #![allow(dead_code)]
-use crate::params::{ModDst, ModSrc, SynthParams, N_SRC};
+use crate::params::{ModDst, ModSrc, NoiseType, SynthParams, N_SRC};
 use nih_plug::params::internals::ParamPtr;
 use nih_plug::prelude::*;
 use std::cell::{Cell, RefCell};
@@ -13,6 +13,14 @@ pub const PANEL: Color32 = Color32::from_rgb(0x11, 0x11, 0x11);
 pub const PANEL2: Color32 = Color32::from_rgb(0x1c, 0x1c, 0x1c);
 pub const LINE: Color32 = Color32::from_rgb(0x2e, 0x2e, 0x2e);
 pub const WHITE: Color32 = Color32::from_rgb(0xf2, 0xf2, 0xf2);
+/// signature tone: brushed silver for values, active states, curves
+pub const ACCENT: Color32 = Color32::from_rgb(0xe4, 0xe4, 0xe4);
+/// modulation tone: pure bright white (rings, live dots, source chips)
+pub const MODC: Color32 = Color32::from_rgb(0xff, 0xff, 0xff);
+pub fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
+    let l = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t.clamp(0.0, 1.0)).round() as u8;
+    Color32::from_rgb(l(a.r(), b.r()), l(a.g(), b.g()), l(a.b(), b.b()))
+}
 pub const DIM: Color32 = Color32::from_rgb(0x80, 0x80, 0x80);
 pub const MID: Color32 = Color32::from_rgb(0x7a, 0x7a, 0x7a);
 
@@ -27,6 +35,12 @@ pub struct ModCtx {
     pub rects: Vec<(Rect, usize)>,
     /// Source (ModSrc index) currently being dragged from the source strip.
     pub drag: Option<usize>,
+    pub drag_label: String,
+    /// where the dragged source was last seen (it is dropped there when the button goes up)
+    pub drag_pos: Option<Pos2>,
+    /// the complete knob list of the previous frame and the one knob under the pointer (the only one that lights up)
+    pub prev_rects: Vec<(Rect, usize)>,
+    pub hover_dst: Option<usize>,
     /// live value of every modulation source (for the animated dots on the knobs)
     pub live: [f32; N_SRC],
     /// MIDI learn state (set once per frame by the editor)
@@ -38,8 +52,9 @@ pub struct ModCtx {
 }
 
 thread_local! {
-    static MC: RefCell<ModCtx> = RefCell::new(ModCtx { params: None, rects: Vec::new(), drag: None, live: [0.0; N_SRC], learn_on: false, learn_target: None, learn_click: None, learn_unbind: None, bound: Vec::new() });
+    static MC: RefCell<ModCtx> = RefCell::new(ModCtx { params: None, rects: Vec::new(), drag: None, drag_label: String::new(), drag_pos: None, prev_rects: Vec::new(), hover_dst: None, live: [0.0; N_SRC], learn_on: false, learn_target: None, learn_click: None, learn_unbind: None, bound: Vec::new() });
     static NEXT_DST: Cell<usize> = Cell::new(0);
+    static NEXT_DESC: Cell<Option<&'static crate::fxdesc::D>> = Cell::new(None);
     static FLASH: Cell<(usize, f64)> = Cell::new((0, 0.0));
 }
 
@@ -48,8 +63,54 @@ pub fn begin_frame(p: &Arc<SynthParams>, live: [f32; N_SRC]) {
         let mut m = m.borrow_mut();
         m.live = live;
         m.params = Some(p.clone());
-        m.rects.clear();
+        let done = std::mem::take(&mut m.rects);
+        m.prev_rects = done;
     });
+}
+
+/// The knob that a drop at `pos` would land on: of all knobs whose hit box contains the point, the nearest one.
+pub fn best_target(rects: &[(Rect, usize)], pos: Pos2) -> Option<usize> {
+    rects
+        .iter()
+        .filter(|(r, _)| r.contains(pos))
+        .min_by(|(a, _), (b, _)| a.center().distance(pos).partial_cmp(&b.center().distance(pos)).unwrap_or(std::cmp::Ordering::Equal))
+        .map(|(_, d)| *d)
+}
+
+/// Runs after the whole UI of a frame has been drawn (so the knob list is complete): follows the dragged
+/// source, draws its ghost, and returns `(source, destination)` when it is dropped on a knob.
+/// A drag can never get stuck: it ends when no button is down, a new press starts, or Escape is hit.
+pub fn end_frame(ctx: &egui::Context) -> Option<(usize, usize)> {
+    let (down, pressed, esc, pos) = ctx.input(|i| (i.pointer.any_down(), i.pointer.any_pressed(), i.key_pressed(egui::Key::Escape), i.pointer.latest_pos()));
+    MC.with(|m| {
+        let mut m = m.borrow_mut();
+        // which knob lights up next frame
+        m.hover_dst = if m.drag.is_some() { pos.and_then(|pp| best_target(&m.rects, pp)) } else { None };
+        let Some(src) = m.drag else { return None };
+        if let Some(pp) = pos {
+            if down {
+                m.drag_pos = Some(pp);
+            }
+        }
+        if down && !esc {
+            if let Some(pp) = pos {
+                let lp = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("mod_ghost")));
+                let g = Rect::from_center_size(pp + Vec2::new(14.0, 14.0), Vec2::new(46.0, 22.0));
+                lp.rect_filled(g, CornerRadius::same(6), WHITE);
+                lp.text(g.center(), Align2::CENTER_CENTER, &m.drag_label, mono(10.0), Color32::BLACK);
+            }
+            ctx.request_repaint();
+            return None;
+        }
+        // finished (released, cancelled, or the button state got lost)
+        let at = m.drag_pos.take();
+        m.drag = None;
+        m.hover_dst = None;
+        if esc || (pressed && down) {
+            return None;
+        }
+        at.and_then(|pp| best_target(&m.rects, pp)).map(|d| (src, d))
+    })
 }
 
 /// Tell the knobs whether MIDI learn is active, which one is waiting for a controller and which are bound.
@@ -71,6 +132,11 @@ pub fn take_learn_events() -> (Option<ParamPtr>, Option<ParamPtr>) {
 }
 
 /// Announce the modulation destination of the next knob.
+/// The next knob shows / parses its value with this effect descriptor (rack knobs are plain 0..1 parameters).
+pub fn use_desc(d: &'static crate::fxdesc::D) {
+    NEXT_DESC.with(|c| c.set(Some(d)));
+}
+
 pub fn mdst(d: ModDst) {
     NEXT_DST.with(|c| c.set(d as usize));
 }
@@ -80,8 +146,15 @@ pub fn flash(dst: usize, until: f64) {
     FLASH.with(|f| f.set((dst, until)));
 }
 
-pub fn set_drag(s: Option<usize>) {
-    MC.with(|m| m.borrow_mut().drag = s);
+pub fn set_drag(s: Option<usize>, label: &str) {
+    MC.with(|m| {
+        let mut m = m.borrow_mut();
+        m.drag = s;
+        m.drag_label = label.to_string();
+        if s.is_none() {
+            m.drag_pos = None;
+        }
+    });
 }
 pub fn drag_src() -> Option<usize> {
     MC.with(|m| m.borrow().drag)
@@ -137,6 +210,15 @@ fn mods_for(dst: usize) -> Vec<(usize, usize, f32)> {
             }
         }
         v
+    })
+}
+
+/// Bypassed (switched off) slots that still point at a destination.
+fn bypassed_for(dst: usize) -> Vec<(usize, usize)> {
+    MC.with(|m| {
+        let m = m.borrow();
+        let Some(p) = m.params.as_ref() else { return Vec::new() };
+        p.slot.iter().enumerate().filter(|(_, s)| s.dst.value() as usize == dst && s.src.value() != ModSrc::None && !s.on.value()).map(|(i, s)| (i, s.src.value() as usize)).collect()
     })
 }
 
@@ -231,6 +313,7 @@ fn knob_impl<P: Param>(ui: &mut Ui, setter: &ParamSetter, p: &P, label: &str, ce
     let c = Pos2::new(cell.center().x, cell.top() + r + 3.0);
     let hit = Rect::from_center_size(c, Vec2::splat(2.0 * r + 8.0));
     let dst = NEXT_DST.with(|d| d.replace(0));
+    let desc = NEXT_DESC.with(|d| d.take());
     let mods = if dst != 0 { mods_for(dst) } else { Vec::new() };
     if dst != 0 {
         MC.with(|m| m.borrow_mut().rects.push((hit, dst)));
@@ -257,7 +340,7 @@ fn knob_impl<P: Param>(ui: &mut Ui, setter: &ParamSetter, p: &P, label: &str, ce
         for (_, s, a) in &mods {
             t.push_str(&format!("\n  {}  {:+.0}%", ModSrc::variants()[*s], a * 100.0));
         }
-        t.push_str("\nDrag the outer ring (or Ctrl+drag) = amount, right-click = remove");
+        t.push_str("\nDrag a ring (one per source) = its amount, right-click = list of sources (amount, bipolar, remove)");
         t
     };
     let resp = if tip_full.is_empty() { resp } else { resp.on_hover_text(tip_full) };
@@ -268,40 +351,103 @@ fn knob_impl<P: Param>(ui: &mut Ui, setter: &ParamSetter, p: &P, label: &str, ce
     let raw_id = egui::Id::new(("knob_raw", resp.id));
     // ---- modulation: right-click removes, ring / Ctrl drag edits the amount
     let medit_id = egui::Id::new(("knob_medit", resp.id));
-    if dst != 0 && !learn_on && resp.secondary_clicked() && !mods.is_empty() {
+    let byp = if dst != 0 { bypassed_for(dst) } else { Vec::new() };
+    if !learn_on {
         if let Some(pp) = MC.with(|m| m.borrow().params.clone()) {
-            for (i, _, _) in &mods {
-                set_e(setter, &pp.slot[*i].dst, ModDst::None);
-                set_e(setter, &pp.slot[*i].src, ModSrc::None);
-                set_f(setter, &pp.slot[*i].amount, 0.0);
-            }
+            resp.context_menu(|ui| {
+                ui.set_min_width(210.0);
+                ui.label(egui::RichText::new(format!("{}  {label}", if mods.is_empty() && byp.is_empty() { "PARAMETER" } else { "MODULATION" })).monospace().size(10.0).color(DIM));
+                ui.separator();
+                // Lock parameter: presets leave this control alone
+                if let Some(id) = pp.param_map().into_iter().find(|(_, q, _)| *q == ptr).map(|(id, _, _)| id) {
+                    let is_locked = pp.locked.lock().map(|g| g.split(';').any(|s| s == id)).unwrap_or(false);
+                    if ui.selectable_label(is_locked, "Lock parameter").on_hover_text("Loading a preset will not change this control").clicked() {
+                        if let Ok(mut g) = pp.locked.lock() {
+                            let mut v: Vec<String> = g.split(';').filter(|s| !s.is_empty() && *s != id).map(String::from).collect();
+                            if !is_locked {
+                                v.push(id.clone());
+                            }
+                            *g = v.join(";");
+                        }
+                        ui.close_menu();
+                    }
+                }
+                for (i, sidx, a) in &mods {
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(format!("{:<7}", ModSrc::variants()[*sidx])).monospace().size(11.0));
+                        let mut v = *a;
+                        if ui.add(egui::Slider::new(&mut v, -1.0..=1.0).show_value(true).fixed_decimals(2)).changed() {
+                            set_f(setter, &pp.slot[*i].amount, v);
+                        }
+                        let bi = pp.slot[*i].uni.value();
+                        if ui.selectable_label(!bi, "BI").on_hover_text("Bipolar: the source moves the knob both ways. Off = unipolar (only up).").clicked() {
+                            set_b(setter, &pp.slot[*i].uni, !bi);
+                        }
+                        if ui.button("off").on_hover_text("Bypass this source (keeps the routing)").clicked() {
+                            set_b(setter, &pp.slot[*i].on, false);
+                            ui.close_menu();
+                        }
+                        if ui.button("x").on_hover_text("Remove this source").clicked() {
+                            set_e(setter, &pp.slot[*i].dst, ModDst::None);
+                            set_e(setter, &pp.slot[*i].src, ModSrc::None);
+                            set_f(setter, &pp.slot[*i].amount, 0.0);
+                            ui.close_menu();
+                        }
+                    });
+                }
+                for (i, sidx) in &byp {
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(format!("{:<7}", ModSrc::variants()[*sidx])).monospace().size(11.0).color(DIM));
+                        ui.label(egui::RichText::new("bypassed").size(10.0).color(DIM));
+                        if ui.button("on").on_hover_text("Enable this source again").clicked() {
+                            set_b(setter, &pp.slot[*i].on, true);
+                            ui.close_menu();
+                        }
+                    });
+                }
+                ui.separator();
+                if ui.button("Reset control").on_hover_text("Back to the default value (same as double-click)").clicked() {
+                    let dn = desc.map_or_else(|| p.default_normalized_value(), |d| d.def_norm());
+                    set_norm(setter, p, dn);
+                    ui.close_menu();
+                }
+                if ui.button("Remove all").clicked() {
+                    for (i, _, _) in &mods {
+                        set_e(setter, &pp.slot[*i].dst, ModDst::None);
+                        set_e(setter, &pp.slot[*i].src, ModSrc::None);
+                        set_f(setter, &pp.slot[*i].amount, 0.0);
+                    }
+                    ui.close_menu();
+                }
+            });
         }
     }
     let mut mod_editing = false;
     if !mods.is_empty() {
         if resp.drag_started() {
-            let on_ring = resp.interact_pointer_pos().map(|pp| {
-                let d = ((pp.x - c.x).powi(2) + (pp.y - c.y).powi(2)).sqrt();
-                d > r * 0.82
-            }).unwrap_or(false);
-            if on_ring || ui.input(|i| i.modifiers.ctrl) {
-                ui.data_mut(|d| d.insert_temp(medit_id, true));
+            let dist = resp.interact_pointer_pos().map(|pp| ((pp.x - c.x).powi(2) + (pp.y - c.y).powi(2)).sqrt()).unwrap_or(0.0);
+            if dist > r * 0.82 || ui.input(|i| i.modifiers.ctrl) {
+                // each source has its own ring: pick the one under the pointer (Ctrl = the first one)
+                let base = r - 2.5 + if compact { 3.6 } else { 4.6 };
+                let step = if compact { 2.8 } else { 3.4 };
+                let pick = (((dist - base) / step).round().max(0.0) as usize).min(mods.len().min(4) - 1);
+                ui.data_mut(|d| d.insert_temp(medit_id, pick + 1));
             }
         }
-        let on = ui.data(|d| d.get_temp::<bool>(medit_id)).unwrap_or(false);
-        if on && resp.dragged() {
+        let on = ui.data(|d| d.get_temp::<usize>(medit_id)).unwrap_or(0);
+        if on > 0 && resp.dragged() {
             mod_editing = true;
             if let Some(pp) = MC.with(|m| m.borrow().params.clone()) {
-                let (i, _, a) = mods[0];
+                let (i, _, a) = mods[(on - 1).min(mods.len() - 1)];
                 let fine = ui.input(|i| i.modifiers.shift);
                 let nv = (a - resp.drag_delta().y / if fine { 1500.0 } else { 220.0 }).clamp(-1.0, 1.0);
                 set_f(setter, &pp.slot[i].amount, nv);
             }
         }
         if resp.drag_stopped() {
-            ui.data_mut(|d| d.remove::<bool>(medit_id));
+            ui.data_mut(|d| d.remove::<usize>(medit_id));
         }
-        if on {
+        if on > 0 {
             mod_editing = true;
         }
     }
@@ -325,8 +471,9 @@ fn knob_impl<P: Param>(ui: &mut Ui, setter: &ParamSetter, p: &P, label: &str, ce
         setter.end_set_parameter(p);
     }
     if resp.double_clicked() {
-        delta = p.default_normalized_value() - norm;
-        set_norm(setter, p, p.default_normalized_value());
+        let dn = desc.map_or_else(|| p.default_normalized_value(), |d| d.def_norm());
+        delta = dn - norm;
+        set_norm(setter, p, dn);
         ev.started = false;
     }
     if resp.hovered() {
@@ -354,24 +501,28 @@ fn knob_impl<P: Param>(ui: &mut Ui, setter: &ParamSetter, p: &P, label: &str, ce
         let n = (((to - from).abs() / sweep) * 120.0).ceil().max(2.0) as usize;
         (0..=n).map(|i| pt(ring, from + (to - from) * i as f32 / n as f32)).collect()
     };
+    let arc_r = |rad: f32, from: f32, to: f32| -> Vec<Pos2> {
+        let n = (((to - from).abs() / sweep) * 120.0).ceil().max(2.0) as usize;
+        (0..=n).map(|i| pt(rad, from + (to - from) * i as f32 / n as f32)).collect()
+    };
     // track + value arc with round caps
     painter.add(egui::Shape::line(arc(0.0, 1.0), PathStroke::new(sw, LINE)));
     painter.circle_filled(pt(ring, 0.0), 2.0, LINE);
     painter.circle_filled(pt(ring, 1.0), 2.0, LINE);
     let from = if bipolar { 0.5 } else { 0.0 };
     if (norm - from).abs() > 0.002 {
-        painter.add(egui::Shape::line(arc(from, norm), PathStroke::new(sw, WHITE)));
-        painter.circle_filled(pt(ring, from), 2.0, WHITE);
-        painter.circle_filled(pt(ring, norm), 2.0, WHITE);
+        painter.add(egui::Shape::line(arc(from, norm), PathStroke::new(sw, ACCENT)));
+        painter.circle_filled(pt(ring, from), 2.0, ACCENT);
+        painter.circle_filled(pt(ring, norm), 2.0, ACCENT);
     }
-    // modulation range(s) on an outer ring
-    for (_, _, amt) in &mods {
+    // modulation ranges: one concentric ring per source (so several sources never hide each other)
+    for (k, (_, sidx, amt)) in mods.iter().take(4).enumerate() {
         let sc = dst_scale(dst);
         let lo = (norm - (amt.abs() * sc)).clamp(0.0, 1.0);
         let hi = (norm + (amt.abs() * sc)).clamp(0.0, 1.0);
         let (a, b) = if *amt >= 0.0 { (norm, hi) } else { (lo, norm) };
         let n = (((b - a).abs() / 1.0) * 90.0).ceil().max(2.0) as usize;
-        let rr = ring + if compact { 3.6 } else { 4.6 };
+        let rr = ring + if compact { 3.6 } else { 4.6 } + k as f32 * if compact { 2.8 } else { 3.4 };
         let pts: Vec<Pos2> = (0..=n)
             .map(|i| {
                 let t = a + (b - a) * i as f32 / n as f32;
@@ -379,9 +530,13 @@ fn knob_impl<P: Param>(ui: &mut Ui, setter: &ParamSetter, p: &P, label: &str, ce
                 Pos2::new(c.x + rr * ang.cos(), c.y + rr * ang.sin())
             })
             .collect();
+        let shade = [255u8, 200, 150, 110][k];
+        // the track of this ring (faint) shows where the full range would be
+        painter.add(egui::Shape::line(arc_r(rr, 0.0, 1.0), PathStroke::new(1.0_f32, Color32::from_rgb(34, 34, 34))));
         if (b - a).abs() > 0.002 {
-            painter.add(egui::Shape::line(pts, PathStroke::new(2.0_f32, Color32::from_rgb(0xff, 0xff, 0xff))));
+            painter.add(egui::Shape::line(pts, PathStroke::new(if k == 0 { 2.2_f32 } else { 1.8 }, mix(Color32::from_rgb(34, 34, 34), MODC, shade as f32 / 255.0))));
         }
+        let _ = sidx;
     }
     // animated dot: where the modulation currently pushes the value
     if !mods.is_empty() {
@@ -390,7 +545,7 @@ fn knob_impl<P: Param>(ui: &mut Ui, setter: &ParamSetter, p: &P, label: &str, ce
         let ang = a0 + t * sweep;
         let dp = Pos2::new(c.x + rr * ang.cos(), c.y + rr * ang.sin());
         painter.circle_filled(dp, 3.2, Color32::BLACK);
-        painter.circle_filled(dp, 2.2, WHITE);
+        painter.circle_filled(dp, 2.2, MODC);
     }
     // pulse a freshly routed destination so the user sees where the modulation landed
     if dst != 0 {
@@ -404,7 +559,7 @@ fn knob_impl<P: Param>(ui: &mut Ui, setter: &ParamSetter, p: &P, label: &str, ce
     }
     // drop target highlight while a source is dragged
     if dst != 0 && drag_src().is_some() {
-        let over = ui.input(|i| i.pointer.hover_pos()).map(|pp| hit.contains(pp)).unwrap_or(false);
+        let over = MC.with(|m| m.borrow().hover_dst) == Some(dst);
         painter.circle_stroke(c, r + 3.0, Stroke::new(if over { 2.0_f32 } else { 1.0 }, if over { WHITE } else { MID }));
     }
     // MIDI learn: hint ring on every knob, bright ring on the one waiting, tag on the bound ones
@@ -435,7 +590,10 @@ fn knob_impl<P: Param>(ui: &mut Ui, setter: &ParamSetter, p: &P, label: &str, ce
     painter.circle_filled(pt(body * 0.30, norm), 1.5, WHITE);
 
     // value + label (click the value box to type a number)
-    let val = p.normalized_value_to_string(norm, true);
+    let val = match desc {
+        Some(d) => d.text(norm),
+        None => p.normalized_value_to_string(norm, true),
+    };
     let vr = if compact {
         Rect::from_center_size(Pos2::new(cell.center().x, c.y + r + 10.0), Vec2::new(cell.width().min(58.0), 14.0))
     } else {
@@ -465,7 +623,11 @@ fn knob_impl<P: Param>(ui: &mut Ui, setter: &ParamSetter, p: &P, label: &str, ce
             ui.data_mut(|d| d.remove::<String>(edit_id));
         } else if enter || r_te.lost_focus() {
             let txt = buf.trim().replace(',', ".");
-            if let Some(nv) = p.string_to_normalized_value(&txt) {
+            let parsed = match desc {
+                Some(d) => d.parse(&txt).map(|v| d.norm(v)),
+                None => p.string_to_normalized_value(&txt),
+            };
+            if let Some(nv) = parsed {
                 let nv = nv.clamp(0.0, 1.0);
                 delta = nv - norm;
                 set_norm(setter, p, nv);
@@ -480,7 +642,7 @@ fn knob_impl<P: Param>(ui: &mut Ui, setter: &ParamSetter, p: &P, label: &str, ce
         painter.rect_stroke(vr, CornerRadius::same(4), Stroke::new(1.0_f32, if vresp.hovered() { DIM } else { LINE }), StrokeKind::Inside);
         painter.text(vr.center(), Align2::CENTER_CENTER, &val, vfont, WHITE);
         if vresp.clicked() {
-            let plain = val.trim().split(' ').next().unwrap_or("").to_string();
+            let plain = val.trim().replace(" kHz", "k").split(' ').next().unwrap_or("").to_string();
             ui.data_mut(|d| d.insert_temp(edit_id, plain));
         }
     }
@@ -501,12 +663,98 @@ pub fn pill_tip(ui: &mut Ui, rect: Rect, text: &str, on: bool, tip: &str) -> boo
     if !tip.is_empty() {
         resp = resp.on_hover_text(tip);
     }
+    let id = egui::Id::new(("pill", rect.min.x as i32, rect.min.y as i32, text));
+    let a = ui.ctx().animate_bool_with_time(id, on, 0.12);
+    let h = ui.ctx().animate_bool_with_time(id.with("h"), resp.hovered(), 0.10);
     let painter = ui.painter();
-    let hov = resp.hovered();
-    painter.rect_filled(rect, CornerRadius::same(6), if on { WHITE } else if hov { PANEL2 } else { Color32::TRANSPARENT });
-    painter.rect_stroke(rect, CornerRadius::same(6), Stroke::new(1.0_f32, if on { WHITE } else if hov { DIM } else { LINE }), StrokeKind::Inside);
-    painter.text(rect.center(), Align2::CENTER_CENTER, text, mono(11.0), if on { Color32::BLACK } else { WHITE });
+    let fill = mix(mix(Color32::from_rgb(0x12, 0x12, 0x12), PANEL2, h), ACCENT, a);
+    let edge = mix(mix(LINE, DIM, h), ACCENT, a);
+    painter.rect_filled(rect, CornerRadius::same(6), fill);
+    painter.rect_stroke(rect, CornerRadius::same(6), Stroke::new(1.0_f32, edge), StrokeKind::Inside);
+    painter.text(rect.center(), Align2::CENTER_CENTER, text, mono(11.0), mix(WHITE, Color32::BLACK, a));
     resp.clicked()
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum Icon { Save, Undo, Redo, Prev, Next, Midi, Trash }
+
+/// Square icon button (Serum style): a drawn glyph instead of a text label.
+pub fn icon_btn(ui: &mut Ui, rect: Rect, icon: Icon, on: bool, tip: &str) -> bool {
+    let resp = ui.allocate_rect(rect, Sense::click()).on_hover_text(tip);
+    let id = egui::Id::new(("icon", rect.min.x as i32, rect.min.y as i32));
+    let a = ui.ctx().animate_bool_with_time(id, on, 0.12);
+    let h = ui.ctx().animate_bool_with_time(id.with("h"), resp.hovered(), 0.10);
+    let p = ui.painter();
+    let fill = mix(mix(Color32::from_rgb(0x12, 0x12, 0x12), PANEL2, h), ACCENT, a);
+    p.rect_filled(rect, CornerRadius::same(6), fill);
+    p.rect_stroke(rect, CornerRadius::same(6), Stroke::new(1.0_f32, mix(mix(LINE, DIM, h), ACCENT, a)), StrokeKind::Inside);
+    let col = mix(mix(Color32::from_rgb(0xb0, 0xb0, 0xb0), WHITE, h), Color32::BLACK, a);
+    let c = rect.center();
+    let s = Stroke::new(1.6_f32, col);
+    let r = rect.height().min(rect.width()) * 0.27;
+    let arc = |cx: f32, cy: f32, rad: f32, a0: f32, a1: f32| -> Vec<Pos2> {
+        (0..=24).map(|i| { let t = a0 + (a1 - a0) * i as f32 / 24.0; Pos2::new(cx + rad * t.cos(), cy + rad * t.sin()) }).collect()
+    };
+    match icon {
+        Icon::Prev | Icon::Next => {
+            let d = if icon == Icon::Prev { -1.0 } else { 1.0 };
+            p.add(egui::Shape::line(vec![Pos2::new(c.x - d * r * 0.5, c.y - r), Pos2::new(c.x + d * r * 0.5, c.y), Pos2::new(c.x - d * r * 0.5, c.y + r)], PathStroke::new(1.8_f32, col)));
+        }
+        Icon::Save => {
+            // floppy disk
+            let b = Rect::from_center_size(c, Vec2::splat(r * 2.1));
+            p.rect_stroke(b, CornerRadius::same(2), s, StrokeKind::Inside);
+            p.rect_filled(Rect::from_min_size(b.min + Vec2::new(r * 0.45, 0.0), Vec2::new(r * 1.2, r * 0.75)), CornerRadius::ZERO, col);
+            p.rect_stroke(Rect::from_min_max(Pos2::new(b.left() + r * 0.4, b.center().y + r * 0.1), Pos2::new(b.right() - r * 0.4, b.bottom())), CornerRadius::ZERO, s, StrokeKind::Inside);
+        }
+        Icon::Undo | Icon::Redo => {
+            // open circular arrow with a clean arrowhead (Redo = mirrored Undo)
+            let m = if icon == Icon::Undo { 1.0_f32 } else { -1.0 };
+            let rr = r * 1.05;
+            let deg = std::f32::consts::PI / 180.0;
+            let pt = |t: f32| Pos2::new(c.x + m * rr * (t * deg).cos(), c.y + rr * (t * deg).sin());
+            let pts: Vec<Pos2> = (0..=20).map(|i| pt(-150.0 + 250.0 * i as f32 / 20.0)).collect();
+            p.add(egui::Shape::line(pts, PathStroke::new(1.7_f32, col)));
+            let tp = pt(-150.0);
+            // direction of travel at the start, reversed (arrow points back along the arc)
+            let d = Vec2::new(m * (-150.0_f32 * deg).sin(), -(-150.0_f32 * deg).cos()).normalized();
+            let rot = |v: Vec2, a: f32| Vec2::new(v.x * a.cos() - v.y * a.sin(), v.x * a.sin() + v.y * a.cos());
+            let h = r * 0.8;
+            p.add(egui::Shape::line(vec![tp - rot(d, 0.6) * h, tp, tp - rot(d, -0.6) * h], PathStroke::new(1.7_f32, col)));
+        }
+        Icon::Midi => {
+            // 5-pin DIN socket
+            p.circle_stroke(c, r * 1.1, s);
+            for k in 0..5 {
+                let t = std::f32::consts::PI * (1.0 + 0.25 * k as f32);
+                p.circle_filled(Pos2::new(c.x + r * 0.62 * t.cos(), c.y + r * 0.62 * t.sin() + r * 0.1), 1.3, col);
+            }
+            p.line_segment([Pos2::new(c.x - r * 0.3, c.y + r * 0.95), Pos2::new(c.x + r * 0.3, c.y + r * 0.95)], s);
+        }
+        Icon::Trash => {
+            p.line_segment([Pos2::new(c.x - r, c.y - r * 0.7), Pos2::new(c.x + r, c.y - r * 0.7)], s);
+            p.line_segment([Pos2::new(c.x - r * 0.35, c.y - r * 0.95), Pos2::new(c.x + r * 0.35, c.y - r * 0.95)], s);
+            p.add(egui::Shape::line(vec![Pos2::new(c.x - r * 0.75, c.y - r * 0.7), Pos2::new(c.x - r * 0.6, c.y + r), Pos2::new(c.x + r * 0.6, c.y + r), Pos2::new(c.x + r * 0.75, c.y - r * 0.7)], PathStroke::new(1.6_f32, col)));
+        }
+    }
+    resp.clicked()
+}
+
+/// Dress a widget like the dark value boxes under the knobs (near-black fill, thin line, no grey button look).
+pub fn dark_field_style(ui: &mut Ui) {
+    let v = ui.visuals_mut();
+    let fill = Color32::from_rgb(5, 5, 5);
+    for w in [&mut v.widgets.inactive, &mut v.widgets.hovered, &mut v.widgets.active, &mut v.widgets.open] {
+        w.bg_fill = fill;
+        w.weak_bg_fill = fill;
+        w.corner_radius = CornerRadius::same(4);
+        w.expansion = 0.0;
+    }
+    v.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, LINE);
+    v.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, DIM);
+    v.widgets.active.bg_stroke = Stroke::new(1.0_f32, WHITE);
+    v.widgets.open.bg_stroke = Stroke::new(1.0_f32, DIM);
+    v.widgets.hovered.fg_stroke = Stroke::new(1.0_f32, WHITE);
 }
 
 pub fn enum_combo<E: Enum + PartialEq + 'static>(ui: &mut Ui, setter: &ParamSetter, p: &EnumParam<E>, id: &str, rect: Rect) {
@@ -514,9 +762,17 @@ pub fn enum_combo<E: Enum + PartialEq + 'static>(ui: &mut Ui, setter: &ParamSett
 }
 
 pub fn enum_combo_sz<E: Enum + PartialEq + 'static>(ui: &mut Ui, setter: &ParamSetter, p: &EnumParam<E>, id: &str, rect: Rect, fs: f32) {
+    enum_combo_styled(ui, setter, p, id, rect, fs, false);
+}
+
+/// `dark`: look like the value boxes under the knobs.
+pub fn enum_combo_styled<E: Enum + PartialEq + 'static>(ui: &mut Ui, setter: &ParamSetter, p: &EnumParam<E>, id: &str, rect: Rect, fs: f32, dark: bool) {
     let names = E::variants();
     let idx = p.value().to_index();
     ui.allocate_new_ui(UiBuilder::new().max_rect(rect), |ui| {
+        if dark {
+            dark_field_style(ui);
+        }
         // the button fills the whole rect (same height and width as the pills and boxes next to it)
         ui.spacing_mut().interact_size.y = rect.height();
         egui::ComboBox::from_id_salt(id)
@@ -540,4 +796,27 @@ pub fn section_title(ui: &Ui, pos: Pos2, num: &str, title: &str) {
     job.append(&format!(" {num}  {title}"), 0.0, TextFormat { font_id: mono(10.5), color: DIM, ..Default::default() });
     let galley = ui.fonts(|f| f.layout_job(job));
     ui.painter().galley(pos, galley, DIM);
+}
+
+/// Noise-type picker: "None" first, then the generators, the sample file last.
+pub fn noise_combo(ui: &mut Ui, setter: &ParamSetter, p: &EnumParam<NoiseType>, id: &str, rect: Rect) {
+    let names = NoiseType::variants();
+    let cur = p.value().to_index();
+    let none_i = NoiseType::None.to_index();
+    let order: Vec<usize> = std::iter::once(none_i).chain((0..names.len()).filter(|&i| i != none_i)).collect();
+    ui.allocate_new_ui(UiBuilder::new().max_rect(rect), |ui| {
+        ui.spacing_mut().interact_size.y = rect.height();
+        egui::ComboBox::from_id_salt(id)
+            .height(380.0)
+            .width(rect.width())
+            .truncate()
+            .selected_text(egui::RichText::new(names[cur]).font(mono(12.0)))
+            .show_ui(ui, |ui| {
+                for &i in &order {
+                    if ui.selectable_label(i == cur, egui::RichText::new(names[i]).font(mono(12.0))).clicked() {
+                        set_e(setter, p, NoiseType::from_index(i));
+                    }
+                }
+            });
+    });
 }

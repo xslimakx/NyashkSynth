@@ -126,6 +126,11 @@ fn randomize_fx(f: &mut FxPatch, r: &mut R) {
     }
     f.order.copy_from_slice(&order);
     f.bd_shift = r.r(-4000.0, 4000.0);
+    f.bd_mode = r.i(3);
+    f.bd_fine = r.r(-50.0, 50.0);
+    f.bd_lfo_rate = r.r(0.05, 20.0);
+    f.bd_lfo_depth = r.r(0.0, 1000.0);
+    f.bd_tone = r.r(500.0, 20000.0);
     f.bd_fb = r.f();
     f.bd_mix = r.f();
     f.ut_gain = r.r(-48.0, 24.0);

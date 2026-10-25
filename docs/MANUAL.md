@@ -1,6 +1,6 @@
 # NyashkSynth manual
 
-Quick visual guide. Every numbered badge in a picture is explained under it.
+Quick visual guide. Every numbered badge in a picture is explained under it. The look is monochrome (black, white and silver-grey); every control has the same dark field style, and the header uses icon buttons: floppy disk = save preset, plug = MIDI learn, bin = clear MIDI bindings, arrows = previous / next preset, curved arrows = undo / redo.
 
 ## 0. Pages
 
@@ -11,7 +11,7 @@ Like Serum, the plugin is split into pages (buttons under the header):
 | **SOUND** | 3 oscillators, 2 filters, sub / noise, 4 envelopes |
 | **MOD** | all 8 LFOs at once |
 | **MATRIX** | all 16 modulation routes in two columns |
-| **FX** | effects chain, two buses, routing |
+| **FX** | effect rack (repeatable effects), two buses, routing |
 | **SEQ** | arpeggiator (with pattern editor) and clip sequencer |
 | **SETTINGS** | tuning, MIDI, learned CCs |
 
@@ -24,8 +24,8 @@ The mod-source chips, macros, voice settings, keyboard and wheels stay visible o
 1. **Oscillators A / B / C**: each has a mode box (**Wavetable, Sample, Granular, Multisample, Spectral**), a wavetable view, BROWSE, two warp slots, POS, WARP, WARP 2, LEVEL, PAN, OCT, SEMI, FINE, UNISON, DETUNE, BLEND, SPREAD, PHASE, RAND. `EDIT WAVE` opens the wavetable editor; the small `C` / `P` buttons copy and paste a whole oscillator.
 2. **Tuning mode**: click the small label under the SEMI knob to switch SEMI -> HARM (harmonic number) -> RATIO (frequency ratio) -> STEP (steps of the KEY LOCK scale).
 3. **Filters**: two filters (tabs **1** and **2**), `SER` toggles series / parallel. 16 types plus **Custom (points)**: drag up to 8 EQ-style points on the graph. `ROUTE` picks which sources feed the selected filter.
-4. **MIDI LEARN**: switch it on, click any knob, then move a knob/fader on your MIDI keyboard. The knob shows `CCn`. Right-click a bound knob to unbind, `CLEAR` removes all bindings. Bindings are saved with the project.
-5. **Presets**: browse (`<` `>` or the list), SAVE, HIDE factory presets, DELETE your own, export and import packs.
+4. **MIDI LEARN** (plug icon): switch it on, click any knob, then move a knob/fader on your MIDI keyboard. The knob shows `CCn`. Right-click a bound knob to unbind, the bin icon removes all bindings. Bindings are saved with the project.
+5. **Presets**: browse (`<` `>` or the list), save (floppy icon), HIDE factory presets, DELETE your own, export and import packs. 146 factory presets in 11 categories.
 6. **TOOLS** (under SUB / NOISE): INIT, RANDOM (a whole new patch), COPY and **HYBRID** (mix the current sound with another preset).
 7. **Mod sources**: drag a chip onto any knob; drag vertically on the knob to set the depth. Right-click the modulation ring to remove it. Besides envelopes, LFOs, macros, velocity, key, wheel, aftertouch and random there are `OSC A/B/C`, `FILT 1/2` (outputs) and `LANE` (clip automation).
 8. **8 macros**: assign them like any other source.
@@ -78,7 +78,7 @@ The reverb has algorithms Plate, Vintage, Nitrous, Basin and **Convolve** (press
 
 ![Sample oscillator](img/manual_sample.png)
 
-Each oscillator can be switched between **WT** (wavetable) and **SMP** (sample) with the two buttons next to ON.
+Choose **Sample** in the mode box of an oscillator (next to ON).
 
 1. Drag the start / end markers on the waveform, or use the **START / END** knobs (both can be modulated, so you can scan through a sample).
 2. **LOAD SAMPLE** opens the sample browser (your `Noises` folder); you can also drop a `.wav` on the oscillator. The first 4 seconds are used.
@@ -90,7 +90,7 @@ Each oscillator can be switched between **WT** (wavetable) and **SMP** (sample) 
 
 ![Granular](img/manual_granular.png)
 
-Press **GRN** next to ON. The oscillator plays a cloud of short grains read from a loaded sample.
+Choose **Granular** in the mode box. The oscillator plays a cloud of short grains read from a loaded sample.
 
 * **POS** where in the sample the grains start; modulate it with an LFO or envelope to scan through the sample. The marker on the waveform shows it (drag it), the shaded band is the **SPRAY** range.
 * **SIZE** grain length (5-500 ms), **DENSITY** grains per second (up to 256), **SPRAY** random spread of the grain positions.
@@ -154,7 +154,7 @@ Ratings and tags live in `meta.txt` next to your presets, so they are not lost w
 
 ## 13. Undo / redo
 
-UNDO and REDO (header, or Ctrl+Z / Ctrl+Y) step through your parameter changes, including preset loads. Wavetable-editor edits have their own undo inside the editor.
+The undo and redo arrows (header, or Ctrl+Z / Ctrl+Y) step through your parameter changes, including preset loads. Wavetable-editor edits have their own undo inside the editor.
 
 ## 14. Feature status compared to Serum 2
 
@@ -201,7 +201,7 @@ UNDO and REDO (header, or Ctrl+Z / Ctrl+Y) step through your parameter changes, 
 
 - **LFO grid and shapes**: in *Custom* LFO mode the GRID pill snaps the drawn curve to a grid and SHAPES inserts a preset curve (sine, triangle, saw, square, stairs, bounce, exp decay, random steps).
 - **HYBRID**: press it in the TOOLS strip, pick another preset and the sound is mixed from both presets (every oscillator, filter, LFO, matrix row and effect comes from one or the other, by chance).
-- **FX signal flow** strip on the FX page shows the effect order of the selected bus and the routing text.
+- **FX rack** (FX page): the left list is the chain of the selected bus. `+ ADD EFFECT` adds any effect, **as many times as you want**; drag a row to reorder, click the dot to switch it on / off, `x` removes it, DUPLICATE copies an effect with its settings. Right of the list are the knobs and a live graph of the selected effect.
 
 ### Modulation, MIDI out and fixes
 
@@ -218,7 +218,31 @@ UNDO and REDO (header, or Ctrl+Z / Ctrl+Y) step through your parameter changes, 
 
 | What | Where | Delete? |
 |---|---|---|
-| 72 factory presets | built into the plugin (not files) | no, but **HIDE** removes one from the browser and **RESTORE n** brings them all back (the list of hidden ones is `hidden.txt` in the data folder) |
+| 146 factory presets | built into the plugin (not files) | no, but **HIDE** removes one from the browser and **RESTORE n** brings them all back (the list of hidden ones is `hidden.txt` in the data folder) |
 | Your presets | `~/.config/NyashkSynth/Presets/<Category>/<Name>.nyp` (Windows `%APPDATA%\NyashkSynth\Presets`) | yes, **DELETE** in the browser or delete the file |
 | Packs | `.../NyashkSynth/Packs/*.nypack` | yes, plain files |
 | Tables, noises, `.sfz` | `.../NyashkSynth/Tables`, `.../Noises` | yes, plain files |
+
+
+## What is new in 1.0.4
+
+### FM source and sound quality
+The warp list of every oscillator contains the source right in the entry, like Serum: `FM (B)`, `FM (C)`, `FM (Sub)`, `FM (Noise)` (and the same for AM and RM). An oscillator can not modulate itself, so its own letter is missing from its list. Each of the two warp slots keeps its own source, so FM from B and AM from C work together. Presets made earlier keep the source they had (Auto = A is modulated by B, B by A, C by B). **Settings -> SOUND QUALITY -> OSC OVERSAMPLING** sets how much the oscillators are oversampled (Auto / x1 / x2 / x4 / x8). Raise it when FM or sync still sounds grainy at high notes; every step doubles the oscillator cost.
+
+### Chaos LFOs
+Lorenz and Rössler are calculated live, so they never loop. The LFO page shows the attractor (grey) with the path of the last moments and the current position as a circle. With `TRIG` on, every voice has its own trajectory (they drift apart like real chaos); with `TRIG` off all notes share one. RATE is the number of loops per second.
+
+### Modulation rings
+Every source on a knob has its own ring (up to four are drawn). Drag a ring to change that source's amount (Shift = fine). **Right-click** a modulated knob: one row per source with its amount, `BI` (bipolar / unipolar) and `x` to remove just that source.
+
+### Bode frequency shifter
+Modes: **Shift** (all partials move by the same number of Hz, so harmonic sounds turn inharmonic), **Ring mod** (both side bands) and **Spread** (left channel up, right channel down: instant stereo width). `SHIFT` is +-5 kHz, `FINE` +-50 Hz, `LFO RATE / LFO DEPTH` sweep the shift, `FEEDBACK` feeds the shifted signal back through `TONE` for endless rising / falling spirals.
+
+### New look and handling
+- Monochrome silver design: one dark style for every list, field and button, flat light buttons for "on", animated hover.
+- Icon buttons in the header; envelopes sit in four separate cards; the unison MODE box and the master value box match the knob value boxes.
+- Noise is off by default (type **None**); older presets that used noise keep their white noise.
+- **Mono** mode restarts the sound when you go back to a key that is still held (Legato just changes the pitch).
+
+### 75 new factory presets
+Leads, pads, keys, plucks, arps, bells, synth chords and FX / textures (146 presets in total), mostly mid and high register and with a wide choice of effects (phaser, flanger, chorus, Hyper, distortion types, synced delay, reverb), warps (Sync, Pinch, Mirror, Ripple, Twist, FM / AM / RM with a chosen source) and LFO modulation.

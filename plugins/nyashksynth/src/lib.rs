@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 pub mod arp;
+pub mod chaos;
+pub mod fxdesc;
 pub mod clip;
 pub mod convolve;
 pub mod spectrum;
@@ -26,7 +28,7 @@ pub mod wav;
 pub mod wavetable;
 
 use engine::{Engine, Patch};
-use fx::{FxPatch, FxRack};
+use fx::{ChainPatch, FxPatch, FxRack};
 pub use params::*;
 
 pub const SCOPE_LEN: usize = 1024;
@@ -51,6 +53,8 @@ pub struct Meters {
     pub sounding: [std::sync::atomic::AtomicU64; 2],
     /// current value of every modulation source (GUI animation)
     pub live: Vec<AtomicU32>,
+    /// per LFO: picture x, picture y, phase (f32 bits) for the live position dots
+    pub lfo_pos: Vec<AtomicU32>,
     /// MIDI learn: controller -> parameter pointers, applied on the audio thread
     pub cc_map: std::sync::Mutex<Vec<(u8, nih_plug::params::internals::ParamPtr)>>,
     /// last controller number that arrived: low byte = cc, upper bits = running counter
@@ -84,6 +88,7 @@ impl Meters {
             panic: std::sync::atomic::AtomicBool::new(false),
             sounding: [std::sync::atomic::AtomicU64::new(0), std::sync::atomic::AtomicU64::new(0)],
             live: (0..N_SRC).map(|_| AtomicU32::new(0)).collect(),
+            lfo_pos: (0..params::NLFO * 3).map(|_| AtomicU32::new(0)).collect(),
             cc_map: std::sync::Mutex::new(Vec::new()),
             last_cc: AtomicU32::new(0),
             gui_bend: AtomicU32::new(f32::NAN.to_bits()),
@@ -258,6 +263,11 @@ pub fn fx_patch_from_bank(p: &params::FxBank, bpm: f32) -> FxPatch {
             bd_shift: p.bd_shift.value(),
             bd_fb: p.bd_fb.value(),
             bd_mix: p.bd_mix.value(),
+            bd_mode: 0,
+            bd_fine: 0.0,
+            bd_lfo_rate: 0.5,
+            bd_lfo_depth: 0.0,
+            bd_tone: 8000.0,
             ut_gain: p.ut_gain.value(),
             ut_pan: p.ut_pan.value(),
             ut_width: p.ut_width.value(),
@@ -265,6 +275,27 @@ pub fn fx_patch_from_bank(p: &params::FxBank, bpm: f32) -> FxPatch {
             ut_invert: p.ut_invert.value(),
         }
     }
+}
+
+/// The effect chain of one bus (0 or 1): from the rack slots, or from the old fixed bank while the rack is unused.
+pub fn chain_from_params(p: &SynthParams, bus: usize, bpm: f32) -> ChainPatch {
+    if p.rackver.value() == 0 {
+        return ChainPatch::from_legacy(&fx_patch_from_bank(p.bank(bus), bpm));
+    }
+    let mut c = ChainPatch::empty();
+    for slot in &p.rk[bus * params::RACK_SLOTS..(bus + 1) * params::RACK_SLOTS] {
+        let ty = slot.ty.value();
+        if ty <= 0 {
+            continue;
+        }
+        let kind = (ty as usize - 1).min(fxdesc::NKINDS - 1);
+        let mut v = [0.0f32; fxdesc::NV];
+        for (i, x) in slot.v.iter().enumerate() {
+            v[i] = x.v.value();
+        }
+        c.push(kind, slot.on.value(), fxdesc::patch_for(kind, &fxdesc::reals(kind, &v), bpm));
+    }
+    c
 }
 
 pub fn fx_patch_from(p: &SynthParams, bpm: f32) -> FxPatch {
@@ -400,8 +431,8 @@ impl Plugin for NyashkSynth {
                 self.cur_ir = v;
             }
         }
-        let fxp = fx_patch_from(&self.params, bpm);
-        let fxp2 = fx_patch_from_bank(&self.params.fx2, bpm);
+        let fxp = chain_from_params(&self.params, 0, bpm);
+        let fxp2 = chain_from_params(&self.params, 1, bpm);
         let (route, split, split2, lvl2) = (self.params.fx_route.value(), self.params.fx_split.value(), self.params.fx_split2.value(), self.params.fx2_level.value());
         let master = util::db_to_gain(self.params.master.value());
 
@@ -623,6 +654,11 @@ impl Plugin for NyashkSynth {
         let live = self.engine.live_sources();
         for (i, v) in live.iter().enumerate() {
             self.meters.live[i].store(v.to_bits(), Ordering::Relaxed);
+        }
+        for (i, p3) in self.engine.lfo_view().iter().enumerate() {
+            for k in 0..3 {
+                self.meters.lfo_pos[i * 3 + k].store(p3[k].to_bits(), Ordering::Relaxed);
+            }
         }
         let mask = self.engine.note_mask();
         self.meters.sounding[0].store(mask as u64, Ordering::Relaxed);

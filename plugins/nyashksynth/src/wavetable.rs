@@ -91,6 +91,22 @@ impl Table {
         sa + (sb - sa) * ff
     }
 
+    /// Same as `sample_fr` with 4-point (Catmull-Rom) interpolation: cleaner under FM / strong warps.
+    #[inline]
+    pub fn sample_fr_cubic(&self, mip: usize, f0: usize, ff: f32, phase: f32) -> f32 {
+        let x = phase * N as f32;
+        let i = (x as usize) & (N - 1);
+        let t = x - i as f32;
+        let (i0, i2, i3) = ((i + N - 1) & (N - 1), (i + 1) & (N - 1), (i + 2) & (N - 1));
+        let rd = |fr: &[f32]| -> f32 {
+            let (a, b, c, d) = (fr[i0], fr[i], fr[i2], fr[i3]);
+            b + 0.5 * t * (c - a + t * (2.0 * a - 5.0 * b + 4.0 * c - d + t * (3.0 * (b - c) + d - a)))
+        };
+        let sa = rd(self.frame(mip, f0));
+        let sb = rd(self.frame(mip, f0 + 1));
+        sa + (sb - sa) * ff
+    }
+
     /// Mip level to use for a given highest playback frequency.
     #[inline]
     pub fn mip_for(&self, freq: f32, fs: f32) -> usize {

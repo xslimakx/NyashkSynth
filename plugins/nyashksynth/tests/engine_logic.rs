@@ -299,7 +299,7 @@ fn bode_shifts_frequencies() {
         let mut r = l.clone();
         for c in 0..n / 256 {
             let (a, b) = (c * 256, (c + 1) * 256);
-            rack.process(&p, &p, FxRoute::Series, 400.0, 3000.0, 0.0, &mut l[a..b], &mut r[a..b]);
+            rack.process(&(&p).into(), &(&p).into(), FxRoute::Series, 400.0, 3000.0, 0.0, &mut l[a..b], &mut r[a..b]);
         }
         let seg = &l[4096..];
         let (w, o, orig) = (goertzel(seg, want, fs), goertzel(seg, other, fs), goertzel(seg, 1000.0, fs));
@@ -324,7 +324,7 @@ fn rack_routing_keeps_level_sane() {
         let (l0, r0) = (l.clone(), r.clone());
         for c in 0..n / 256 {
             let (a, b) = (c * 256, (c + 1) * 256);
-            rack.process(&p, &p, route, 800.0, 4000.0, 1.0, &mut l[a..b], &mut r[a..b]);
+            rack.process(&(&p).into(), &(&p).into(), route, 800.0, 4000.0, 1.0, &mut l[a..b], &mut r[a..b]);
         }
         let e0: f32 = l0[4096..].iter().map(|v| v * v).sum();
         let e1: f32 = l[4096..].iter().map(|v| v * v).sum();
@@ -498,7 +498,7 @@ fn new_fx_variants_are_stable_and_distinct() {
         let mut r = l.clone();
         for c in 0..n / 256 {
             let (a, b) = (c * 256, (c + 1) * 256);
-            rack.process(&p, &p, FxRoute::Series, 400.0, 3000.0, 1.0, &mut l[a..b], &mut r[a..b]);
+            rack.process(&(&p).into(), &(&p).into(), FxRoute::Series, 400.0, 3000.0, 1.0, &mut l[a..b], &mut r[a..b]);
         }
         assert!(l.iter().chain(r.iter()).all(|v| v.is_finite() && v.abs() < 8.0));
         l
@@ -618,7 +618,7 @@ fn convolve_reverb_uses_impulse_response() {
     let mut r = l.clone();
     for c in 0..n / 250 {
         let (a, b) = (c * 250, (c + 1) * 250);
-        rack.process(&p, &p, FxRoute::Series, 400.0, 3000.0, 1.0, &mut l[a..b], &mut r[a..b]);
+        rack.process(&(&p).into(), &(&p).into(), FxRoute::Series, 400.0, 3000.0, 1.0, &mut l[a..b], &mut r[a..b]);
     }
     let echo = 100 + 3000 + 256;
     let peak = (0..n).filter(|i| *i != 100).max_by(|a, b| l[*a].abs().partial_cmp(&l[*b].abs()).unwrap()).unwrap();
@@ -875,4 +875,273 @@ fn granular_with_unison_is_not_one_sided() {
         }
     }
     assert!(sl > 0.0 && sr > 0.3 * sl, "granular must be centred, not left-only: L {sl} R {sr}");
+}
+
+fn run_chain(chain: &nyashksynth::fx::ChainPatch, fs: f32, l: &mut Vec<f32>, r: &mut Vec<f32>) {
+    use nyashksynth::fx::FxRack;
+    use nyashksynth::params::FxRoute;
+    let empty = nyashksynth::fx::ChainPatch::empty();
+    let mut rack = FxRack::new(fs);
+    let n = l.len();
+    for c in 0..n / 256 {
+        let (a, b) = (c * 256, (c + 1) * 256);
+        rack.process(chain, &empty, FxRoute::Series, 400.0, 3000.0, 1.0, &mut l[a..b], &mut r[a..b]);
+    }
+}
+
+#[test]
+fn bode_modes_ring_and_spread() {
+    use nyashksynth::fx::{ChainPatch, FxPatch};
+    let fs = 48000.0f32;
+    let sine = |n: usize| -> Vec<f32> { (0..n).map(|i| (2.0 * std::f32::consts::PI * 1000.0 * i as f32 / fs).sin() * 0.5).collect() };
+    let n = 16384;
+    // ring modulation by 200 Hz gives both side bands, and nothing at the original frequency
+    let mut p = FxPatch::default();
+    p.bd_mode = 1;
+    p.bd_shift = 200.0;
+    p.bd_mix = 1.0;
+    let mut c = ChainPatch::empty();
+    c.push(10, true, p);
+    let (mut l, mut r) = (sine(n), sine(n));
+    run_chain(&c, fs, &mut l, &mut r);
+    let seg = &l[4096..];
+    let (up, down, orig) = (goertzel(seg, 1200.0, fs), goertzel(seg, 800.0, fs), goertzel(seg, 1000.0, fs));
+    assert!(up > 0.1 && down > 0.1 && orig < 0.03, "ring: up {up} down {down} orig {orig}");
+    // spread: left goes up, right goes down
+    let mut p = FxPatch::default();
+    p.bd_mode = 2;
+    p.bd_shift = 200.0;
+    p.bd_mix = 1.0;
+    let mut c = ChainPatch::empty();
+    c.push(10, true, p);
+    let (mut l, mut r) = (sine(n), sine(n));
+    run_chain(&c, fs, &mut l, &mut r);
+    let (ls, rs) = (&l[4096..], &r[4096..]);
+    assert!(goertzel(ls, 1200.0, fs) > 5.0 * goertzel(ls, 800.0, fs), "spread left should go up");
+    assert!(goertzel(rs, 800.0, fs) > 5.0 * goertzel(rs, 1200.0, fs), "spread right should go down");
+    // an LFO moves the shifted partial around (energy leaves the fixed line)
+    let mut p = FxPatch::default();
+    p.bd_shift = 300.0;
+    p.bd_mix = 1.0;
+    p.bd_lfo_depth = 200.0;
+    p.bd_lfo_rate = 5.0;
+    let mut c = ChainPatch::empty();
+    c.push(10, true, p);
+    let (mut l, mut r) = (sine(n), sine(n));
+    run_chain(&c, fs, &mut l, &mut r);
+    assert!(l.iter().all(|v| v.is_finite()));
+    assert!(goertzel(&l[4096..], 1300.0, fs) < 0.2, "the LFO should smear the line");
+}
+
+#[test]
+fn the_same_effect_can_be_used_twice() {
+    use nyashksynth::fx::{ChainPatch, FxPatch};
+    let fs = 48000.0f32;
+    let n = 8192;
+    let sine: Vec<f32> = (0..n).map(|i| (2.0 * std::f32::consts::PI * 220.0 * i as f32 / fs).sin() * 0.5).collect();
+    let rms = |v: &[f32]| (v[2048..].iter().map(|x| x * x).sum::<f32>() / (v.len() - 2048) as f32).sqrt();
+    let gain = |db: f32| {
+        let mut p = FxPatch::default();
+        p.ut_gain = db;
+        p
+    };
+    let mut one = ChainPatch::empty();
+    one.push(11, true, gain(-6.0));
+    let mut two = ChainPatch::empty();
+    two.push(11, true, gain(-6.0));
+    two.push(11, true, gain(-6.0));
+    let mut off = ChainPatch::empty();
+    off.push(11, true, gain(-6.0));
+    off.push(11, false, gain(-60.0));
+    let (mut a, mut ar) = (sine.clone(), sine.clone());
+    let (mut b, mut br) = (sine.clone(), sine.clone());
+    let (mut c, mut cr) = (sine.clone(), sine.clone());
+    run_chain(&one, fs, &mut a, &mut ar);
+    run_chain(&two, fs, &mut b, &mut br);
+    run_chain(&off, fs, &mut c, &mut cr);
+    let (ra, rb, rc) = (rms(&a), rms(&b), rms(&c));
+    assert!((rb / ra - 0.501).abs() < 0.02, "two -6 dB utilities = -12 dB: {} / {}", rb, ra);
+    assert!((rc / ra - 1.0).abs() < 0.01, "a bypassed slot does nothing");
+}
+
+#[test]
+fn old_presets_become_rack_chains_with_the_same_sound() {
+    use nih_plug::prelude::*;
+    use nyashksynth::params::SynthParams;
+    use nyashksynth::presets::{with_rack, PRESETS};
+    let mut checked = 0;
+    for pr in PRESETS.iter() {
+        let vals: Vec<(String, f32)> = pr.values.iter().map(|(k, v)| (k.to_string(), *v)).collect();
+        let on_ids = ["hy_on", "ds_on", "fg_on", "ph_on", "ch_on", "dl_on", "cp_on", "rv_on", "eq_on", "ff_on", "bd_on", "ut_on"];
+        // old way: apply the values to the fixed bank
+        let old = SynthParams::default();
+        let new = SynthParams::default();
+        let map_old = old.param_map();
+        let map_new = new.param_map();
+        let set = |map: &Vec<(String, ParamPtr, String)>, vals: &[(String, f32)]| unsafe {
+            for (id, v) in vals {
+                if let Some((_, ptr, _)) = map.iter().find(|(k, _, _)| k == id) {
+                    ptr.set_normalized_value(ptr.preview_normalized(*v));
+                }
+            }
+        };
+        set(&map_old, &vals);
+        set(&map_new, &with_rack(vals.clone()));
+        assert_eq!(new.rackver.value(), 1, "{}", pr.name);
+        for bus in 0..2 {
+            let a = nyashksynth::chain_from_params(&old, bus, 120.0);
+            let b = nyashksynth::chain_from_params(&new, bus, 120.0);
+            let ka: Vec<usize> = a.s.iter().map(|s| s.kind).collect();
+            let kb: Vec<usize> = b.s.iter().map(|s| s.kind).collect();
+            assert_eq!(ka, kb, "{} bus {bus}: effect order", pr.name);
+            // the knobs of every effect must come out the same (mix, time, rate ...)
+            for (x, y) in a.s.iter().zip(b.s.iter()) {
+                let key = |sl: &nyashksynth::fx::SlotPatch| -> String {
+                    let p = &sl.p;
+                    match sl.kind {
+                        0 => format!("{:.3} {:.3} {}", p.hy_mix, p.hy_detune, p.hy_uni),
+                        1 => format!("{:?} {:.3} {:.1} {:.3}", p.ds_type, p.ds_drive, p.ds_tone, p.ds_mix),
+                        2 => format!("{:.3} {:.3} {:.2}", p.fg_depth, p.fg_mix, p.fg_rate),
+                        3 => format!("{:.1} {:.3} {}", p.ph_freq, p.ph_mix, p.ph_stages),
+                        4 => format!("{:.3} {:.3} {:.2}", p.ch_mix, p.ch_depth, p.ch_rate),
+                        5 => format!("{:.3} {:.1} {:.1} {:.3} {}", p.dl_mix, p.dl_ms_l, p.dl_ms_r, p.dl_fb, p.dl_pp),
+                        6 => format!("{:.1} {:.2} {:.2} {}", p.cp_thresh, p.cp_ratio, p.cp_mix, p.cp_multi),
+                        7 => format!("{:?} {:.3} {:.3} {:.3}", p.rv_type, p.rv_mix, p.rv_size, p.rv_damp),
+                        8 => format!("{:.1} {:.1} {:.1} {:.1}", p.eq_lg, p.eq_mg, p.eq_hg, p.eq_mf),
+                        9 => format!("{:?} {:.1} {:.3}", p.ff_type, p.ff_cut, p.ff_res),
+                        10 => format!("{:.1} {:.3}", p.bd_shift, p.bd_mix),
+                        _ => format!("{:.2} {:.2} {:.2}", p.ut_gain, p.ut_pan, p.ut_width),
+                    }
+                };
+                assert_eq!(key(x), key(y), "{} bus {bus} kind {}", pr.name, x.kind);
+            }
+            checked += a.s.len();
+        }
+        let _ = on_ids;
+    }
+    assert!(checked > 20, "the factory presets should contain plenty of effects ({checked})");
+}
+
+#[test]
+fn noise_type_none_is_silent_and_white_is_not() {
+    let level = |t: NoiseType| {
+        let mut e = engine();
+        e.patch.sub_on = false;
+        e.patch.fl[0].on = false;
+        for o in 0..3 {
+            e.patch.osc[o].on = false;
+        }
+        e.patch.noise = 0.8;
+        e.patch.noise_type = t;
+        e.note_on(60, 1.0);
+        let v = render_vec(&mut e, 48000 / 2);
+        rms(&v[v.len() / 2..])
+    };
+    assert!(level(NoiseType::White) > 0.01, "white noise is silent");
+    assert!(level(NoiseType::None) < 1e-5, "None still makes noise");
+}
+
+#[test]
+fn fm_source_follows_the_chosen_oscillator() {
+    use nyashksynth::params::FmSrc;
+    // osc A (sine) is FM-ed by B or by C: the choice must change the sound
+    let spec = |src: FmSrc| {
+        let mut e = engine();
+        e.patch.sub_on = false;
+        e.patch.fl[0].on = false;
+        for o in 0..3 {
+            e.patch.osc[o].on = true;
+            e.patch.osc[o].level = 0.6;
+        }
+        e.patch.osc[0].wmode = nyashksynth::params::WarpMode::Fm;
+        e.patch.osc[0].warp = 0.7;
+        e.patch.osc[0].fm_src = src;
+        e.patch.osc[1].oct = 1;
+        e.patch.osc[2].oct = -1;
+        e.note_on(48, 1.0);
+        render_vec(&mut e, 48000)
+    };
+    let (b, c) = (spec(FmSrc::B), spec(FmSrc::C));
+    let diff: f32 = b.iter().zip(&c).skip(20000).map(|(x, y)| (x - y).abs()).sum::<f32>() / 28000.0;
+    assert!(diff > 1e-3, "FM source B and C sound the same ({diff})");
+}
+
+#[test]
+fn both_warp_slots_keep_their_own_source() {
+    use nyashksynth::params::{FmSrc, WarpMode};
+    // slot 1 = FM from B, slot 2 = AM from X: changing X must change the sound (both effects work at once)
+    let spec = |src2: FmSrc| {
+        let mut e = engine();
+        e.patch.sub_on = false;
+        e.patch.fl[0].on = false;
+        for o in 0..3 {
+            e.patch.osc[o].on = true;
+            e.patch.osc[o].level = 0.6;
+        }
+        e.patch.osc[0].wmode = WarpMode::Fm;
+        e.patch.osc[0].warp = 0.5;
+        e.patch.osc[0].fm_src = FmSrc::B;
+        e.patch.osc[0].wmode2 = WarpMode::Am;
+        e.patch.osc[0].warp2 = 0.8;
+        e.patch.osc[0].fm_src2 = src2;
+        e.patch.osc[1].oct = 1;
+        e.patch.osc[2].oct = -1;
+        e.note_on(48, 1.0);
+        render_vec(&mut e, 48000)
+    };
+    let (b, c) = (spec(FmSrc::B), spec(FmSrc::C));
+    let diff: f32 = b.iter().zip(&c).skip(20000).map(|(x, y)| (x - y).abs()).sum::<f32>() / 28000.0;
+    assert!(diff > 1e-3, "slot 2 source is ignored ({diff})");
+}
+
+#[test]
+fn mono_retriggers_the_held_key_when_the_top_key_is_released() {
+    use nyashksynth::params::VoiceMode;
+    let run = |mode: VoiceMode| {
+        let mut e = engine();
+        e.patch.vmode = mode;
+        e.patch.env[0].s = 1.0;
+        e.note_on(60, 1.0);
+        render_vec(&mut e, 24000);
+        e.note_on(67, 1.0);
+        render_vec(&mut e, 24000);
+        e.note_off(67);
+        // Mono restarts the amp envelope (attack from zero), Legato keeps it running
+        let v = render_vec(&mut e, 64);
+        rms(&v)
+    };
+    let (mono, leg) = (run(VoiceMode::Mono), run(VoiceMode::Legato));
+    assert!(mono < leg, "mono {mono} should restart quieter than legato {leg}");
+}
+
+#[test]
+#[ignore]
+fn musician_headroom_report() {
+    for (name, uni, notes) in [("1 note", 1usize, vec![60u8]), ("6-note chord", 1, vec![48, 55, 60, 64, 67, 72]), ("6-note chord, 7 unison", 7, vec![48, 55, 60, 64, 67, 72])] {
+        let mut e = engine();
+        e.patch.osc[0].uni = uni;
+        for n in &notes {
+            e.note_on(*n, 0.8);
+        }
+        let v = render_vec(&mut e, 48000);
+        let pk = v.iter().fold(0.0f32, |a, b| a.max(b.abs()));
+        println!("HEADROOM {name}: peak {:.2} dBFS", 20.0 * pk.max(1e-9).log10());
+    }
+}
+
+#[test]
+fn every_factory_preset_uses_only_existing_parameters_and_unique_names() {
+    use nyashksynth::presets::{with_rack, PRESETS};
+    let params = SynthParams::default();
+    use nih_plug::prelude::Params as _;
+    let map = params.param_map();
+    let ids: std::collections::HashSet<String> = map.iter().map(|(id, _, _)| id.clone()).collect();
+    let mut names = std::collections::HashSet::new();
+    for p in PRESETS {
+        assert!(names.insert(p.name), "duplicate preset name {}", p.name);
+        let vals: Vec<(String, f32)> = p.values.iter().map(|(k, v)| (k.to_string(), *v)).collect();
+        for (k, _) in with_rack(vals) {
+            assert!(ids.contains(&k), "preset '{}' uses unknown parameter id '{}'", p.name, k);
+        }
+    }
 }

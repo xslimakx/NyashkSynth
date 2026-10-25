@@ -47,7 +47,7 @@ fn every_factory_preset_sounds_sane() {
                 let mut l = vec![0.0f32; 256];
                 let mut r = vec![0.0f32; 256];
                 eng.process(&mut l, &mut r);
-                rack.process(&fx1, &fx2, route, split, split2, lvl2, &mut l, &mut r);
+                rack.process(&(&fx1).into(), &(&fx2).into(), route, split, split2, lvl2, &mut l, &mut r);
                 for i in 0..256 {
                     let (a, b) = (l[i] * master, r[i] * master);
                     if !a.is_finite() || !b.is_finite() {
@@ -73,7 +73,7 @@ fn every_factory_preset_sounds_sane() {
                 let mut l = vec![0.0f32; 256];
                 let mut r = vec![0.0f32; 256];
                 eng.process(&mut l, &mut r);
-                rack.process(&fx1, &fx2, route, split, split2, lvl2, &mut l, &mut r);
+                rack.process(&(&fx1).into(), &(&fx2).into(), route, split, split2, lvl2, &mut l, &mut r);
                 if blk > fs as usize * 8 / 256 {
                     for i in 0..256 {
                         tail = tail.max(l[i].abs()).max(r[i].abs());
@@ -129,7 +129,7 @@ fn cpu_cost_per_preset() {
             let mut l = vec![0.0f32; 512];
             let mut r = vec![0.0f32; 512];
             eng.process(&mut l, &mut r);
-            rack.process(&fx1, &fx2, route, split, split2, lvl2, &mut l, &mut r);
+            rack.process(&(&fx1).into(), &(&fx2).into(), route, split, split2, lvl2, &mut l, &mut r);
         }
         let el = t0.elapsed().as_secs_f32();
         rows.push((secs as f32 / el, pr.name.to_string()));

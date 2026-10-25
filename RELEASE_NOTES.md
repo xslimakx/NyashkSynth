@@ -1,4 +1,56 @@
-# NyashkSynth v1.0.3
+# NyashkSynth v1.0.4
+
+A big update: real chaos, clean FM, a modulation system you can read, an effect rack with repeatable effects, a new silver look and 75 new presets.
+
+**New look and handling**
+- **Monochrome silver design** (black, white, silver-grey): one dark style for every list, field and button, flat light "on" buttons with animated hover. Icon buttons in the header (save, MIDI learn, clear, undo, redo, previous / next preset). Envelopes in four separate cards; the unison MODE box and the master value box match the knob value boxes.
+- **146 factory presets** (75 new): leads, pads, keys, plucks, arps, bells, synth chords and FX / textures, mostly mid and high register with a wide choice of effects.
+- **Mono mode** restarts the sound when you go back to a key that is still held (Legato only changes the pitch, as on hardware synths).
+
+**Polish round (Oct 25)**
+- **FM / AM / RM source in the warp list** (like Serum): `FM (B)`, `FM (C)`, `FM (Sub)`, `FM (Noise)` and the same for AM and RM; an oscillator can not modulate itself. **Each warp slot has its own source**, so FM from B and AM from C work together. Older presets keep their source.
+- **Noise type `None`** (first in the list) switches the noise off completely.
+- **Chaos LFO picture:** the trail now follows the attractor itself, so it stays smooth at any rate (no more criss-cross lines); every LFO sits on its own card.
+- **Animated effect pictures:** Flanger (moving comb filter), Phaser (sweeping notches), Chorus (delay time with a live dot), Hyper (unison copies drifting, stereo dimension) and Utility (stereo field: width, balance, gain, mono, polarity), next to the existing graphs of EQ, filter, compressor, delay, reverb, distortion and Bode.
+- **Unison row:** VOICES, DETUNE, BLEND, SPREAD and MODE sit in their own row; **noise is off by default** (type `None`; old presets keep their white noise).
+- **Layout pass:** LFO cards have inner padding (SYNC / TRIG / 1-SHOT no longer touch the frame); FX tab has a header card (BUS 1 / BUS 2, routing, `BUS 2 LEVEL` next to it, signal path) and cards for the chain list and the effect detail; switched-off oscillators and the SUB step back (dimmed).
+- **Settings in three cards** (sound and tuning / MIDI and play / bindings); **MATRIX** shows empty slots dimmed so the used routes stand out.
+- **Wavetable editor re-laid out in four blocks:** FRAMES (insert, delete, copy, count, interpolation, save), DRAW / SHAPES / FORMULA, APPLY TO (scope, fade, strength, soft edges, vary, drift) and PROCESS. Bigger wave and harmonic views.
+
+**Oscillators and sound quality**
+- **FM / AM / RM source** is chosen in the warp list: Osc A / B / C / Sub / Noise (Auto keeps the old A<B, B<A, C<B for older presets).
+- **Clean FM:** the wavetable oscillators now oversample (x2 / x4 / x8) with a long Kaiser-sinc decimator, FM runs with zero-delay routing and cubic table interpolation. In the test the aliasing of a bright FM patch fell by roughly a factor of 1000 (x1 2e-2 -> x4 1e-7).
+- **Settings -> SOUND QUALITY -> OSC OVERSAMPLING**: Auto (x2 for light warps, x4 for FM / sync / fold), Draft x1, High x2, Ultra x4, Max x8.
+
+- **Unison modes Exp and Inv** (voices bunched in the centre / at the edges).
+
+**LFOs**
+- **Chaos LFOs are real:** Lorenz and Rössler are integrated in real time (RK4), per voice or free running, so they never repeat. The LFO page draws the attractor with a trail and a live position circle, like Serum. Every other LFO shape shows its live position as a circle on the curve too.
+
+**Modulation**
+- **One ring per source** on a knob (several sources no longer sit on top of each other); drag a ring to change that source only.
+- **Right-click a modulated knob:** list of its sources with amount slider, BI (bipolar) toggle and a remove button for each; `Remove all`.
+- Drag and drop: the highlighted knob is the one under the pointer, the drag can no longer get stuck (no more flickering circle), drops use the complete knob list of the frame.
+
+- Right-click menu of a modulated knob: `off` bypasses one source (it stays listed as bypassed and can be switched `on`), `Reset control` returns the knob to default.
+
+- **Lock parameter:** right-click any knob -> `Lock parameter`; loading a preset leaves locked controls untouched (saved with the project).
+
+**Effects**
+- **Effect rack:** up to 10 effects per bus, any order, and the **same effect can be added as many times as you like** (3 delays, 2 reverbs ...). `+ ADD EFFECT` menu, drag rows to reorder, dot = on/off, `x` = remove, DUPLICATE, RESET. The detail view builds its knobs from the effect description, with live graphs (EQ and filter nodes, compressor curve, delay taps, reverb decay, distortion curve).
+- **Old presets and projects convert automatically** into rack slots (checked against all factory presets).
+- **Bode frequency shifter is complete:** modes Shift / Ring mod / Spread (left up, right down), SHIFT +-5 kHz and FINE, an LFO on the shift (rate, depth), feedback with a tone filter in the loop, mix, and a map showing where every input frequency lands.
+
+**Interface and platform**
+- macOS: resizing the window no longer jumps or collapses into a small square (window size is now handled in host points, also in NyashkTune and NyashkOpto).
+- Computer keyboard plays notes (Ableton layout: the A S D F G H J K L row = white keys, W E T Y U O P = black keys, Z / X = octave) and keeps working after you click the title bar.
+- Tooltips and the SETTINGS help text describe the new right-click menu.
+
+**Tests**
+- New: chaos bounds and divergence, FM aliasing by quality and by source, Bode modes and LFO, repeated effects, old-preset conversion on all factory presets, effect description round trips. Full suite, 13-minute GUI-parameter fuzz and the CPU audit pass.
+
+
+# v1.0.3
 
 **MIDI**
 - MIDI knobs now bind in VST3 hosts (Bitwig, FL Studio ...): the plugin now asks the host for full MIDI CCs, so MIDI LEARN sees your controller.

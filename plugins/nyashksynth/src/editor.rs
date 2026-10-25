@@ -41,6 +41,7 @@ pub enum TblSrc {
 
 pub struct Gui {
     auto_loaded: bool,
+    auto_chaos: bool,
     pub tab: usize,
     pub fx_sel: usize,
     pub fx_bus: usize,
@@ -66,6 +67,10 @@ pub struct Gui {
     pub last_cc_seen: u32,
     pub pmap: Vec<(String, nih_plug::params::internals::ParamPtr)>,
     pub fx_drag: Option<usize>,
+    pub fx_menu: bool,
+    pub fx_mig: u32,
+    pub fx_auto: usize,
+    pub fx_wait: u32,
     pub mat_page: usize,
     pub lfo_page: usize,
     pub overlay: Overlay,
@@ -91,6 +96,9 @@ pub struct Gui {
     pub status: String,
     pub status_until: f64,
     auto: Option<(usize, f64, f32, String)>,
+    /// computer keyboard played as a piano (key, note it started)
+    qkeys: Vec<(egui::Key, u8)>,
+    qoct: i32,
 }
 
 // ---------------------------------------------------------------- data helpers
@@ -283,12 +291,19 @@ fn assign_mod(setter: &ParamSetter, p: &SynthParams, src_idx: usize, dst_idx: us
 }
 
 impl Gui {
+    /// Screenshot aid: true once the optional preset was loaded (or none was asked for), and a few frames passed.
+    fn auto_loaded_or_none(&mut self) -> bool {
+        self.fx_wait += 1;
+        (self.auto_loaded || std::env::var("NYASHK_PRESET").is_err()) && self.fx_wait > 30 + 8 * self.fx_auto as u32
+    }
+
     fn new() -> Gui {
         files::ensure_dirs();
         Gui {
             auto_loaded: false,
+            auto_chaos: false,
             tab: std::env::var("NYASHK_TAB").ok().and_then(|s| s.parse().ok()).unwrap_or(0),
-            fx_sel: std::env::var("NYASHK_FX").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(0).min(11),
+            fx_sel: std::env::var("NYASHK_FX").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(0).min(9),
             fx_bus: 0,
             filt_sel: 0,
             clip_len: 1,
@@ -312,6 +327,10 @@ impl Gui {
             last_cc_seen: 0,
             pmap: Vec::new(),
             fx_drag: None,
+            fx_menu: false,
+            fx_mig: 0,
+            fx_auto: 0,
+            fx_wait: 0,
             mat_page: 0,
             lfo_page: 0,
             overlay: match std::env::var("NYASHK_OVERLAY").ok().as_deref() {
@@ -339,6 +358,8 @@ impl Gui {
             noises: files::noises_dir().map(|d| files::scan(&d, &["wav", "sfz"])).unwrap_or_default(),
             nbs: BState::default(),
             edit: None,
+            qkeys: Vec::new(),
+            qoct: 4,
             status: String::new(),
             copy_menu: false,
             status_until: 0.0,
@@ -397,6 +418,26 @@ pub fn create(params: Arc<SynthParams>, meters: Arc<Meters>, shared: Arc<Shared>
             v.override_text_color = Some(WHITE);
             v.selection.bg_fill = Color32::from_rgb(64, 64, 64);
             v.selection.stroke = Stroke::new(1.0_f32, WHITE);
+            // one look for every combo / field: near-black fill, thin line, light on hover (no grey "button" slabs)
+            let dark = Color32::from_rgb(10, 10, 10);
+            for w in [&mut v.widgets.inactive, &mut v.widgets.noninteractive] {
+                w.bg_fill = dark;
+                w.weak_bg_fill = dark;
+                w.corner_radius = CornerRadius::same(5);
+            }
+            v.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, LINE);
+            v.widgets.hovered.bg_fill = PANEL2;
+            v.widgets.hovered.weak_bg_fill = PANEL2;
+            v.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, DIM);
+            v.widgets.hovered.corner_radius = CornerRadius::same(5);
+            v.widgets.active.bg_fill = PANEL2;
+            v.widgets.active.weak_bg_fill = PANEL2;
+            v.widgets.active.bg_stroke = Stroke::new(1.0_f32, WHITE);
+            v.widgets.active.corner_radius = CornerRadius::same(5);
+            v.widgets.open.bg_fill = PANEL2;
+            v.widgets.open.weak_bg_fill = PANEL2;
+            v.widgets.open.bg_stroke = Stroke::new(1.0_f32, DIM);
+            v.widgets.open.corner_radius = CornerRadius::same(5);
             ctx.set_visuals(v);
             install_fonts(ctx);
         },
@@ -427,6 +468,28 @@ pub fn create(params: Arc<SynthParams>, meters: Arc<Meters>, shared: Arc<Shared>
                             let _ = presets::load(setter, p, &shared, &rf);
                         }
                     }
+                }
+                if std::env::var("NYASHK_FM").is_ok() && !st.auto_chaos {
+                    // developer aid for screenshots: Osc A warp = FM
+                    set_e(setter, &osc(p, 0).warp_mode, WarpMode::Fm);
+                }
+                if let Ok(list) = std::env::var("NYASHK_FXADD") {
+                    // developer aid for screenshots: add the listed effect kinds, one per frame (e.g. "10,5,5,8")
+                    let kinds: Vec<usize> = list.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+                    if st.fx_auto < kinds.len() && st.auto_loaded_or_none() {
+                        if let Some(i) = fxui::add_effect(setter, p, st.fx_bus, kinds[st.fx_auto]) {
+                            st.fx_sel = i;
+                        }
+                        st.fx_auto += 1;
+                    }
+                }
+                if std::env::var("NYASHK_CHAOS").is_ok() && !st.auto_chaos {
+                    // developer aid for screenshots: LFO 1 = Lorenz, LFO 2 = Rössler, played note
+                    st.auto_chaos = true;
+                    set_e(setter, &p.lfo[0].shape, LfoShape::Lorenz);
+                    set_e(setter, &p.lfo[1].shape, LfoShape::Rossler);
+                    set_e(setter, &p.lfo[2].shape, LfoShape::Sine);
+                    meters.gui_keys[60].store(true, std::sync::atomic::Ordering::Relaxed);
                 }
                 if let Ok(path) = std::env::var("NYASHK_SMP") {
                     // developer aid for screenshots: load a .wav as the sample of OSC A once
@@ -498,9 +561,9 @@ pub fn create(params: Arc<SynthParams>, meters: Arc<Meters>, shared: Arc<Shared>
                     }
                     1 => {
                         let c = page_panel("LFO 1-4", rect(14.0, 62.0, 1430.0, 322.0));
-                        lfo_tab(ui, setter, p, &shared, st, c, 0);
+                        lfo_tab(ui, setter, p, &shared, &meters, st, c, 0);
                         let c = page_panel("LFO 5-8", rect(14.0, 394.0, 1430.0, 322.0));
-                        lfo_tab(ui, setter, p, &shared, st, c, 1);
+                        lfo_tab(ui, setter, p, &shared, &meters, st, c, 1);
                     }
                     2 => {
                         let c = page_panel("MODULATION MATRIX  (all routes. Add one here, or drag a chip from the bottom strip onto a knob on SOUND / FX / SETTINGS)", rect(14.0, 62.0, 1430.0, 654.0));
@@ -508,8 +571,7 @@ pub fn create(params: Arc<SynthParams>, meters: Arc<Meters>, shared: Arc<Shared>
                     }
                     3 => {
                         let c = page_panel("EFFECTS", rect(14.0, 62.0, 1430.0, 654.0));
-                        fxui::fx_tab(ui, setter, p, st, c);
-                        let sr = Rect::from_min_max(Pos2::new(c.left(), c.top() + 94.0 + fxui::flow_offset(st.fx_sel)), Pos2::new(c.right(), c.bottom() - 6.0));
+                        let sr = fxui::fx_tab(ui, setter, p, st, c);
                         painter.rect_filled(sr, CornerRadius::same(4), Color32::from_rgb(8, 8, 8));
                         painter.rect_stroke(sr, CornerRadius::same(4), Stroke::new(1.0_f32, LINE), StrokeKind::Inside);
                         let inner = sr.shrink2(Vec2::new(40.0, 14.0));
@@ -579,8 +641,10 @@ pub fn create(params: Arc<SynthParams>, meters: Arc<Meters>, shared: Arc<Shared>
                 let gr_resp = ui.interact(grip, egui::Id::new("synth_resize_grip"), Sense::drag()).on_hover_text("Drag to resize");
                 if gr_resp.dragged() {
                     if let Some(pos) = gr_resp.interact_pointer_pos() {
-                        let ppp = ctx.pixels_per_point();
-                        let w = ((pos.x - full.min.x + 11.0) * ppp).clamp(800.0, 2600.0);
+                        // host units: pixels on Windows / Linux, logical points on macOS (there the
+                        // egui scale is native Retina x our own UI scale, so use only the latter)
+                        let k = if cfg!(target_os = "macos") { size_state.size().0 as f32 / BASE_W } else { ctx.pixels_per_point() };
+                        let w = ((pos.x - full.min.x + 11.0) * k).clamp(800.0, 2600.0);
                         size_state.set_requested_size((w.round() as u32, (w * BASE_H / BASE_W).round() as u32));
                     }
                 }
@@ -589,8 +653,60 @@ pub fn create(params: Arc<SynthParams>, meters: Arc<Meters>, shared: Arc<Shared>
                     painter.line_segment([Pos2::new(full.max.x - 3.0, full.max.y - k), Pos2::new(full.max.x - k, full.max.y - 3.0)], Stroke::new(1.0_f32, gc));
                 }
             });
+            qwerty_keys(ctx, &meters, st);
+            // modulation drag: follow, draw the ghost and drop (needs the complete knob list of this frame)
+            if let Some((src, dst)) = crate::ui::end_frame(ctx) {
+                let now = ctx.input(|i| i.time);
+                let msg = assign_mod(setter, p, src, dst);
+                if !msg.contains("full") {
+                    crate::ui::flash(dst, now + 1.6);
+                }
+                st.say(now, format!("{msg}  | knob ring = amount (drag it), right-click = remove, list: MATRIX tab"));
+            }
         },
     )
+}
+
+/// Computer keyboard as a piano (Ableton layout: A W S E D F T G Y H U J K O L P ;  - Z / X = octave).
+/// Hosts stop receiving keys as soon as the plugin window has the focus (e.g. after a click on its title bar),
+/// so without this the keyboard seemed to "stop playing".
+fn qwerty_keys(ctx: &egui::Context, meters: &Meters, st: &mut Gui) {
+    use egui::Key as K;
+    const MAP: [(K, i32); 17] = [(K::A, 0), (K::W, 1), (K::S, 2), (K::E, 3), (K::D, 4), (K::F, 5), (K::T, 6), (K::G, 7), (K::Y, 8), (K::H, 9), (K::U, 10), (K::J, 11), (K::K, 12), (K::O, 13), (K::L, 14), (K::P, 15), (K::Semicolon, 16)];
+    let typing = ctx.memory(|m| m.focused().is_some()) || st.overlay != Overlay::None || st.edit.is_some();
+    let events = ctx.input(|i| i.events.clone());
+    let set = |n: u8, on: bool| meters.gui_keys[(n as usize) & 127].store(on, std::sync::atomic::Ordering::Relaxed);
+    for ev in events {
+        match ev {
+            egui::Event::WindowFocused(false) => {
+                for (_, n) in st.qkeys.drain(..) {
+                    set(n, false);
+                }
+            }
+            egui::Event::Key { key, pressed, repeat, modifiers, .. } => {
+                if pressed {
+                    if typing || repeat || modifiers.command || modifiers.alt || modifiers.ctrl {
+                        continue;
+                    }
+                    if key == K::Z {
+                        st.qoct = (st.qoct - 1).max(0);
+                    } else if key == K::X {
+                        st.qoct = (st.qoct + 1).min(8);
+                    } else if let Some((_, off)) = MAP.iter().find(|(k, _)| *k == key) {
+                        let n = (12 * (st.qoct + 1) + off).clamp(0, 127) as u8;
+                        if !st.qkeys.iter().any(|(k, _)| *k == key) {
+                            st.qkeys.push((key, n));
+                            set(n, true);
+                        }
+                    }
+                } else if let Some(pos) = st.qkeys.iter().position(|(k, _)| *k == key) {
+                    let (_, n) = st.qkeys.remove(pos);
+                    set(n, false);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 const PAGE_SHIFT: f32 = 32.0;
@@ -635,7 +751,7 @@ fn header(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, s
     let cur_idx = st.presets.iter().position(|x| x.name == cur_name);
     let n = st.presets.len().max(1);
     let mut pick: Option<usize> = None;
-    if pill_tip(ui, rect(262.0, 14.0, 28.0, 26.0), "<", false, "Previous preset") {
+    if icon_btn(ui, rect(262.0, 14.0, 28.0, 26.0), Icon::Prev, false, "Previous preset") {
         pick = Some(cur_idx.map(|i| (i + n - 1) % n).unwrap_or(0));
     }
     let nb = rect(296.0, 14.0, 260.0, 26.0);
@@ -649,11 +765,11 @@ fn header(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, s
         st.overlay = if st.overlay == Overlay::Presets { Overlay::None } else { Overlay::Presets };
         st.rescan();
     }
-    if pill_tip(ui, rect(562.0, 14.0, 28.0, 26.0), ">", false, "Next preset") {
+    if icon_btn(ui, rect(562.0, 14.0, 28.0, 26.0), Icon::Next, false, "Next preset") {
         pick = Some(cur_idx.map(|i| (i + 1) % n).unwrap_or(0));
     }
     let dir_txt = files::presets_dir().map(|d| d.display().to_string()).unwrap_or_default();
-    if pill_tip(ui, rect(598.0, 14.0, 54.0, 26.0), "SAVE", false, &format!("Save the current sound as a preset.\nPresets are plain files in:\n{dir_txt}")) {
+    if icon_btn(ui, rect(598.0, 14.0, 28.0, 26.0), Icon::Save, false, &format!("Save the current sound as a preset.\nPresets are plain files in:\n{dir_txt}")) {
         if st.overlay == Overlay::Edit {
             st.close_overlay(shared, p, now);
         }
@@ -684,7 +800,6 @@ fn header(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, s
         painter.rect_stroke(rc, CornerRadius::same(5), Stroke::new(1.0_f32, WHITE), egui::StrokeKind::Inside);
         painter.galley(rc.center() - g.size() * 0.5, g, WHITE);
     } else {
-        painter.text(Pos2::new(o.x + 664.0, o.y + 27.0), Align2::LEFT_CENTER, "PRESET", mono(10.0), DIM);
     }
 
     // output meter + master
@@ -716,26 +831,26 @@ fn header(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, s
                 Pos2::new(inner.left() + inner.width() * i as f32 / (n - 1) as f32, inner.center().y - v * inner.height() * 0.5)
             })
             .collect();
-        painter.add(egui::Shape::line(pts, PathStroke::new(1.3_f32, if pk > 0.002 { WHITE } else { Color32::from_rgb(60, 60, 60) })));
+        painter.add(egui::Shape::line(pts, PathStroke::new(1.3_f32, if pk > 0.002 { ACCENT } else { Color32::from_rgb(60, 60, 60) })));
         let db = 20.0 * (meters.peak() + 1e-6).log10();
         let t = ((db + 48.0) / 48.0).clamp(0.0, 1.0);
         painter.rect_filled(Rect::from_min_size(Pos2::new(mr.left() + 2.0, mr.bottom() - 4.0), Vec2::new((mr.width() - 4.0) * t, 2.0)), CornerRadius::same(1), if db > -1.0 { WHITE } else { Color32::from_rgb(150, 150, 150) });
     }
     // MIDI learn
-    if pill_tip(ui, rect(968.0, 14.0, 92.0, 26.0), "MIDI LEARN", st.learn_on, "Bind a MIDI controller to any knob: switch this on, click a knob, then move a knob / fader on your keyboard.\nRight-click a bound knob to unbind it.") {
+    if icon_btn(ui, rect(968.0, 14.0, 28.0, 26.0), Icon::Midi, st.learn_on, "Bind a MIDI controller to any knob: switch this on, click a knob, then move a knob / fader on your keyboard.\nRight-click a bound knob to unbind it.") {
         st.learn_on = !st.learn_on;
         st.learn_target = None;
     }
-    if pill_tip(ui, rect(1064.0, 14.0, 52.0, 26.0), "CLEAR", false, "Remove every MIDI binding") {
+    if icon_btn(ui, rect(1000.0, 14.0, 28.0, 26.0), Icon::Trash, false, "Remove every MIDI binding") {
         if let Ok(mut g) = p.cc_map.lock() {
             g.clear();
         }
         crate::rebuild_cc_map(p, meters);
     }
-    if pill_tip(ui, rect(1190.0, 14.0, 44.0, 26.0), "UNDO", false, "Undo the last parameter change (Ctrl+Z). Wavetable edits are not part of this history.") {
+    if icon_btn(ui, rect(1190.0, 14.0, 28.0, 26.0), Icon::Undo, false, "Undo the last parameter change (Ctrl+Z). Wavetable edits are not part of this history.") {
         undo_redo(setter, st, true);
     }
-    if pill_tip(ui, rect(1238.0, 14.0, 44.0, 26.0), "REDO", false, "Redo (Ctrl+Y / Ctrl+Shift+Z)") {
+    if icon_btn(ui, rect(1222.0, 14.0, 28.0, 26.0), Icon::Redo, false, "Redo (Ctrl+Y / Ctrl+Shift+Z)") {
         undo_redo(setter, st, false);
     }
     {
@@ -747,7 +862,7 @@ fn header(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, s
         } else {
             String::new()
         };
-        painter.text(Pos2::new(o.x + 1124.0, o.y + 27.0), Align2::LEFT_CENTER, txt, mono(10.0), if st.learn_on { WHITE } else { DIM });
+        painter.text(Pos2::new(o.x + 1050.0, o.y + 27.0), Align2::LEFT_CENTER, txt, mono(10.0), if st.learn_on { WHITE } else { DIM });
     }
     painter.text(Pos2::new(o.x + 1296.0, o.y + 26.0), Align2::LEFT_CENTER, "MASTER", mono(10.0), DIM);
     h_slider(ui, setter, &p.master, rect(1359.0, 19.0, 78.0, 14.0), "master_slider", false, "Master volume");
@@ -755,7 +870,13 @@ fn header(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, s
         // type a value: click the number (or drag it), Enter to confirm
         let mut v = p.master.value();
         let dv = egui::DragValue::new(&mut v).range(-60.0..=6.0).speed(0.1).fixed_decimals(1).suffix(" dB");
-        let resp = ui.put(rect(1352.0, 35.0, 92.0, 16.0), dv).on_hover_text("Master volume in dB: click and type a value");
+        let resp = ui
+            .scope(|ui| {
+                dark_field_style(ui);
+                ui.put(rect(1352.0, 35.0, 92.0, 18.0), dv)
+            })
+            .inner
+            .on_hover_text("Master volume in dB: click and type a value");
         if resp.drag_started() || resp.gained_focus() {
             setter.begin_set_parameter(&p.master);
         }
@@ -1287,16 +1408,52 @@ fn osc_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared
             }
         }
     }
-    enum_combo(ui, setter, &op.warp_mode, &format!("warpm{o}"), Rect::from_min_size(Pos2::new(rx, ty + 28.0), Vec2::new(122.0, 24.0)));
-    enum_combo(ui, setter, &op.warp2_mode, &format!("warpm2{o}"), Rect::from_min_size(Pos2::new(rx, ty + 56.0), Vec2::new(122.0, 24.0)));
+    warp_combo(ui, setter, op, &op.warp_mode, &op.fm_src, &format!("warpm{o}"), Rect::from_min_size(Pos2::new(rx, ty + 28.0), Vec2::new(122.0, 24.0)), o);
+    warp_combo(ui, setter, op, &op.warp2_mode, &op.fm_src2, &format!("warpm2{o}"), Rect::from_min_size(Pos2::new(rx, ty + 56.0), Vec2::new(122.0, 24.0)), o);
     if pill_tip(ui, Rect::from_min_size(Pos2::new(rx, ty + 84.0), Vec2::new(122.0, 20.0)), "EDIT WAVE", false, "Open the wavetable editor (also: click the wave display)") {
         st.open_edit(shared, p, o);
     }
     osc_knobs(ui, setter, p, r, o, false);
 }
 
+/// Warp selector: FM / AM / RM carry their source in the list, like Serum ("FM (B)"); an oscillator can not modulate itself.
+fn warp_combo(ui: &mut Ui, setter: &ParamSetter, op: &OscParams, wp: &EnumParam<WarpMode>, srcp: &EnumParam<FmSrc>, id: &str, rect: Rect, o: usize) {
+    let names = WarpMode::variants();
+    let cur = wp.value();
+    let src_names = ["A", "B", "C", "Sub", "Noise"];
+    let eff = match srcp.value() { FmSrc::Auto => [1usize, 0, 1][o], s => s.to_index() - 1 };
+    let is_x = |m: WarpMode| matches!(m, WarpMode::Fm | WarpMode::Am | WarpMode::Rm);
+    let kind = |m: WarpMode| match m { WarpMode::Fm => "FM", WarpMode::Am => "AM", _ => "RM" };
+    let shown = if is_x(cur) { format!("{} ({})", kind(cur), src_names[eff]) } else { names[cur.to_index()].to_string() };
+    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(rect), |ui| {
+        ui.spacing_mut().interact_size.y = rect.height();
+        egui::ComboBox::from_id_salt(id).height(380.0).width(rect.width()).truncate().selected_text(egui::RichText::new(shown).font(mono(12.0))).show_ui(ui, |ui| {
+            for (i, n) in names.iter().enumerate() {
+                let m = WarpMode::from_index(i);
+                if is_x(m) {
+                    // flat list: one entry per source ("FM (B)", "FM (C)", "FM (Sub)" ...), no sub-menus to miss
+                    for (s, sn) in src_names.iter().enumerate() {
+                        if s == o {
+                            continue; // an oscillator can not modulate itself
+                        }
+                        let on = cur == m && eff == s;
+                        if ui.selectable_label(on, egui::RichText::new(format!("{} ({})", kind(m), sn)).font(mono(12.0))).clicked() {
+                            set_e(setter, srcp, <FmSrc as Enum>::from_index(s + 1));
+                            set_e(setter, wp, m);
+                        }
+                    }
+                } else if ui.selectable_label(i == cur.to_index(), egui::RichText::new(*n).font(mono(12.0))).clicked() {
+                    set_e(setter, wp, m);
+                }
+            }
+        });
+    });
+}
+
 fn osc_knobs(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, r: Rect, o: usize, sm: bool) {
     let op = osc(p, o);
+    // a switched-off oscillator keeps its knobs but they step back
+    ui.set_opacity(if op.on.value() { 1.0 } else { 0.5 });
     let (pos_d, wrp_d, lvl_d, pan_d, bl_d, pit_d) = match o { 0 => (ModDst::APos, ModDst::AWarp, ModDst::ALevel, ModDst::APan, ModDst::ABlend, ModDst::APitch), 1 => (ModDst::BPos, ModDst::BWarp, ModDst::BLevel, ModDst::BPan, ModDst::BBlend, ModDst::BPitch), _ => (ModDst::CPos, ModDst::CWarp, ModDst::CLevel, ModDst::CPan, ModDst::CBlend, ModDst::CPitch) };
     let w = ((r.width() - 24.0) / 5.0).floor();
     let x0 = r.left() + 12.0 + ((r.width() - 24.0) - w * 5.0) * 0.5;
@@ -1356,28 +1513,36 @@ fn osc_knobs(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, r: Rect, o: usi
     }
     mdst(pit_d);
     knob_s(ui, setter, &op.fine, "FINE", cell(x0 + w * 2.0, y1, w), "Fine tune in cents (modulation: +-24 semitones)", true);
-    knob_s(ui, setter, &op.uni, "UNISON", cell(x0 + w * 3.0, y1, w), "Number of unison voices", false);
-    mdst(ModDst::Detune);
-    knob_s(ui, setter, &op.detune, "DETUNE", cell(x0 + w * 4.0, y1, w), "Unison detune", false);
-    let y2 = y1 + dy;
-    mdst(bl_d);
-    knob_s(ui, setter, &op.blend, "BLEND", cell(x0, y2, w), "Level of the outer unison voices (low = centre voice louder)", false);
-    knob_s(ui, setter, &op.spread, "SPREAD", cell(x0 + w, y2, w), "Stereo width of the unison voices", false);
+    // row 2 of tuning: what is specific to the oscillator type
     if sm {
-        knob_s(ui, setter, &op.s_root, "ROOT", cell(x0 + w * 2.0, y2, w), "Semitone offset of the sample's own pitch: the sample plays at its original speed on middle C + this", true);
+        knob_s(ui, setter, &op.s_root, "ROOT", cell(x0 + w * 3.0, y1, w), "Semitone offset of the sample's own pitch: the sample plays at its original speed on middle C + this", true);
         if op.mode.value() == OscMode::Granular {
-            knob_s(ui, setter, &op.g_spray, "SPRAY", cell(x0 + w * 3.0, y2, w), "Random spread of the grain positions around POS", false);
+            knob_s(ui, setter, &op.g_spray, "SPRAY", cell(x0 + w * 4.0, y1, w), "Random spread of the grain positions around POS", false);
         }
     } else if op.mode.value() == OscMode::Spectral {
-        knob_s(ui, setter, &op.sp_eo, "EVEN/ODD", cell(x0 + w * 2.0, y2, w), "Negative = fewer odd partials (hollow), positive = fewer even partials (square-like)", true);
-        ui.painter().text(Pos2::new(x0 + w * 3.0 + w * 0.5, y2 + 30.0), Align2::CENTER_CENTER, "1 voice,\n64 partials", mono(8.5), DIM);
+        knob_s(ui, setter, &op.sp_eo, "EVEN/ODD", cell(x0 + w * 3.0, y1, w), "Negative = fewer odd partials (hollow), positive = fewer even partials (square-like)", true);
     } else {
-        knob_s(ui, setter, &op.phase, "PHASE", cell(x0 + w * 2.0, y2, w), "Start phase", false);
-        knob_s(ui, setter, &op.rand, "RAND", cell(x0 + w * 3.0, y2, w), "Random start phase", false);
+        knob_s(ui, setter, &op.phase, "PHASE", cell(x0 + w * 3.0, y1, w), "Start phase", false);
+        knob_s(ui, setter, &op.rand, "RAND", cell(x0 + w * 4.0, y1, w), "Random start phase", false);
     }
-    // same rows as the value boxes (box centre y2+43) and labels (y2+57) of the knobs next to it
-    enum_combo_sz(ui, setter, &op.uni_mode, &format!("unimode{o}"), Rect::from_min_size(Pos2::new(x0 + w * 4.0 + 1.0, y2 + 32.0), Vec2::new(w + 3.0, 22.0)), 10.5);
-    ui.painter().text(Pos2::new(x0 + w * 4.0 + w * 0.5, y2 + 57.0), Align2::CENTER_CENTER, "UNI MODE", mono(9.5), DIM);
+    // ---- unison group: its own row, with the mode picker in the last slot
+    let y2 = y1 + dy;
+    let unison_off = op.mode.value() == OscMode::Spectral;
+    ui.painter().hline(x0..=x0 + w * 5.0, y2 - 3.0, Stroke::new(1.0_f32, Color32::from_rgb(34, 34, 34)));
+    if unison_off {
+        ui.painter().text(Pos2::new(x0 + w * 2.5, y2 + 30.0), Align2::CENTER_CENTER, "1 voice, 64 partials", mono(9.0), DIM);
+    } else {
+        knob_s(ui, setter, &op.uni, "VOICES", cell(x0, y2, w), "Number of unison voices", false);
+        mdst(ModDst::Detune);
+        knob_s(ui, setter, &op.detune, "DETUNE", cell(x0 + w, y2, w), "Unison detune", false);
+        mdst(bl_d);
+        knob_s(ui, setter, &op.blend, "BLEND", cell(x0 + w * 2.0, y2, w), "Level of the outer unison voices (low = centre voice louder)", false);
+        knob_s(ui, setter, &op.spread, "SPREAD", cell(x0 + w * 3.0, y2, w), "Stereo width of the unison voices", false);
+        // same rows as the value boxes (box centre y2+43) and labels (y2+57) of the knobs next to it
+        enum_combo_styled(ui, setter, &op.uni_mode, &format!("unimode{o}"), Rect::from_min_size(Pos2::new(x0 + w * 4.0 + 1.0, y2 + 35.0), Vec2::new(w - 2.0, 16.0)), 9.0, true);
+        ui.painter().text(Pos2::new(x0 + w * 4.0 + w * 0.5, y2 + 57.0), Align2::CENTER_CENTER, "MODE", mono(9.5), DIM);
+    }
+    ui.set_opacity(1.0);
 }
 
 /// Multisample mode: key map of the loaded instrument, LOAD SFZ button, loop mode.
@@ -1615,7 +1780,7 @@ fn wave_display(ui: &mut Ui, setter: &ParamSetter, r: Rect, op: &OscParams, tb: 
             painter.add(egui::Shape::line(curve(fp, false), PathStroke::new(1.0_f32, Color32::from_rgb(42, 42, 42))));
         }
     }
-    painter.add(egui::Shape::line(curve(pos, true), PathStroke::new(1.6_f32, WHITE)));
+    painter.add(egui::Shape::line(curve(pos, true), PathStroke::new(1.6_f32, ACCENT)));
     let sy = r.bottom() - 5.0;
     painter.line_segment([Pos2::new(r.left() + 4.0, sy), Pos2::new(r.right() - 4.0, sy)], Stroke::new(1.0_f32, LINE));
     let px = r.left() + 4.0 + (r.width() - 8.0) * pos;
@@ -1955,7 +2120,7 @@ fn filter_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui
         pts.push(Pos2::new(xf(f), yd(20.0 * mag.max(1e-6).log10())));
     }
     fill_under(&painter, &pts, d.bottom(), Color32::from_rgb(30, 30, 30));
-    painter.add(egui::Shape::line(pts, PathStroke::new(1.8_f32, if on { WHITE } else { DIM })));
+    painter.add(egui::Shape::line(pts, PathStroke::new(1.8_f32, if on { ACCENT } else { DIM })));
     if is_custom {
         custom_points(ui, setter, fl, fi, d, &xf, &yd, (dbmin, dbmax));
     } else {
@@ -2030,13 +2195,15 @@ fn sub_noise_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, _shared: 
     // same 5-column grid as the NOISE knobs below: SUB uses the right three columns
     let kw = ((r.width() - 24.0) / 5.0).floor();
     let k0 = r.left() + 12.0 + kw * 2.0;
+    ui.set_opacity(if p.sub_on.value() { 1.0 } else { 0.5 });
     knob_s(ui, setter, &p.sub_oct, "OCT", cell(k0, y + 28.0, kw), "Sub octave offset", false);
     mdst(ModDst::SubLevel);
     knob_s(ui, setter, &p.sub_level, "LEVEL", cell(k0 + kw, y + 28.0, kw), "Sub level", false);
     knob_s(ui, setter, &p.sub_pan, "PAN", cell(k0 + kw * 2.0, y + 28.0, kw), "Sub stereo position", true);
+    ui.set_opacity(1.0);
     ui.painter().hline(x + 12.0..=r.right() - 12.0, y + 98.0, Stroke::new(1.0_f32, LINE));
     ui.painter().text(Pos2::new(x + 14.0, y + 116.0), Align2::LEFT_CENTER, "NOISE", mono(10.5), WHITE);
-    enum_combo(ui, setter, &p.noise_type, "noise_type", Rect::from_min_size(Pos2::new(x + 70.0, y + 104.0), Vec2::new(130.0, 24.0)));
+    noise_combo(ui, setter, &p.noise_type, "noise_type", Rect::from_min_size(Pos2::new(x + 70.0, y + 104.0), Vec2::new(130.0, 24.0)));
     let is_sample = p.noise_type.value() == NoiseType::Sample;
     let sname = p.noise_sample.lock().map(|g| crate::sample::encoded_name(&g)).unwrap_or_default();
     let label = if is_sample {
@@ -2218,10 +2385,10 @@ fn env_curve(ui: &mut Ui, setter: &ParamSetter, e: &EnvParams, r: Rect, id: &str
     let st_of = |i: usize| if active == Some(i) { hot } else { base };
     painter.add(egui::Shape::line(pa.clone(), PathStroke::new(st_of(0).width, WHITE)));
     ph.insert(0, *pa.last().unwrap());
-    painter.add(egui::Shape::line(ph, PathStroke::new(1.8_f32, WHITE)));
+    painter.add(egui::Shape::line(ph, PathStroke::new(1.8_f32, ACCENT)));
     painter.add(egui::Shape::line(pd.clone(), PathStroke::new(st_of(1).width, WHITE)));
     ps.insert(0, *pd.last().unwrap());
-    painter.add(egui::Shape::line(ps, PathStroke::new(1.8_f32, WHITE)));
+    painter.add(egui::Shape::line(ps, PathStroke::new(1.8_f32, ACCENT)));
     painter.add(egui::Shape::line(pr.clone(), PathStroke::new(st_of(2).width, WHITE)));
     // grab dots at the middle of each bendable part
     for (i, pts) in [&pa, &pd, &pr].iter().enumerate() {
@@ -2233,27 +2400,32 @@ fn env_curve(ui: &mut Ui, setter: &ParamSetter, e: &EnvParams, r: Rect, id: &str
 
 fn env_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, c: Rect, now: f64) {
     let w = (c.width() - 30.0) / 4.0;
-    let envs: [(&str, &EnvParams); 4] = [("ENV 1  (AMP)", &p.e1), ("ENV 2", &p.e2), ("ENV 3", &p.e3), ("ENV 4", &p.e4)];
-    for (i, (name, e)) in envs.iter().enumerate() {
-        let x = c.left() + (w + 10.0) * i as f32;
+    let envs: [&EnvParams; 4] = [&p.e1, &p.e2, &p.e3, &p.e4];
+    for (i, e) in envs.iter().enumerate() {
+        let cx = c.left() + (w + 10.0) * i as f32;
+        // each envelope lives in its own card
+        let card = Rect::from_min_size(Pos2::new(cx, c.top() - 8.0), Vec2::new(w, 258.0));
+        ui.painter().rect_filled(card, CornerRadius::same(7), Color32::from_rgb(15, 15, 15));
+        ui.painter().rect_stroke(card, CornerRadius::same(7), Stroke::new(1.0_f32, Color32::from_rgb(34, 34, 34)), StrokeKind::Inside);
+        let x = cx + 9.0;
+        let iw = w - 18.0;
         let es = [ModSrc::Env1, ModSrc::Env2, ModSrc::Env3, ModSrc::Env4][i];
-        source_chip(ui, setter, p, st, Rect::from_min_size(Pos2::new(x, c.top() - 4.0), Vec2::new(52.0, 20.0)), &format!("ENV {}", i + 1), es, "Drag this onto any knob", now);
+        source_chip(ui, setter, p, st, Rect::from_min_size(Pos2::new(x, c.top() - 1.0), Vec2::new(52.0, 20.0)), &format!("ENV {}", i + 1), es, "Drag this onto any knob", now);
         if i == 0 {
-            ui.painter().text(Pos2::new(x + 58.0, c.top() + 6.0), Align2::LEFT_CENTER, "(AMP)", mono(9.5), DIM);
+            ui.painter().text(Pos2::new(x + 58.0, c.top() + 9.0), Align2::LEFT_CENTER, "AMP", mono(9.5), DIM);
         }
-        let _ = name;
-        if pill_tip(ui, Rect::from_min_size(Pos2::new(x + w - 92.0, c.top() - 3.0), Vec2::new(92.0, 18.0)), "INV.LEGATO", e.relegato.value(), "Restart this envelope on every note even in Legato mode (Serum: Invert Legato)") {
+        if pill_tip(ui, Rect::from_min_size(Pos2::new(x + iw - 84.0, c.top() - 1.0), Vec2::new(84.0, 20.0)), "INV.LEGATO", e.relegato.value(), "Restart this envelope on every note even in Legato mode (Serum: Invert Legato)") {
             set_b(setter, &e.relegato, !e.relegato.value());
         }
-        env_curve(ui, setter, e, Rect::from_min_size(Pos2::new(x, c.top() + 16.0), Vec2::new(w, 86.0)), &format!("envcurve{i}"));
-        let kw = w / 3.0;
-        let ky = c.top() + 108.0;
+        env_curve(ui, setter, e, Rect::from_min_size(Pos2::new(x, c.top() + 24.0), Vec2::new(iw, 84.0)), &format!("envcurve{i}"));
+        let kw = iw / 3.0;
+        let ky = c.top() + 116.0;
         knob_s(ui, setter, &e.delay, "DELAY", cell(x, ky, kw), "Time before the attack starts", false);
         knob_s(ui, setter, &e.attack, "ATTACK", cell(x + kw, ky, kw), "Attack time", false);
         knob_s(ui, setter, &e.hold, "HOLD", cell(x + kw * 2.0, ky, kw), "Time the level is held at the top", false);
-        knob_s(ui, setter, &e.decay, "DECAY", cell(x, ky + 70.0, kw), "Decay time", false);
-        knob_s(ui, setter, &e.sustain, "SUSTAIN", cell(x + kw, ky + 70.0, kw), "Sustain level", false);
-        knob_s(ui, setter, &e.release, "RELEASE", cell(x + kw * 2.0, ky + 70.0, kw), "Release time", false);
+        knob_s(ui, setter, &e.decay, "DECAY", cell(x, ky + 68.0, kw), "Decay time", false);
+        knob_s(ui, setter, &e.sustain, "SUSTAIN", cell(x + kw, ky + 68.0, kw), "Sustain level", false);
+        knob_s(ui, setter, &e.release, "RELEASE", cell(x + kw * 2.0, ky + 68.0, kw), "Release time", false);
     }
 }
 
@@ -2495,8 +2667,14 @@ fn settings_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, meters: &Met
     let mut head = |ui: &mut Ui, x: f32, t: &str| {
         ui.painter().text(Pos2::new(x, c.top() + 6.0), Align2::LEFT_CENTER, t, mono(10.5), WHITE);
     };
+    // three quiet cards: sound & tuning | MIDI / play | bindings
+    for (cx, cwid, chh) in [(c.left() - 6.0, 436.0, 500.0), (c.left() + 440.0, 312.0, 500.0), (c.left() + 760.0, c.width() - 760.0 + 6.0, 500.0)] {
+        let r = Rect::from_min_size(Pos2::new(cx, c.top() - 8.0), Vec2::new(cwid, chh));
+        ui.painter().rect_filled(r, CornerRadius::same(7), Color32::from_rgb(15, 15, 15));
+        ui.painter().rect_stroke(r, CornerRadius::same(7), Stroke::new(1.0_f32, Color32::from_rgb(34, 34, 34)), StrokeKind::Inside);
+    }
     // ---------------- tuning
-    let x0 = c.left() + 4.0;
+    let x0 = c.left() + 8.0;
     head(ui, x0, "TUNING");
     knob_s(ui, setter, &p.a4, "A4 (Hz)", cell(x0, c.top() + 22.0, 74.0), "Reference pitch of A4: 440 Hz is standard, 432 Hz for \"Verdi tuning\"", false);
     knob_s(ui, setter, &p.tune, "FINE (ct)", cell(x0 + 78.0, c.top() + 22.0, 74.0), "Master fine tune in cents (same as TUNE in the bottom strip)", true);
@@ -2528,7 +2706,7 @@ fn settings_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, meters: &Met
     ui.painter().text(Pos2::new(x0, c.top() + 180.0), Align2::LEFT_CENTER, "cents vs.", mono(8.5), DIM);
     ui.painter().text(Pos2::new(x0, c.top() + 192.0), Align2::LEFT_CENTER, "12-TET", mono(8.5), DIM);
     // ---------------- MIDI / performance
-    let x1 = c.left() + 400.0;
+    let x1 = c.left() + 452.0;
     head(ui, x1, "MIDI / PLAY");
     ui.painter().text(Pos2::new(x1, c.top() + 40.0), Align2::LEFT_CENTER, "CHANNEL", mono(9.5), DIM);
     spinner(ui, setter, &p.midi_ch, Rect::from_min_size(Pos2::new(x1 + 66.0, c.top() + 29.0), Vec2::new(54.0, 22.0)), "midi_ch", "MIDI channel to listen to (0 = all channels)");
@@ -2553,6 +2731,18 @@ fn settings_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, meters: &Met
         ui.painter().text(Pos2::new(x1 + 172.0, c.top() + 208.0), Align2::LEFT_CENTER, "SEMI", mono(9.5), DIM);
         spinner(ui, setter, &p.kb_transpose, Rect::from_min_size(Pos2::new(x1 + 206.0, c.top() + 197.0), Vec2::new(54.0, 22.0)), "kb_semi_s", "Transpose in semitones (affects MIDI input and the on-screen keys)");
     }
+    // ---------------- sound quality
+    let qt = c.top() + 360.0;
+    ui.painter().text(Pos2::new(x0, qt - 6.0), Align2::LEFT_CENTER, "SOUND QUALITY", mono(10.5), WHITE);
+    ui.painter().text(Pos2::new(x0, qt + 22.0), Align2::LEFT_CENTER, "OSC OVERSAMPLING", mono(9.5), DIM);
+    enum_combo(ui, setter, &p.quality, "osc_quality", Rect::from_min_size(Pos2::new(x0 + 140.0, qt + 10.0), Vec2::new(190.0, 24.0)));
+    ui.painter().text(
+        Pos2::new(x0, qt + 46.0),
+        Align2::LEFT_TOP,
+        "Warps that make new harmonics (FM, sync, fold, bend)\nalias unless the oscillator runs faster internally.\nAUTO: x2 for light warps, x4 for FM / sync / fold.\nMAX (x8) is for rendering. Every step doubles the\noscillator cost; filter and effects are not affected.",
+        mono(8.5),
+        DIM,
+    );
     // key lock
     let kt = c.top() + 250.0;
     ui.painter().text(Pos2::new(x0, kt - 14.0), Align2::LEFT_CENTER, "KEY LOCK", mono(10.5), WHITE);
@@ -2565,9 +2755,9 @@ fn settings_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, meters: &Met
         }
     }
     ui.painter().text(Pos2::new(x0, kt + 66.0), Align2::LEFT_TOP, "Key lock moves every incoming note to the nearest note of the scale,\nso wrong keys can not happen (also feeds the arpeggiator and clips).", mono(8.5), DIM);
-    ui.painter().text(Pos2::new(x1, c.top() + 232.0), Align2::LEFT_TOP, "Transpose / octave: the OCT and SEMI spinners above.\nMod wheel = CC1, sustain = CC64; aftertouch and\npitch bend are always on.\nCtrl+Z / Ctrl+Y: undo / redo.\nRight-click a modulation ring: remove it.\nMIDI-learnable: every knob, slider and the OCT / SEMI\nspinners (switch on MIDI LEARN, click it, move a CC).", mono(8.5), DIM);
+    ui.painter().text(Pos2::new(x1, c.top() + 232.0), Align2::LEFT_TOP, "Transpose / octave: the OCT and SEMI spinners above.\nMod wheel = CC1, sustain = CC64; aftertouch and\npitch bend are always on.\nCtrl+Z / Ctrl+Y: undo / redo.\nRight-click a modulated knob: list of its sources\n(amount, bipolar, remove each one).\nMIDI-learnable: every knob, slider and the OCT / SEMI\nspinners (switch on MIDI LEARN, click it, move a CC).", mono(8.5), DIM);
     // ---------------- MIDI bindings list
-    let x2 = c.left() + 704.0;
+    let x2 = c.left() + 772.0;
     head(ui, x2, "MIDI BINDINGS (learned CCs)");
     let txt = p.cc_map.lock().map(|g| g.clone()).unwrap_or_default();
     let entries: Vec<(u8, String)> = txt.split(';').filter_map(|s| s.split_once('=').and_then(|(c, id)| c.trim().parse::<u8>().ok().map(|c| (c, id.trim().to_string())))).collect();
@@ -2643,12 +2833,17 @@ fn lfo_preset(k: usize) -> LfoCurve {
     LfoCurve { pts }
 }
 
-fn lfo_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, st: &mut Gui, c: Rect, page: usize) {
-    let w = (c.width() - 30.0) / 4.0;
+fn lfo_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, meters: &Meters, st: &mut Gui, c: Rect, page: usize) {
+    let wo = (c.width() - 30.0) / 4.0;
     for i in page * 4..page * 4 + 4 {
         let l = &p.lfo[i];
-        let x = c.left() + (w + 10.0) * (i % 4) as f32;
+        let xo = c.left() + (wo + 10.0) * (i % 4) as f32;
+        // every LFO sits on its own quiet card, with 8 px of air inside
+        let (x, w) = (xo + 8.0, wo - 16.0);
         let lnow = ui.input(|i| i.time);
+        let card = Rect::from_min_max(Pos2::new(xo, c.top() - 6.0), Pos2::new(xo + wo, c.top() + 278.0));
+        ui.painter().rect_filled(card, CornerRadius::same(6), Color32::from_rgb(18, 18, 18));
+        ui.painter().rect_stroke(card, CornerRadius::same(6), Stroke::new(1.0_f32, Color32::from_rgb(34, 34, 34)), StrokeKind::Inside);
         source_chip(ui, setter, p, st, Rect::from_min_size(Pos2::new(x, c.top() - 1.0), Vec2::new(48.0, 24.0)), &format!("LFO {}", i + 1), lfo_src(i), "Drag this onto any knob", lnow);
         enum_combo(ui, setter, &l.shape, &format!("lfoshape{i}"), Rect::from_min_size(Pos2::new(x + 52.0, c.top() - 1.0), Vec2::new(w - 52.0, 24.0)));
         let d = Rect::from_min_size(Pos2::new(x, c.top() + 28.0), Vec2::new(w, 92.0));
@@ -2694,14 +2889,67 @@ fn lfo_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, 
         painter.line_segment([Pos2::new(d.left(), d.center().y), Pos2::new(d.right(), d.center().y)], Stroke::new(1.0_f32, Color32::from_rgb(28, 28, 28)));
         let n = 160;
         let cv = curve.as_deref();
-        let pts: Vec<Pos2> = (0..=n)
-            .map(|k| {
-                let ph = 2.0 * k as f64 / n as f64;
-                let v = lfo_eval_c(shape, ph + 0.0001, 0x51ED + i as u32 * 977, cv);
-                Pos2::new(d.left() + 4.0 + (d.width() - 8.0) * k as f32 / n as f32, d.center().y - v * (d.height() * 0.40))
-            })
-            .collect();
-        painter.add(egui::Shape::line(pts, PathStroke::new(1.6_f32, WHITE)));
+        let lp3 = |k: usize| f32::from_bits(meters.lfo_pos[i * 3 + k].load(std::sync::atomic::Ordering::Relaxed));
+        let ck = match shape {
+            LfoShape::Lorenz => Some(0i8),
+            LfoShape::Rossler => Some(1i8),
+            _ => None,
+        };
+        if let Some(kind) = ck {
+            // attractor picture: faint orbit + fading trail + the live position circle
+            let sq = d.height().min(d.width()) - 10.0;
+            let ctr = d.center();
+            let _ = sq;
+            let (hw, hh) = (d.width() * 0.5 - 8.0, d.height() * 0.5 - 6.0);
+            let to = |x: f32, y: f32| Pos2::new(ctr.x + x * hw * if kind == 0 { 0.8 } else { 0.55 }, ctr.y - y * hh);
+            let orbit: Arc<Vec<(f32, f32)>> = ui.data_mut(|dd| dd.get_temp_mut_or_insert_with(egui::Id::new(("orbit", kind)), || Arc::new(crate::chaos::orbit(kind, 900))).clone());
+            let op: Vec<Pos2> = orbit.iter().map(|&(x, y)| to(x, y)).collect();
+            painter.add(egui::Shape::line(op, PathStroke::new(1.0_f32, Color32::from_rgb(44, 44, 48))));
+            // the trail follows the attractor itself (the part of the orbit just behind the live position),
+            // so it stays smooth however fast the LFO runs
+            let cur = (lp3(0), lp3(1));
+            let tid = egui::Id::new(("ctrail", i));
+            let prev: usize = ui.data(|dd| dd.get_temp(tid)).unwrap_or(120);
+            let nearest = |lo: usize, hi: usize| -> (usize, f32) {
+                let mut best = (lo, f32::MAX);
+                for k in lo..hi.min(orbit.len()) {
+                    let dd = (orbit[k].0 - cur.0).powi(2) + (orbit[k].1 - cur.1).powi(2);
+                    if dd < best.1 {
+                        best = (k, dd);
+                    }
+                }
+                best
+            };
+            let (idx, _) = nearest(90, orbit.len().min(880));
+            let _ = prev;
+            ui.data_mut(|dd| dd.insert_temp(tid, idx));
+            let tn = 80usize.min(idx);
+            for k in 1..=tn {
+                let (p0, p1) = (orbit[idx - k], orbit[idx - k + 1]);
+                let a = (1.0 - k as f32 / tn as f32).powf(1.6);
+                let col = Color32::from_rgba_unmultiplied(205, 210, 218, (18.0 + 190.0 * a) as u8);
+                painter.line_segment([to(p0.0, p0.1), to(p1.0, p1.1)], Stroke::new(0.8 + 1.6 * a, col));
+            }
+            let dot = to(cur.0, cur.1);
+            painter.circle_filled(dot, 4.5, WHITE);
+            painter.circle_stroke(dot, 7.0, Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 110)));
+            ui.ctx().request_repaint();
+        } else {
+            let eval = |ph: f64| lfo_eval_c(shape, ph + 0.0001, 0x51ED + i as u32 * 977, cv);
+            let pts: Vec<Pos2> = (0..=n)
+                .map(|k| {
+                    let ph = 2.0 * k as f64 / n as f64;
+                    Pos2::new(d.left() + 4.0 + (d.width() - 8.0) * k as f32 / n as f32, d.center().y - eval(ph) * (d.height() * 0.40))
+                })
+                .collect();
+            painter.add(egui::Shape::line(pts, PathStroke::new(1.6_f32, ACCENT)));
+            // live position circle on the curve (the first of the two drawn cycles)
+            let ph = lp3(2) as f64;
+            let dot = Pos2::new(d.left() + 4.0 + (d.width() - 8.0) * (ph as f32 / 2.0), d.center().y - eval(ph) * (d.height() * 0.40));
+            painter.circle_filled(dot, 4.0, WHITE);
+            painter.circle_stroke(dot, 6.5, Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 110)));
+            ui.ctx().request_repaint();
+        }
         if shape == LfoShape::Custom {
             let gl = ["GRID off", "GRID 4", "GRID 8", "GRID 16", "GRID 32"][st.lfo_grid[i] as usize % 5];
             if pill_tip(ui, Rect::from_min_size(Pos2::new(d.right() - 144.0, d.top() + 3.0), Vec2::new(66.0, 16.0)), gl, st.lfo_grid[i] != 0, "Grid: draw in steps (the shape becomes a step sequencer). Click to change the number of steps.") {
@@ -2766,6 +3014,8 @@ fn matrix_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
         let y = y0 + ((rh - 26.0) * 0.5).floor();
         let active = s.src.value() != ModSrc::None && s.dst.value() != ModDst::None;
         ui.painter().rect_filled(Rect::from_min_size(Pos2::new(c.left() - 3.0, y0), Vec2::new(c.width() + 6.0, rh - 4.0)), CornerRadius::same(4), if active { Color32::from_rgb(22, 22, 22) } else { Color32::from_rgb(14, 14, 14) });
+        // empty rows stay quiet, used rows pop
+        ui.set_opacity(if active { 1.0 } else { 0.45 });
         if pill_tip(ui, Rect::from_min_size(Pos2::new(c.left(), y + 1.0), Vec2::new(24.0, 21.0)), &format!("{}", i + 1), s.on.value(), "Slot on / bypassed (click to toggle). Bypassed slots keep their settings but make no sound change.") {
             set_b(setter, &s.on, !s.on.value());
         }
@@ -2794,6 +3044,7 @@ fn matrix_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
             set_b(setter, &s.uni, false);
             set_b(setter, &s.on, true);
         }
+        ui.set_opacity(1.0);
     }
 }
 
@@ -3079,37 +3330,17 @@ fn source_chip(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui,
     let dragging = drag_src() == Some(src as usize);
     let used = p.slot.iter().any(|s| s.src.value() == src && s.dst.value() != ModDst::None);
     let painter = ui.painter();
-    painter.rect_filled(rr, CornerRadius::same(6), if dragging { WHITE } else if resp.hovered() { PANEL2 } else { Color32::TRANSPARENT });
-    painter.rect_stroke(rr, CornerRadius::same(6), Stroke::new(1.0_f32, if dragging { WHITE } else if used { Color32::from_rgb(190, 190, 190) } else { LINE }), StrokeKind::Inside);
-    painter.text(rr.center(), Align2::CENTER_CENTER, label, mono(10.0), if dragging { Color32::BLACK } else if used { WHITE } else { Color32::from_rgb(170, 170, 170) });
+    painter.rect_filled(rr, CornerRadius::same(6), if dragging { MODC } else if resp.hovered() { PANEL2 } else { Color32::TRANSPARENT });
+    painter.rect_stroke(rr, CornerRadius::same(6), Stroke::new(1.0_f32, if dragging { MODC } else if used { mix(LINE, MODC, 0.75) } else if resp.hovered() { MODC } else { LINE }), StrokeKind::Inside);
+    painter.text(rr.center(), Align2::CENTER_CENTER, label, mono(10.0), if dragging { Color32::BLACK } else if used { mix(WHITE, MODC, 0.35) } else { Color32::from_rgb(170, 170, 170) });
     let uses = source_uses(src);
     if uses > 0 && !dragging {
         let bc = Pos2::new(rr.right() - 5.0, rr.top() + 2.0);
-        painter.circle_filled(bc, 6.0, WHITE);
+        painter.circle_filled(bc, 6.0, MODC);
         painter.text(bc, Align2::CENTER_CENTER, uses.to_string(), mono(8.5), Color32::BLACK);
     }
     if resp.drag_started() {
-        set_drag(Some(src as usize));
-    }
-    if resp.dragged() {
-        if let Some(pos) = ui.input(|i| i.pointer.latest_pos()) {
-            let lp = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("mod_ghost")));
-            let g = Rect::from_center_size(pos + Vec2::new(14.0, 14.0), Vec2::new(rr.width(), 22.0));
-            lp.rect_filled(g, CornerRadius::same(6), WHITE);
-            lp.text(g.center(), Align2::CENTER_CENTER, label, mono(10.0), Color32::BLACK);
-        }
-    }
-    if resp.drag_stopped() {
-        if let Some(pos) = ui.input(|i| i.pointer.latest_pos()) {
-            if let Some((_, dst)) = drop_targets().into_iter().find(|(r, _)| r.contains(pos)) {
-                let msg = assign_mod(setter, p, src as usize, dst);
-                if !msg.contains("full") {
-                    crate::ui::flash(dst, ui.input(|i| i.time) + 2.5);
-                }
-                st.say(now, format!("{msg}  | knob ring = amount (drag it), right-click = remove, list: MATRIX tab"));
-            }
-        }
-        set_drag(None);
+        set_drag(Some(src as usize), label);
     }
 }
 

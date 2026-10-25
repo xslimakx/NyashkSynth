@@ -541,7 +541,6 @@ impl WavEdit {
         ui.painter().rect_stroke(rect, CornerRadius::same(8), Stroke::new(1.0_f32, MID), StrokeKind::Inside);
         let x0 = rect.left() + 14.0;
         let w = rect.width() - 28.0;
-        let cx = x0 + 70.0; // buttons start here, captions sit left of it
         let sel_txt = match self.sel {
             Some((a, b)) => format!("   selected {}-{} ({})", a + 1, b + 1, b - a + 1),
             None => String::new(),
@@ -583,184 +582,86 @@ impl WavEdit {
         let strip = Rect::from_min_size(Pos2::new(x0, y), Vec2::new(w, 30.0));
         self.timeline(ui, strip, setter, op);
         y += 38.0;
-        let yc = std::cell::Cell::new(y);
-        let btn = |x: f32, wd: f32| Rect::from_min_size(Pos2::new(x, yc.get()), Vec2::new(wd, 24.0));
-        let cap = |ui: &Ui, y: f32, t: &str| {
-            ui.painter().text(Pos2::new(x0, y + 12.0), Align2::LEFT_CENTER, t, mono(10.0), DIM);
+        // ---------------- four blocks: FRAMES / DRAW / APPLY TO / PROCESS
+        let cw = (w - 30.0) / 4.0;
+        let ch = 138.0;
+        let ct = y;
+        let card = |ui: &Ui, c: usize, title: &str| {
+            let r = Rect::from_min_size(Pos2::new(x0 + (cw + 10.0) * c as f32, ct), Vec2::new(cw, ch));
+            ui.painter().rect_filled(r, CornerRadius::same(7), Color32::from_rgb(15, 15, 15));
+            ui.painter().rect_stroke(r, CornerRadius::same(7), Stroke::new(1.0_f32, Color32::from_rgb(36, 36, 36)), StrokeKind::Inside);
+            ui.painter().text(Pos2::new(r.left() + 10.0, r.top() + 12.0), Align2::LEFT_CENTER, title, mono(10.0), DIM);
         };
+        let inner = cw - 20.0;
+        let cell = |c: usize, x: f32, row: usize, wd: f32| Rect::from_min_size(Pos2::new(x0 + (cw + 10.0) * c as f32 + 10.0 + x, ct + 24.0 + 28.0 * row as f32), Vec2::new(wd, 24.0));
+        let note = |ui: &Ui, c: usize, t: &str, col: Color32, fs: f32| {
+            ui.painter().text(Pos2::new(x0 + (cw + 10.0) * c as f32 + cw - 10.0, ct + 12.0), Align2::RIGHT_CENTER, t, mono(fs), col);
+        };
+        let mut shape: Option<u8> = None;
+        let mut resize: Option<usize> = None;
+        let mut run = false;
+        let lib = crate::files::tables_dir().map(|d| d.join("My Waves").display().to_string()).unwrap_or_default();
 
-        // ---------------- row: frame editing, drawing tool, basic shapes
-        cap(ui, y, "EDIT");
-        let mut bx = cx;
-        for (label, tip) in [
+        // ---- block 1: frames and table
+        card(ui, 0, "FRAMES");
+        let pw5 = (inner - 16.0) / 5.0;
+        for (i, (label, tip)) in [
             ("INSERT", "Duplicate the frame (or the whole selected range) right after itself"),
             ("DELETE", "Remove the frame (or the whole selected range)"),
             ("COPY", "Copy the current frame"),
             ("PASTE", "Paste the copied frame over the frames in APPLY TO"),
             ("CLEAR", "Silence the frames in APPLY TO"),
-        ] {
-            if pill_tip(ui, btn(bx, 62.0), label, false, tip) {
+        ]
+        .iter()
+        .enumerate()
+        {
+            if pill_tip(ui, cell(0, (pw5 + 4.0) * i as f32, 0, pw5), label, false, tip) {
                 op_clicked = Some(label);
             }
-            bx += 66.0;
         }
-        bx += 14.0;
-        cap_at(ui, bx, y, "DRAW WITH");
-        bx += 78.0;
-        for (t, label, tip) in [(Tool::Draw, "DRAW", "Freehand drawing in the wave view"), (Tool::Line, "LINE", "Drag out a straight line"), (Tool::Smooth, "SMOOTH", "Brush that smooths the wave")] {
-            if pill_tip(ui, btn(bx, 62.0), label, self.tool == t, tip) {
-                self.tool = t;
+        cap_at(ui, x0 + 10.0, ct + 52.0, "COUNT");
+        let pw7 = (inner - 50.0 - 18.0) / 7.0;
+        for (i, n) in [2usize, 8, 16, 32, 64, 128, 256].iter().enumerate() {
+            if pill_tip(ui, cell(0, 50.0 + (pw7 + 3.0) * i as f32, 1, pw7), &n.to_string(), nfr == *n, "Number of frames in the table (new frames are interpolated)") {
+                resize = Some(*n);
             }
-            bx += 66.0;
         }
-        bx += 14.0;
-        cap_at(ui, bx, y, "SET TO");
-        bx += 54.0;
-        let mut shape: Option<u8> = None;
-        for (i, label) in ["SINE", "TRI", "SAW", "SQR", "PULSE"].iter().enumerate() {
-            if pill_tip(ui, btn(bx, 48.0), label, false, "Replace the frames in APPLY TO with a basic shape") {
-                shape = Some(i as u8);
-            }
-            bx += 51.0;
-        }
-
-        // ---------------- row: scope + strength
-        y += 30.0;
-        yc.set(y);
-        cap(ui, y, "APPLY TO");
-        bx = cx;
-        for (sc, label, tip, wd) in [
-            (Scope::Frame, "FRAME", "Operations change only the current frame", 62.0),
-            (Scope::Sel, "SELECTION", "Operations change the frames selected on the strip above (drag on it to select several)", 92.0),
-            (Scope::All, "ALL FRAMES", "Operations change every frame", 92.0),
-        ] {
-            if pill_tip(ui, btn(bx, wd), label, self.scope == sc, tip) {
-                self.scope = sc;
-            }
-            bx += wd + 4.0;
-        }
-        bx += 14.0;
-        cap_at(ui, bx, y, "STRENGTH");
-        bx += 70.0;
-        let txt = format!("{}%", (self.strength * 100.0).round() as i32);
-        Self::slider(ui, btn(bx, 170.0), "wed_strength", &mut self.strength, &txt, "How much of each change is applied: 100% replaces the wave, lower values blend the result with the original");
-        bx += 190.0;
-        let (lo, hi) = self.scope_range();
-        let n_aff = hi - lo + 1;
-        ui.painter().text(
-            Pos2::new(bx, y + 12.0),
-            Align2::LEFT_CENTER,
-            if self.scope == Scope::Sel && self.sel.is_none() { "no range selected: drag on the strip above".to_string() } else { format!("will change {} frame{} ({}-{})", n_aff, if n_aff == 1 { "" } else { "s" }, lo + 1, hi + 1) },
-            mono(10.0),
-            if self.scope == Scope::Sel && self.sel.is_none() { WHITE } else { DIM },
-        );
-
-        // ---------------- row: fade across the range
-        y += 30.0;
-        yc.set(y);
-        cap(ui, y, "FADE");
-        bx = cx;
-        for (rp, label, tip, wd) in [
-            (Ramp::Flat, "FLAT", "Same amount on every frame of the range", 52.0),
-            (Ramp::In, "IN", "Starts at nothing on the first frame, full on the last", 44.0),
-            (Ramp::Out, "OUT", "Full on the first frame, fades to nothing on the last", 48.0),
-            (Ramp::Middle, "MIDDLE", "Strongest in the centre of the range, smooth at both ends", 66.0),
-            (Ramp::Edges, "EDGES", "Strongest at both ends of the range, nothing in the centre", 62.0),
-        ] {
-            if pill_tip(ui, btn(bx, wd), label, self.ramp == rp, tip) {
-                self.ramp = rp;
-            }
-            bx += wd + 4.0;
-        }
-        bx += 14.0;
-        cap_at(ui, bx, y, "SOFT EDGES");
-        bx += 84.0;
-        let txt = if self.soft <= 0.001 { "HARD".to_string() } else { format!("{}%", (self.soft * 100.0).round() as i32) };
-        Self::slider(ui, btn(bx, 170.0), "wed_soft", &mut self.soft, &txt, "FLAT only: how wide the smooth fade is at both ends of the range. HARD = the change starts abruptly.");
-        bx += 190.0;
-        bx += 4.0;
-        cap_at(ui, bx, y, "VARY");
-        bx += 38.0;
-        let txt = format!("{}%", (self.vary * 100.0).round() as i32);
-        Self::slider(ui, btn(bx, 80.0), "wed_vary", &mut self.vary, &txt, "Every frame gets a different amount of the change (random per frame) instead of the same");
-        bx += 92.0;
-        cap_at(ui, bx, y, "DRIFT");
-        bx += 44.0;
-        let txt = format!("{}%", (self.drift * 100.0).round() as i32);
-        Self::slider(ui, btn(bx, 80.0), "wed_drift", &mut self.drift, &txt, "Drawing on several frames: the drawn spot slides sideways a little more on each next frame, so the change travels through the table");
-
-        // ---------------- row: processing
-        y += 30.0;
-        yc.set(y);
-        cap(ui, y, "PROCESS");
-        bx = cx;
-        for (label, tip) in [
-            ("NORM", "Normalise to full level"),
-            ("REVERSE", "Reverse in time"),
-            ("INVERT", "Flip the polarity"),
-            ("LOWPASS", "Remove the highest harmonics"),
-            ("HIGHPASS", "Remove the lowest harmonics"),
-            ("FOLD", "Wave folding"),
-            ("CRUSH", "Bit crusher"),
-            ("MIRROR", "Mirror the first half onto the second half"),
-            ("SMOOTH", "Soften the corners"),
-            ("RANDOM", "Random harmonic spectrum"),
-            ("MORPH", "Smoothly morph the frames between the first and last frame of the range (needs SELECTION or ALL)"),
-        ] {
-            let wd = if label.len() > 6 { 76.0 } else { 62.0 };
-            if pill_tip(ui, btn(bx, wd), label, false, tip) {
-                op_clicked = Some(label);
-            }
-            bx += wd + 4.0;
-        }
-
-        // ---------------- row: table
-        y += 30.0;
-        yc.set(y);
-        cap(ui, y, "TABLE");
-        bx = cx;
-        cap_at(ui, bx, y, "FRAMES");
-        bx += 52.0;
-        let mut resize: Option<usize> = None;
-        for n in [2usize, 8, 16, 32, 64, 128, 256] {
-            if pill_tip(ui, btn(bx, 38.0), &n.to_string(), nfr == n, "Change the number of frames (new frames are interpolated)") {
-                resize = Some(n);
-            }
-            bx += 41.0;
-        }
-        bx += 10.0;
-        if pill_tip(ui, btn(bx, 120.0), if self.spectral { "SMOOTH SPECTRAL" } else { "LINEAR MIX" }, false, "How new frames and MORPH are interpolated: spectral (harmonics glide, smoother) or linear crossfade (straight blend of the waves)") {
+        let half = (inner - 4.0) * 0.56;
+        if pill_tip(ui, cell(0, 0.0, 2, half), if self.spectral { "SMOOTH SPECTRAL" } else { "LINEAR MIX" }, false, "How new frames and MORPH are interpolated: spectral (harmonics glide, smoother) or linear crossfade (straight blend of the waves)") {
             self.spectral = !self.spectral;
         }
-        bx += 136.0;
-        let lib = crate::files::tables_dir().map(|d| d.join("My Waves").display().to_string()).unwrap_or_default();
-        if pill_tip(ui, btn(bx, 132.0), "SAVE TO LIBRARY", false, &format!("Save this wavetable as a .wav file (Serum compatible).\nIt then shows up in the WAVETABLES browser under the category My Waves.\nFolder: {lib}")) {
+        if pill_tip(ui, cell(0, half + 4.0, 2, inner - half - 4.0), "SINGLE WAVE", false, "Make the table one single wave: the current frame is kept and the other frames become copies of it, so POS has no effect (like a one-frame table in Serum)") {
+            op_clicked = Some("SINGLE");
+        }
+        if pill_tip(ui, cell(0, 0.0, 3, half), "SAVE TO LIBRARY", false, &format!("Save this wavetable as a .wav file (Serum compatible).\nIt then shows up in the WAVETABLES browser under the category My Waves.\nFolder: {lib}")) {
             op_clicked = Some("EXPORT");
         }
-        bx += 136.0;
-        if pill_tip(ui, btn(bx, 100.0), "OPEN FOLDER", false, "Open the folder where saved wavetables live") {
+        if pill_tip(ui, cell(0, half + 4.0, 3, inner - half - 4.0), "OPEN FOLDER", false, "Open the folder where saved wavetables live") {
             if let Some(d) = crate::files::tables_dir().map(|d| d.join("My Waves")) {
                 let _ = std::fs::create_dir_all(&d);
                 crate::files::open_folder(&d);
             }
         }
 
-        bx += 104.0;
-        if pill_tip(ui, btn(bx, 112.0), "SINGLE WAVE", false, "Make the table one single wave: the current frame is kept and the other frames become copies of it, so POS has no effect (like a one-frame table in Serum)") {
-            op_clicked = Some("SINGLE");
+        // ---- block 2: drawing, basic shapes, formula
+        card(ui, 1, "DRAW  /  SHAPES  /  FORMULA");
+        let pw3 = (inner - 8.0) / 3.0;
+        for (i, (t, label, tip)) in [(Tool::Draw, "DRAW", "Freehand drawing in the wave view"), (Tool::Line, "LINE", "Drag out a straight line"), (Tool::Smooth, "SMOOTH", "Brush that smooths the wave")].iter().enumerate() {
+            if pill_tip(ui, cell(1, (pw3 + 4.0) * i as f32, 0, pw3), label, self.tool == *t, tip) {
+                self.tool = *t;
+            }
         }
-
-        // ---------------- row: formula
-        y += 30.0;
-        yc.set(y);
-        cap(ui, y, "FORMULA");
-        let te = Rect::from_min_size(Pos2::new(cx, y), Vec2::new(430.0, 24.0));
-        ui.put(te, egui::TextEdit::singleline(&mut self.formula).font(mono(11.0)).hint_text("sin(2*pi*x + w*sin(4*pi*x))").desired_width(430.0));
-        let mut run = false;
-        if pill_tip(ui, btn(cx + 438.0, 90.0), "GENERATE", false, "Build the frames in APPLY TO from the formula (x = phase 0..1, w = frame position 0..1)") {
+        for (i, label) in ["SINE", "TRI", "SAW", "SQR", "PULSE"].iter().enumerate() {
+            if pill_tip(ui, cell(1, (pw5 + 4.0) * i as f32, 1, pw5), label, false, "Replace the frames in APPLY TO with a basic shape") {
+                shape = Some(i as u8);
+            }
+        }
+        dark_box(ui, cell(1, 0.0, 2, inner));
+        ui.put(cell(1, 0.0, 2, inner), egui::TextEdit::singleline(&mut self.formula).font(mono(11.0)).hint_text("sin(2*pi*x + w*sin(4*pi*x))").desired_width(inner));
+        if pill_tip(ui, cell(1, 0.0, 3, half), "GENERATE", false, "Build the frames in APPLY TO from the formula (x = phase 0..1, w = frame position 0..1)") {
             run = true;
         }
-        if pill_tip(ui, btn(cx + 532.0, 80.0), "EXAMPLE", false, "Cycle through example formulas") {
+        if pill_tip(ui, cell(1, half + 4.0, 3, inner - half - 4.0), "EXAMPLE", false, "Cycle through example formulas") {
             const EX: [&str; 8] = [
                 "sin(2*pi*x)",
                 "sin(2*pi*x + w*6*sin(2*pi*x))",
@@ -774,11 +675,93 @@ impl WavEdit {
             self.example = (self.example + 1) % EX.len();
             self.formula = EX[self.example].to_string();
         }
+        if !self.formula_err.is_empty() {
+            note(ui, 1, &format!("error: {}", self.formula_err).chars().take(30).collect::<String>(), WHITE, 9.0);
+        } else {
+            note(ui, 1, "x = phase   w = frame", DIM, 9.0);
+        }
+
+        // ---- block 3: where and how much
+        let (lo, hi) = self.scope_range();
+        let n_aff = hi - lo + 1;
+        card(ui, 2, "APPLY TO");
+        if self.scope == Scope::Sel && self.sel.is_none() {
+            note(ui, 2, "drag on the strip to select", WHITE, 9.0);
+        } else {
+            note(ui, 2, &format!("{} frame{} ({}-{})", n_aff, if n_aff == 1 { "" } else { "s" }, lo + 1, hi + 1), DIM, 9.5);
+        }
+        for (i, (sc, label, tip)) in [
+            (Scope::Frame, "FRAME", "Operations change only the current frame"),
+            (Scope::Sel, "SELECTION", "Operations change the frames selected on the strip above (drag on it to select several)"),
+            (Scope::All, "ALL FRAMES", "Operations change every frame"),
+        ]
+        .iter()
+        .enumerate()
+        {
+            if pill_tip(ui, cell(2, (pw3 + 4.0) * i as f32, 0, pw3), label, self.scope == *sc, tip) {
+                self.scope = *sc;
+            }
+        }
+        for (i, (rp, label, tip)) in [
+            (Ramp::Flat, "FLAT", "Same amount on every frame of the range"),
+            (Ramp::In, "IN", "Starts at nothing on the first frame, full on the last"),
+            (Ramp::Out, "OUT", "Full on the first frame, fades to nothing on the last"),
+            (Ramp::Middle, "MIDDLE", "Strongest in the centre of the range, smooth at both ends"),
+            (Ramp::Edges, "EDGES", "Strongest at both ends of the range, nothing in the centre"),
+        ]
+        .iter()
+        .enumerate()
+        {
+            if pill_tip(ui, cell(2, (pw5 + 4.0) * i as f32, 1, pw5), label, self.ramp == *rp, tip) {
+                self.ramp = *rp;
+            }
+        }
+        cap_at(ui, x0 + (cw + 10.0) * 2.0 + 10.0, ct + 80.0, "STRENGTH");
+        let txt = format!("{}%", (self.strength * 100.0).round() as i32);
+        Self::slider(ui, cell(2, 72.0, 2, inner - 72.0), "wed_strength", &mut self.strength, &txt, "How much of each change is applied: 100% replaces the wave, lower values blend the result with the original");
+        let sw = (inner - 3.0 * 8.0 - 36.0 - 34.0 - 40.0) / 3.0;
+        let mut sx = 0.0;
+        cap_at(ui, x0 + (cw + 10.0) * 2.0 + 10.0, ct + 108.0, "SOFT");
+        sx += 36.0;
+        let txt = if self.soft <= 0.001 { "HARD".to_string() } else { format!("{}%", (self.soft * 100.0).round() as i32) };
+        Self::slider(ui, cell(2, sx, 3, sw), "wed_soft", &mut self.soft, &txt, "FLAT only: how wide the smooth fade is at both ends of the range. HARD = the change starts abruptly.");
+        sx += sw + 8.0;
+        cap_at(ui, x0 + (cw + 10.0) * 2.0 + 10.0 + sx, ct + 108.0, "VARY");
+        sx += 34.0;
+        let txt = format!("{}%", (self.vary * 100.0).round() as i32);
+        Self::slider(ui, cell(2, sx, 3, sw), "wed_vary", &mut self.vary, &txt, "Every frame gets a different amount of the change (random per frame) instead of the same");
+        sx += sw + 8.0;
+        cap_at(ui, x0 + (cw + 10.0) * 2.0 + 10.0 + sx, ct + 108.0, "DRIFT");
+        sx += 40.0;
+        let txt = format!("{}%", (self.drift * 100.0).round() as i32);
+        Self::slider(ui, cell(2, sx, 3, sw), "wed_drift", &mut self.drift, &txt, "Drawing on several frames: the drawn spot slides sideways a little more on each next frame, so the change travels through the table");
+
+        // ---- block 4: processing
+        card(ui, 3, "PROCESS");
+        for (i, (label, tip)) in [
+            ("NORM", "Normalise to full level"),
+            ("REVERSE", "Reverse in time"),
+            ("INVERT", "Flip the polarity"),
+            ("LOWPASS", "Remove the highest harmonics"),
+            ("HIGHPASS", "Remove the lowest harmonics"),
+            ("FOLD", "Wave folding"),
+            ("CRUSH", "Bit crusher"),
+            ("MIRROR", "Mirror the first half onto the second half"),
+            ("SMOOTH", "Soften the corners"),
+            ("RANDOM", "Random harmonic spectrum"),
+            ("MORPH", "Smoothly morph the frames between the first and last frame of the range (needs SELECTION or ALL)"),
+        ]
+        .iter()
+        .enumerate()
+        {
+            if pill_tip(ui, cell(3, (pw3 + 4.0) * (i % 3) as f32, i / 3, pw3), label, false, tip) {
+                op_clicked = Some(label);
+            }
+        }
+        y = ct + ch - 4.0;
         if run {
             self.run_formula(now);
         }
-        let msg = if self.formula_err.is_empty() { "x=phase  w=frame  (sin cos tanh saw tri...)".to_string() } else { format!("formula error: {}", self.formula_err) };
-        ui.painter().text(Pos2::new(cx + 624.0, y + 12.0), Align2::LEFT_CENTER, msg.chars().take(48).collect::<String>(), mono(8.5), if self.formula_err.is_empty() { DIM } else { WHITE });
 
         // ---------------- apply toolbar operations
         if let Some(k) = shape {
@@ -945,8 +928,8 @@ impl WavEdit {
         }
 
         // ---------------- main views
-        let top = y + 34.0;
-        let view_h = 245.0;
+        let top = y + 14.0;
+        let view_h = 290.0;
         let wf = Rect::from_min_size(Pos2::new(x0, top), Vec2::new(350.0, view_h));
         let td = Rect::from_min_size(Pos2::new(x0 + 360.0, top), Vec2::new(w - 360.0, view_h));
         self.waterfall(ui, wf, setter, op, now);
@@ -1013,7 +996,7 @@ impl WavEdit {
             // one single wave: no stack to show
             let gp = self.time.iter().fold(1.0f32, |a, b| a.max(b.abs()));
             let pts: Vec<Pos2> = (0..=n).map(|k| Pos2::new(r.left() + 14.0 + (r.width() - 28.0) * k as f32 / n as f32, r.center().y - self.time[(k * (N - 1) / n).min(N - 1)] / gp * r.height() * 0.32)).collect();
-            painter.add(egui::Shape::line(pts, PathStroke::new(2.2_f32, WHITE)));
+            painter.add(egui::Shape::line(pts, PathStroke::new(2.2_f32, ACCENT)));
             painter.text(Pos2::new(r.left() + 8.0, r.top() + 10.0), Align2::LEFT_CENTER, "SINGLE WAVE", mono(9.5), DIM);
             painter.text(Pos2::new(r.center().x, r.bottom() - 12.0), Align2::CENTER_CENTER, "all frames are the same, POS does nothing", mono(9.0), DIM);
             return;
@@ -1048,7 +1031,7 @@ impl WavEdit {
         }
         // the chosen frame is drawn last, on top, so it is always visible
         let pts = curve(&self.time, self.frame);
-        painter.add(egui::Shape::line(pts, PathStroke::new(2.2_f32, WHITE)));
+        painter.add(egui::Shape::line(pts, PathStroke::new(2.2_f32, ACCENT)));
         painter.text(Pos2::new(r.left() + 8.0, r.top() + 10.0), Align2::LEFT_CENTER, "FRAMES", mono(9.5), DIM);
     }
 
@@ -1144,7 +1127,7 @@ impl WavEdit {
                 Pos2::new(r.left() + r.width() * k as f32 / m as f32, r.center().y - s * scale)
             })
             .collect();
-        painter.add(egui::Shape::line(pts, PathStroke::new(1.8_f32, WHITE)));
+        painter.add(egui::Shape::line(pts, PathStroke::new(1.8_f32, ACCENT)));
         painter.text(Pos2::new(r.left() + 8.0, r.top() + 10.0), Align2::LEFT_CENTER, &{ let (a, b) = self.scope_range(); if b > a { format!("WAVE   (lines = +1 / -1)   drawing changes frames {}-{}", a + 1, b + 1) } else { "WAVE   (lines = +1 / -1)".to_string() } }, mono(9.5), DIM);
         if pk > 1.002 {
             painter.text(Pos2::new(r.right() - 8.0, r.top() + 10.0), Align2::RIGHT_CENTER, format!("PEAK {pk:.2} is over 1.0: use NORM"), mono(9.5), WHITE);

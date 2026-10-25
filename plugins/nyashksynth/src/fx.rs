@@ -90,12 +90,112 @@ pub struct FxPatch {
     pub bd_shift: f32,
     pub bd_fb: f32,
     pub bd_mix: f32,
+    /// 0 = shift, 1 = ring modulation, 2 = spread (left up / right down)
+    pub bd_mode: usize,
+    pub bd_fine: f32,
+    pub bd_lfo_rate: f32,
+    pub bd_lfo_depth: f32,
+    pub bd_tone: f32,
 
     pub ut_gain: f32,
     pub ut_pan: f32,
     pub ut_width: f32,
     pub ut_mono: bool,
     pub ut_invert: bool,
+}
+
+impl Default for FxPatch {
+    fn default() -> Self {
+        use crate::params::{DistType, FxFilterType, ReverbType};
+        let mut order = [0usize; 12];
+        for (i, o) in order.iter_mut().enumerate() {
+            *o = i;
+        }
+        FxPatch {
+            order,
+            on: [false; 12],
+            hy_rate: 0.6,
+            hy_detune: 0.5,
+            hy_uni: 4,
+            hy_dim: 0.4,
+            hy_mix: 0.5,
+            ds_type: DistType::Soft,
+            ds_drive: 0.3,
+            ds_tone: 20000.0,
+            ds_mix: 1.0,
+            ds_bias: 0.0,
+            rv_type: ReverbType::Plate,
+            dl_hq: false,
+            fg_rate: 0.3,
+            fg_depth: 0.6,
+            fg_delay: 2.0,
+            fg_fb: 0.5,
+            fg_phase: 0.25,
+            fg_mix: 0.5,
+            ph_rate: 0.4,
+            ph_depth: 0.7,
+            ph_freq: 900.0,
+            ph_fb: 0.4,
+            ph_stages: 6,
+            ph_phase: 0.25,
+            ph_mix: 0.5,
+            ch_rate: 0.6,
+            ch_depth: 0.5,
+            ch_delay: 10.0,
+            ch_fb: 0.0,
+            ch_filter: 20000.0,
+            ch_mix: 0.4,
+            dl_ms_l: 350.0,
+            dl_ms_r: 350.0,
+            dl_fb: 0.35,
+            dl_pp: true,
+            dl_lp: 8000.0,
+            dl_hp: 20.0,
+            dl_width: 1.0,
+            dl_mix: 0.3,
+            cp_thresh: -18.0,
+            cp_ratio: 4.0,
+            cp_attack: 5.0,
+            cp_release: 120.0,
+            cp_gain: 0.0,
+            cp_multi: false,
+            cp_f1: 150.0,
+            cp_f2: 2500.0,
+            cp_mix: 1.0,
+            rv_size: 0.6,
+            rv_damp: 0.5,
+            rv_pre: 0.5,
+            rv_lowcut: 20.0,
+            rv_highcut: 20000.0,
+            rv_width: 1.0,
+            rv_mix: 0.25,
+            eq_lf: 120.0,
+            eq_lg: 0.0,
+            eq_mf: 1000.0,
+            eq_mq: 1.0,
+            eq_mg: 0.0,
+            eq_hf: 6000.0,
+            eq_hg: 0.0,
+            ff_type: FxFilterType::Lp12,
+            ff_cut: 2000.0,
+            ff_res: 0.2,
+            ff_drive: 0.0,
+            ff_mix: 1.0,
+            bd_shift: 0.0,
+            bd_fb: 0.0,
+            bd_mix: 0.5,
+            bd_mode: 0,
+            bd_fine: 0.0,
+            bd_lfo_rate: 0.5,
+            bd_lfo_depth: 0.0,
+            bd_tone: 8000.0,
+            ut_gain: 0.0,
+            ut_pan: 0.0,
+            ut_width: 1.0,
+            ut_mono: false,
+            ut_invert: false,
+        }
+    }
 }
 
 impl FxPatch {
@@ -426,6 +526,8 @@ struct Bode {
     d: [f32; 2],
     fb: [f32; 2],
     ph: f64,
+    lfo: f64,
+    tone: [OnePole; 2],
 }
 
 const HIL_A: [f32; 4] = [0.6923878, 0.9360654322959, 0.9882295226860, 0.9987488452737];
@@ -481,19 +583,30 @@ fn allpass(dl: &mut DelayLine, x: f32, g: f32, delay: f32) -> f32 {
 
 impl Fx {
     pub fn new(fs: f32) -> Self {
+        Self::build(fs, None)
+    }
+
+    /// Builds only the memory one effect kind needs (`Some(kind)`), or everything (`None`).
+    /// `Some(99)` gives an empty shell.
+    pub fn build(fs: f32, only: Option<usize>) -> Self {
+        let want = |k: usize| only.map_or(true, |o| o == k);
+        let sz = |k: usize, t: f32| if want(k) { ms(fs, t) } else { 8 };
         Self {
             fs,
-            hyper: Hyper { dl: [DelayLine::new(ms(fs, 60.0)), DelayLine::new(ms(fs, 60.0))], ph: 0.0, dim: [DelayLine::new(ms(fs, 40.0)), DelayLine::new(ms(fs, 40.0))], dim_hp: [OnePole::default(); 2] },
+            hyper: Hyper { dl: [DelayLine::new(sz(0, 60.0)), DelayLine::new(sz(0, 60.0))], ph: 0.0, dim: [DelayLine::new(sz(0, 40.0)), DelayLine::new(sz(0, 40.0))], dim_hp: [OnePole::default(); 2] },
             dist: Dist { hold: [0.0; 2], cnt: 0.0, tone: [OnePole::default(); 2], dc: [OnePole::default(); 2] },
-            flanger: Flanger { dl: [DelayLine::new(ms(fs, 30.0)), DelayLine::new(ms(fs, 30.0))], ph: 0.0, fb: [0.0; 2] },
+            flanger: Flanger { dl: [DelayLine::new(sz(2, 30.0)), DelayLine::new(sz(2, 30.0))], ph: 0.0, fb: [0.0; 2] },
             phaser: Phaser { z: [[0.0; 12]; 2], ph: 0.0, fb: [0.0; 2] },
-            chorus: Chorus { dl: [DelayLine::new(ms(fs, 80.0)), DelayLine::new(ms(fs, 80.0))], ph: 0.0, fb: [0.0; 2], lp: [OnePole::default(); 2] },
-            delay: Delay { cur: [0.0; 2], dl: [DelayLine::new((fs * 2.0) as usize + 8), DelayLine::new((fs * 2.0) as usize + 8)], lp: [OnePole::default(); 2], hp: [OnePole::default(); 2] },
+            chorus: Chorus { dl: [DelayLine::new(sz(4, 80.0)), DelayLine::new(sz(4, 80.0))], ph: 0.0, fb: [0.0; 2], lp: [OnePole::default(); 2] },
+            delay: {
+                let n = if want(5) { (fs * 2.0) as usize + 8 } else { 8 };
+                Delay { cur: [0.0; 2], dl: [DelayLine::new(n), DelayLine::new(n)], lp: [OnePole::default(); 2], hp: [OnePole::default(); 2] }
+            },
             comp: Comp { bands: [CompBand::default(); 3], lo: [[Bq::default(); 2]; 2], hi1: [[Bq::default(); 2]; 2], lo2: [[Bq::default(); 2]; 2], hi2: [[Bq::default(); 2]; 2] },
-            plate: Plate::new(fs),
+            plate: Plate::new(if want(7) { fs } else { 2000.0 }),
             eq: EqM { ls: [Bq::default(); 2], pk: [Bq::default(); 2], hs: [Bq::default(); 2] },
             ff: FiltFx { s: [[0.0; 2]; 4] },
-            bode: Bode { c1: [[Ap::default(); 4]; 2], c2: [[Ap::default(); 4]; 2], d: [0.0; 2], fb: [0.0; 2], ph: 0.0 },
+            bode: Bode { c1: [[Ap::default(); 4]; 2], c2: [[Ap::default(); 4]; 2], d: [0.0; 2], fb: [0.0; 2], ph: 0.0, lfo: 0.0, tone: [OnePole::default(); 2] },
             conv: crate::convolve::Conv::new(),
             ir: None,
         }
@@ -983,14 +1096,28 @@ impl Fx {
     fn run_bode(&mut self, p: &FxPatch, l: &mut [f32], r: &mut [f32]) {
         let fs = self.fs;
         let b = &mut self.bode;
-        let w = TAU as f64 * p.bd_shift as f64 / fs as f64;
-        let fb = p.bd_fb.clamp(0.0, 1.0) * 0.6;
+        let base = (p.bd_shift + p.bd_fine) as f64;
+        let lfo_inc = p.bd_lfo_rate.clamp(0.01, 40.0) as f64 / fs as f64;
+        let depth = if p.bd_lfo_depth > 0.0 { p.bd_lfo_depth as f64 } else { 0.0 };
+        let fb = p.bd_fb.clamp(0.0, 1.0) * 0.7;
+        let tone = op_coef(p.bd_tone, fs);
+        let two_pi = std::f64::consts::TAU;
+        let mix = p.bd_mix.clamp(0.0, 1.0);
         for i in 0..l.len() {
-            b.ph += w;
-            if b.ph > TAU as f64 {
-                b.ph -= TAU as f64;
-            } else if b.ph < -(TAU as f64) {
-                b.ph += TAU as f64;
+            let sh = if depth > 0.0 {
+                b.lfo += lfo_inc;
+                if b.lfo >= 1.0 {
+                    b.lfo -= 1.0;
+                }
+                base + depth * (two_pi * b.lfo).sin()
+            } else {
+                base
+            };
+            b.ph += two_pi * sh / fs as f64;
+            if b.ph > two_pi {
+                b.ph -= two_pi;
+            } else if b.ph < -two_pi {
+                b.ph += two_pi;
             }
             let (s, c) = (b.ph.sin() as f32, b.ph.cos() as f32);
             for ch in 0..2 {
@@ -1005,10 +1132,15 @@ impl Fx {
                 // second path is one sample late
                 let qd = b.d[ch];
                 b.d[ch] = q;
-                let y = a * c + qd * s;
+                let y = match p.bd_mode {
+                    1 => a * c, // ring modulation: both side bands
+                    2 if ch == 1 => a * c - qd * s, // spread: right channel goes the other way
+                    _ => a * c + qd * s,
+                };
                 let y = if y.is_finite() { y } else { 0.0 };
-                b.fb[ch] = y.clamp(-4.0, 4.0).tanh();
-                let o = x0 * (1.0 - p.bd_mix) + y * p.bd_mix;
+                let yt = b.tone[ch].lp(y, tone);
+                b.fb[ch] = yt.clamp(-4.0, 4.0).tanh();
+                let o = x0 * (1.0 - mix) + y * mix;
                 if ch == 0 {
                     l[i] = o;
                 } else {
@@ -1101,10 +1233,129 @@ impl FxPatch {
     }
 }
 
+/// Most effects one bus can run at once (the parameter slots offer fewer, old presets may use all 12).
+pub const MAX_SLOTS: usize = 12;
+
+/// Which effect kind the twelve modulation targets of `FxPatch::apply_mod` belong to.
+const MOD_KIND: [usize; 12] = [0, 1, 1, 4, 2, 3, 5, 5, 7, 7, 9, 9];
+
+/// One effect in a chain: its kind (index into `FX_NAMES`) and all its settings.
+#[derive(Clone)]
+pub struct SlotPatch {
+    pub kind: usize,
+    pub on: bool,
+    pub p: FxPatch,
+}
+
+/// An ordered list of effects; the same kind may appear any number of times.
+#[derive(Clone)]
+pub struct ChainPatch {
+    pub n: usize,
+    pub s: Vec<SlotPatch>,
+}
+
+impl ChainPatch {
+    pub fn empty() -> Self {
+        Self { n: 0, s: Vec::with_capacity(MAX_SLOTS) }
+    }
+
+    pub fn push(&mut self, kind: usize, on: bool, p: FxPatch) {
+        if self.s.len() < MAX_SLOTS {
+            let mut p = p;
+            // a slot patch runs exactly one module
+            p.order = [kind; 12];
+            p.on = [false; 12];
+            p.on[kind.min(11)] = true;
+            self.s.push(SlotPatch { kind, on, p });
+            self.n = self.s.len();
+        }
+    }
+
+    pub fn any_on(&self) -> bool {
+        self.s.iter().any(|s| s.on)
+    }
+
+    /// The classic fixed-order bank: modules in `order`, each at most once.
+    pub fn from_legacy(l: &FxPatch) -> Self {
+        let mut c = ChainPatch::empty();
+        let mut used = [false; 12];
+        for &m in l.order.iter() {
+            let m = m.min(11);
+            if used[m] {
+                continue;
+            }
+            used[m] = true;
+            if l.on[m] {
+                c.push(m, true, l.clone());
+            }
+        }
+        c
+    }
+
+    /// Global modulation: every target moves the first effect of its kind.
+    pub fn apply_mod(&mut self, m: &[f32; 12]) {
+        let mut done = [false; 12];
+        for j in 0..12 {
+            if m[j] == 0.0 {
+                continue;
+            }
+            let k = MOD_KIND[j];
+            if let Some(sl) = self.s.iter_mut().find(|s| s.kind == k) {
+                let _ = &mut done;
+                let mut one = [0.0f32; 12];
+                one[j] = m[j];
+                sl.p.apply_mod(&one);
+            }
+        }
+    }
+}
+
+impl From<&FxPatch> for ChainPatch {
+    fn from(p: &FxPatch) -> Self {
+        ChainPatch::from_legacy(p)
+    }
+}
+
+/// Runs a `ChainPatch`: one effect instance per slot, built when the slot's kind changes.
+pub struct Chain {
+    fs: f32,
+    fx: Vec<Fx>,
+    kinds: [usize; MAX_SLOTS],
+    ir: Option<std::sync::Arc<crate::convolve::ConvIr>>,
+}
+
+impl Chain {
+    pub fn new(fs: f32) -> Self {
+        Self { fs, fx: (0..MAX_SLOTS).map(|_| Fx::build(fs, Some(99))).collect(), kinds: [usize::MAX; MAX_SLOTS], ir: None }
+    }
+
+    fn set_ir(&mut self, ir: Option<std::sync::Arc<crate::convolve::ConvIr>>) {
+        for f in self.fx.iter_mut() {
+            f.ir = ir.clone();
+        }
+        self.ir = ir;
+    }
+
+    pub fn process(&mut self, cp: &ChainPatch, l: &mut [f32], r: &mut [f32]) {
+        for i in 0..cp.n.min(MAX_SLOTS) {
+            let s = &cp.s[i];
+            if self.kinds[i] != s.kind {
+                // a different effect now lives in this slot: build its memory
+                self.fx[i] = Fx::build(self.fs, Some(s.kind));
+                self.fx[i].ir = self.ir.clone();
+                self.kinds[i] = s.kind;
+            }
+            if s.on {
+                self.fx[i].process(&s.p, l, r);
+            }
+        }
+    }
+}
+
 /// Two effect busses and the routing between them.
 pub struct FxRack {
     fs: f32,
-    bus: [Fx; 2],
+    bus: [Chain; 2],
     xo: [[[Bq; 2]; 2]; 2], // [low/high][stage][channel]
     xo2: [[[Bq; 2]; 2]; 2],
     tmp: [Vec<f32>; 6],
@@ -1114,12 +1365,12 @@ impl FxRack {
     /// Hand a new impulse response (built on the GUI thread) to both busses.
     pub fn set_ir(&mut self, ir: Option<std::sync::Arc<crate::convolve::ConvIr>>) {
         for b in self.bus.iter_mut() {
-            b.ir = ir.clone();
+            b.set_ir(ir.clone());
         }
     }
 
     pub fn new(fs: f32) -> Self {
-        Self { fs, bus: [Fx::new(fs), Fx::new(fs)], xo: [[[Bq::default(); 2]; 2]; 2], xo2: [[[Bq::default(); 2]; 2]; 2], tmp: Default::default() }
+        Self { fs, bus: [Chain::new(fs), Chain::new(fs)], xo: [[[Bq::default(); 2]; 2]; 2], xo2: [[[Bq::default(); 2]; 2]; 2], tmp: Default::default() }
     }
 
     pub fn reset(&mut self) {
@@ -1129,7 +1380,7 @@ impl FxRack {
 
     /// Process one block through both busses. `p1` / `p2` are the bus patches.
     #[allow(clippy::too_many_arguments)]
-    pub fn process(&mut self, p1: &FxPatch, p2: &FxPatch, route: crate::params::FxRoute, split: f32, split2: f32, lvl2: f32, l: &mut [f32], r: &mut [f32]) {
+    pub fn process(&mut self, p1: &ChainPatch, p2: &ChainPatch, route: crate::params::FxRoute, split: f32, split2: f32, lvl2: f32, l: &mut [f32], r: &mut [f32]) {
         use crate::params::FxRoute;
         let (a1, a2) = (p1.any_on(), p2.any_on());
         if !a1 && !a2 {

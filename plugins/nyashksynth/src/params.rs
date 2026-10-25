@@ -72,6 +72,38 @@ pub enum WarpMode {
     Twist,
 }
 
+/// What phase-modulates an oscillator when its warp is FM / AM / RM.
+#[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
+pub enum FmSrc {
+    #[name = "Auto"]
+    Auto,
+    #[name = "Osc A"]
+    A,
+    #[name = "Osc B"]
+    B,
+    #[name = "Osc C"]
+    C,
+    #[name = "Sub"]
+    Sub,
+    #[name = "Noise"]
+    Noise,
+}
+
+/// Oversampling of the wavetable oscillators when a warp (FM, sync, fold ...) is active.
+#[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
+pub enum OscQuality {
+    #[name = "Auto"]
+    Auto,
+    #[name = "Draft (1x)"]
+    X1,
+    #[name = "High (2x)"]
+    X2,
+    #[name = "Ultra (4x)"]
+    X4,
+    #[name = "Max (8x)"]
+    X8,
+}
+
 #[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
 pub enum NoiseType {
     #[name = "White"]
@@ -100,6 +132,9 @@ pub enum NoiseType {
     Digital,
     #[name = "Sample (file)"]
     Sample,
+    /// no noise at all (kept last so older presets keep their numbers; the picker lists it first)
+    #[name = "None"]
+    None,
 }
 
 #[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
@@ -748,6 +783,10 @@ pub enum UniMode {
     Random,
     #[name = "Stack"]
     Stack,
+    #[name = "Exp"]
+    Exp,
+    #[name = "Inv"]
+    Inv,
 }
 
 #[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
@@ -1297,6 +1336,37 @@ impl FxBank {
     }
 }
 
+/// Number of effects one bus can hold in the rack.
+pub const RACK_SLOTS: usize = 10;
+
+/// One knob of a rack slot (always 0..1; the effect kind decides what it means, see `fxdesc`).
+#[derive(Params)]
+pub struct FxV {
+    #[id = "v"]
+    pub v: FloatParam,
+}
+
+/// One slot of the effect rack: which effect (0 = empty, 1.. = `FX_NAMES` index + 1), on/off, and its knobs.
+#[derive(Params)]
+pub struct FxSlotP {
+    #[id = "ty"]
+    pub ty: IntParam,
+    #[id = "on"]
+    pub on: BoolParam,
+    #[nested(array, group = "Knobs")]
+    pub v: [FxV; crate::fxdesc::NV],
+}
+
+impl FxSlotP {
+    pub fn new() -> Self {
+        Self {
+            ty: IntParam::new("Effect", 0, IntRange::Linear { min: 0, max: 12 }),
+            on: BoolParam::new("Effect On", true),
+            v: std::array::from_fn(|_| FxV { v: FloatParam::new("Knob", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 }).with_value_to_string(Arc::new(|v| format!("{:.0}%", v * 100.0))) }),
+        }
+    }
+}
+
 #[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
 pub enum FxRoute {
     #[name = "Bus 1 > Bus 2"]
@@ -1331,6 +1401,10 @@ pub struct OscParams {
     pub warp2_mode: EnumParam<WarpMode>,
     #[id = "w2a"]
     pub warp2: FloatParam,
+    #[id = "fms"]
+    pub fm_src: EnumParam<FmSrc>,
+    #[id = "fms2"]
+    pub fm_src2: EnumParam<FmSrc>,
     #[id = "lv"]
     pub level: FloatParam,
     #[id = "pan"]
@@ -1402,6 +1476,8 @@ impl OscParams {
             warp: unit_param("Warp Amount", 0.0),
             warp2_mode: EnumParam::new("Warp 2", WarpMode::Off),
             warp2: unit_param("Warp 2 Amount", 0.0),
+            fm_src: EnumParam::new("FM Source", FmSrc::Auto),
+            fm_src2: EnumParam::new("FM Source (Warp 2)", FmSrc::Auto),
             level: unit_param("Level", level),
             pan: FloatParam::new("Pan", 0.0, FloatRange::Linear { min: -1.0, max: 1.0 }).with_step_size(0.01),
             oct: IntParam::new("Octave", 0, IntRange::Linear { min: -4, max: 4 }),
@@ -1571,7 +1647,13 @@ pub struct SynthParams {
     /// MIDI learn: "cc=param id;cc=param id" (kept with the plugin state, not with presets)
     #[persist = "cc-map"]
     pub cc_map: Arc<std::sync::Mutex<String>>,
+    /// Lock parameter: ids ("a;b;c") that presets do not overwrite (kept with the plugin state)
+    #[persist = "locked"]
+    pub locked: Arc<std::sync::Mutex<String>>,
     /// keyboard transposition: octaves and semitones (applies to MIDI input and the on-screen keys)
+    /// oversampling of warped oscillators
+    #[id = "oq"]
+    pub quality: EnumParam<OscQuality>,
     #[id = "tr_oc"]
     pub kb_octave: IntParam,
     #[id = "tr_st"]
@@ -1675,6 +1757,12 @@ pub struct SynthParams {
     // ---- effects: two busses (each a full rack), routing between them
     #[nested(group = "FX")]
     pub fx: FxBank,
+    /// Effect rack: slots 0..RACK_SLOTS = bus 1, the rest bus 2.
+    #[nested(array, group = "FX Rack")]
+    pub rk: [FxSlotP; 2 * RACK_SLOTS],
+    /// 0 = the effects still live in the old fixed banks (old presets), 1 = the rack is in use.
+    #[id = "fxrv"]
+    pub rackver: IntParam,
     #[nested(id_prefix = "b2", group = "FX Bus 2")]
     pub fx2: FxBank,
     #[id = "fxrt"]
@@ -1754,6 +1842,8 @@ impl Default for SynthParams {
             preset_name: Arc::new(std::sync::Mutex::new("Init".to_string())),
             noise_sample: Arc::new(std::sync::Mutex::new(String::new())),
             cc_map: Arc::new(std::sync::Mutex::new(String::new())),
+            locked: Arc::new(std::sync::Mutex::new(String::new())),
+            quality: EnumParam::new("Osc Quality", OscQuality::Auto),
             kb_octave: IntParam::new("Octave", 0, IntRange::Linear { min: -4, max: 4 }),
             kb_transpose: IntParam::new("Transpose", 0, IntRange::Linear { min: -24, max: 24 }),
             a: OscParams::new(true, 0.75),
@@ -1765,7 +1855,7 @@ impl Default for SynthParams {
             sub_level: unit_param("Sub Level", 0.5),
             sub_pan: bi_param("Sub Pan", 0.0),
             noise_level: unit_param("Noise Level", 0.0),
-            noise_type: EnumParam::new("Noise Type", NoiseType::White),
+            noise_type: EnumParam::new("Noise Type", NoiseType::None),
             noise_pan: FloatParam::new("Noise Pan", 0.0, FloatRange::Linear { min: -1.0, max: 1.0 }).with_step_size(0.01),
             noise_pitch: FloatParam::new("Noise Pitch", 0.0, FloatRange::Linear { min: -48.0, max: 48.0 }).with_step_size(0.1).with_unit(" st"),
             noise_key: BoolParam::new("Noise Key Track", false),
@@ -1807,6 +1897,8 @@ impl Default for SynthParams {
                 .with_value_to_string(formatters::v2s_f32_rounded(1)),
             fx: FxBank::new(),
             fx2: FxBank::new(),
+            rk: std::array::from_fn(|_| FxSlotP::new()),
+            rackver: IntParam::new("Rack Version", 0, IntRange::Linear { min: 0, max: 1 }),
             fx_route: EnumParam::new("FX Routing", FxRoute::Series),
             fx_split: hz_param("FX Split Freq", 400.0, 40.0, 12000.0),
             fx_split2: hz_param("FX Split Freq 2", 3000.0, 100.0, 16000.0),
