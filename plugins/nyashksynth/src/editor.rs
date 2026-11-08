@@ -730,7 +730,9 @@ fn page_bar(ui: &mut Ui, p: &SynthParams, st: &mut Gui, o: Pos2) {
             painter.circle_filled(Pos2::new(r.right() - 8.0, r.top() + 7.0), 3.0, WHITE);
         }
     }
-    painter.text(Pos2::new(o.x + 14.0 + 98.0 * 6.0 + 10.0, o.y + 69.0), Align2::LEFT_CENTER, "drag LFO / ENV / MACRO chips onto any knob", mono(9.0), DIM);
+    if ui.input(|i| i.time) >= st.status_until {
+        painter.text(Pos2::new(o.x + 14.0 + 98.0 * 6.0 + 10.0, o.y + 69.0), Align2::LEFT_CENTER, "drag LFO / ENV / MACRO chips onto any knob", mono(9.0), DIM);
+    }
 }
 
 // ===================================================================== header
@@ -792,14 +794,15 @@ fn header(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, s
             }
         }
     }
+    // status toast: lives in the tab row (where the hint text is), never over the preset button
     if now < st.status_until {
-        let stxt: String = if st.status.chars().count() > 70 { st.status.chars().take(69).collect::<String>() + "~" } else { st.status.clone() };
+        let stxt: String = if st.status.chars().count() > 46 { st.status.chars().take(45).collect::<String>() + "~" } else { st.status.clone() };
         let g = painter.layout_no_wrap(stxt, mono(11.0), WHITE);
-        let rc = Rect::from_center_size(Pos2::new(o.x + 550.0, o.y + 46.0), g.size() + Vec2::new(16.0, 6.0));
+        let size = g.size() + Vec2::new(16.0, 4.0);
+        let rc = Rect::from_min_size(Pos2::new(o.x + 14.0 + 98.0 * 6.0 + 6.0, o.y + 69.0 - size.y * 0.5), size);
         painter.rect_filled(rc, CornerRadius::same(5), Color32::BLACK);
         painter.rect_stroke(rc, CornerRadius::same(5), Stroke::new(1.0_f32, WHITE), egui::StrokeKind::Inside);
         painter.galley(rc.center() - g.size() * 0.5, g, WHITE);
-    } else {
     }
 
     // output meter + master
