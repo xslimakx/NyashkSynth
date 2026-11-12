@@ -1,3 +1,17 @@
+# NyashkSynth v1.0.5
+
+- **Alt-tab fix (Linux):** after alt-tab, minimising or covering the window, parts of the picture (backgrounds, knobs, images) could stay blank until something on them moved. The window is now drawn again in full whenever the system throws its contents away, and pictures are no longer lost while the window is hidden or a frame is skipped.
+- Smoother images in the CPU renderer (used when Vulkan is not available): pictures drawn smaller than their real size, such as knobs and photos, are now scaled with mipmaps instead of picking single pixels, so they no longer look grainy or jagged.
+- **Display fix:** the built-in CPU renderer (used when Vulkan is not available) drew pixels on the shared edges of triangles twice, which showed as brighter seams and specks in see-through fills (spectra, curves, bars). It now uses an exact fill rule like a GPU: every pixel is drawn once, without holes.
+- Phase: typing a value in degrees works (typing 1 gave 360 degrees).
+- Modulation amount: typed values are read as percent (typing -99 gave -100).
+- These parameters can now be typed in the host as they are shown: velocity curve, MIDI channel ("Omni", "Ch 3"), compressor ratio ("4.0:1"), utility width, arp gate and all effect knobs.
+- Times from 999.5 ms show as seconds, so typing "1.00 s" keeps showing "1.00 s".
+- Value boxes have a small gap between them, and a value that would not fit its box is drawn smaller instead of running over the frame.
+- Clicking a value box and pressing Enter no longer changes a value whose unit matters (for example "1.03 s" was read back as 1.03 ms).
+- No more "-0%" / "-0.00" read-outs (pan, curves, modulation).
+- New automatic test: every parameter's text is typed back over its whole range and must give the same value.
+
 # NyashkSynth v1.0.4
 
 A big update: real chaos, clean FM, a modulation system you can read, an effect rack with repeatable effects, a new silver look and 75 new presets.

@@ -822,7 +822,7 @@ pub enum VoiceMode {
 
 fn pct() -> (Arc<dyn Fn(f32) -> String + Send + Sync>, Arc<dyn Fn(&str) -> Option<f32> + Send + Sync>) {
     (
-        Arc::new(|v| format!("{:.0}%", v * 100.0)),
+        Arc::new(|v| format!("{:.0}%", (v * 100.0).round() + 0.0)),
         Arc::new(|s| s.trim().trim_end_matches('%').trim().parse::<f32>().ok().map(|v| v / 100.0)),
     )
 }
@@ -844,9 +844,10 @@ fn time_param(name: &str, default_ms: f32, max_ms: f32) -> FloatParam {
 }
 
 fn fmt_ms(v: f32) -> String {
-    if v >= 1000.0 {
+    // thresholds by the rounded value, so 999.9 ms shows as 1.00 s and typing that back keeps it
+    if v >= 999.5 {
         format!("{:.2} s", v / 1000.0)
-    } else if v >= 100.0 {
+    } else if v >= 99.95 {
         format!("{:.0} ms", v)
     } else {
         format!("{:.1} ms", v)
@@ -1282,7 +1283,7 @@ impl FxBank {
 
             cp_on: BoolParam::new("Comp On", false),
             cp_thresh: db_param("Comp Threshold", -18.0, -60.0, 0.0),
-            cp_ratio: FloatParam::new("Comp Ratio", 4.0, FloatRange::Skewed { min: 1.0, max: 20.0, factor: FloatRange::skew_factor(-1.5) }).with_value_to_string(Arc::new(|v| format!("{:.1}:1", v))),
+            cp_ratio: FloatParam::new("Comp Ratio", 4.0, FloatRange::Skewed { min: 1.0, max: 20.0, factor: FloatRange::skew_factor(-1.5) }).with_value_to_string(Arc::new(|v| format!("{:.1}:1", v))).with_string_to_value(Arc::new(|s| s.trim().trim_end_matches(":1").trim().parse().ok())),
             cp_attack: ms_param("Comp Attack", 5.0, 0.1, 200.0),
             cp_release: ms_param("Comp Release", 120.0, 5.0, 1000.0),
             cp_gain: db_param("Comp Gain", 0.0, 0.0, 24.0),
@@ -1324,7 +1325,7 @@ impl FxBank {
             ut_on: BoolParam::new("Utility On", false),
             ut_gain: db_param("Utility Gain", 0.0, -48.0, 24.0),
             ut_pan: bi_param("Utility Pan", 0.0),
-            ut_width: FloatParam::new("Utility Width", 1.0, FloatRange::Linear { min: 0.0, max: 2.0 }).with_value_to_string(Arc::new(|v| format!("{:.0}%", v * 100.0))),
+            ut_width: FloatParam::new("Utility Width", 1.0, FloatRange::Linear { min: 0.0, max: 2.0 }).with_value_to_string(Arc::new(|v| format!("{:.0}%", v * 100.0))).with_string_to_value(Arc::new(|s| s.trim().trim_end_matches('%').trim().parse::<f32>().ok().map(|v| v / 100.0))),
             ut_mono: BoolParam::new("Utility Mono", false),
             ut_invert: BoolParam::new("Utility Invert", false),
         }
@@ -1362,7 +1363,7 @@ impl FxSlotP {
         Self {
             ty: IntParam::new("Effect", 0, IntRange::Linear { min: 0, max: 12 }),
             on: BoolParam::new("Effect On", true),
-            v: std::array::from_fn(|_| FxV { v: FloatParam::new("Knob", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 }).with_value_to_string(Arc::new(|v| format!("{:.0}%", v * 100.0))) }),
+            v: std::array::from_fn(|_| FxV { v: FloatParam::new("Knob", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 }).with_value_to_string(Arc::new(|v| format!("{:.0}%", v * 100.0))).with_string_to_value(Arc::new(|s| s.trim().trim_end_matches('%').trim().parse::<f32>().ok().map(|v| v / 100.0))) }),
         }
     }
 }
@@ -1479,7 +1480,7 @@ impl OscParams {
             fm_src: EnumParam::new("FM Source", FmSrc::Auto),
             fm_src2: EnumParam::new("FM Source (Warp 2)", FmSrc::Auto),
             level: unit_param("Level", level),
-            pan: FloatParam::new("Pan", 0.0, FloatRange::Linear { min: -1.0, max: 1.0 }).with_step_size(0.01),
+            pan: FloatParam::new("Pan", 0.0, FloatRange::Linear { min: -1.0, max: 1.0 }).with_step_size(0.01).with_value_to_string(Arc::new(|v| format!("{:.2}", (v * 100.0).round() / 100.0 + 0.0))),
             oct: IntParam::new("Octave", 0, IntRange::Linear { min: -4, max: 4 }),
             semi: IntParam::new("Semi", 0, IntRange::Linear { min: -12, max: 12 }),
             fine: FloatParam::new("Fine", 0.0, FloatRange::Linear { min: -100.0, max: 100.0 }).with_unit(" ct").with_step_size(0.1),
@@ -1490,6 +1491,7 @@ impl OscParams {
             spread: unit_param("Stereo Spread", 1.0),
             phase: FloatParam::new("Phase", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 })
                 .with_value_to_string(Arc::new(|v| format!("{:.0}", v * 360.0)))
+                .with_string_to_value(Arc::new(|s| s.trim().trim_end_matches("deg").trim().parse::<f32>().ok().map(|d| (d / 360.0).clamp(0.0, 1.0))))
                 .with_unit(" deg"),
             rand: unit_param("Random", 1.0),
             smp: Arc::new(std::sync::Mutex::new(String::new())),
@@ -1625,7 +1627,8 @@ impl ModSlot {
             dst: EnumParam::new("Destination", ModDst::None),
             amount: FloatParam::new("Amount", 0.0, FloatRange::Linear { min: -1.0, max: 1.0 })
                 .with_step_size(0.01)
-                .with_value_to_string(Arc::new(|v| format!("{:+.0}", v * 100.0))),
+                .with_value_to_string(Arc::new(|v| format!("{:+.0}", (v * 100.0).round() + 0.0)))
+                .with_string_to_value(Arc::new(|s| s.trim().trim_end_matches('%').trim().parse::<f32>().ok().map(|v| v / 100.0))),
             aux: EnumParam::new("Amount Scaled By", ModSrc::None),
             curve: bi_param("Curve", 0.0),
             uni: BoolParam::new("Unipolar", false),
@@ -1856,7 +1859,7 @@ impl Default for SynthParams {
             sub_pan: bi_param("Sub Pan", 0.0),
             noise_level: unit_param("Noise Level", 0.0),
             noise_type: EnumParam::new("Noise Type", NoiseType::None),
-            noise_pan: FloatParam::new("Noise Pan", 0.0, FloatRange::Linear { min: -1.0, max: 1.0 }).with_step_size(0.01),
+            noise_pan: FloatParam::new("Noise Pan", 0.0, FloatRange::Linear { min: -1.0, max: 1.0 }).with_step_size(0.01).with_value_to_string(Arc::new(|v| format!("{:.2}", (v * 100.0).round() / 100.0 + 0.0))),
             noise_pitch: FloatParam::new("Noise Pitch", 0.0, FloatRange::Linear { min: -48.0, max: 48.0 }).with_step_size(0.1).with_unit(" st"),
             noise_key: BoolParam::new("Noise Key Track", false),
             noise_loop: BoolParam::new("Noise Loop", true),
@@ -1889,8 +1892,12 @@ impl Default for SynthParams {
             a4: FloatParam::new("Tuning A4", 440.0, FloatRange::Linear { min: 400.0, max: 480.0 }).with_unit(" Hz").with_step_size(0.1),
             tuning: EnumParam::new("Scale Tuning", Tuning::Equal),
             tun_root: IntParam::new("Tuning Root", 0, IntRange::Linear { min: 0, max: 11 }),
-            vel_curve: FloatParam::new("Velocity Curve", 0.0, FloatRange::Linear { min: -1.0, max: 1.0 }).with_step_size(0.01).with_value_to_string(Arc::new(|v| format!("{:+.0}%", v * 100.0))),
-            midi_ch: IntParam::new("MIDI Channel", 0, IntRange::Linear { min: 0, max: 16 }).with_value_to_string(Arc::new(|v| if v == 0 { "Omni".to_string() } else { format!("Ch {v}") })),
+            vel_curve: FloatParam::new("Velocity Curve", 0.0, FloatRange::Linear { min: -1.0, max: 1.0 }).with_step_size(0.01).with_value_to_string(Arc::new(|v| format!("{:+.0}%", (v * 100.0).round() + 0.0))).with_string_to_value(Arc::new(|s| s.trim().trim_end_matches('%').trim().parse::<f32>().ok().map(|v| v / 100.0))),
+            midi_ch: IntParam::new("MIDI Channel", 0, IntRange::Linear { min: 0, max: 16 }).with_value_to_string(Arc::new(|v| if v == 0 { "Omni".to_string() } else { format!("Ch {v}") }))
+                .with_string_to_value(Arc::new(|s| {
+                    let t = s.trim().to_lowercase();
+                    if t == "omni" || t == "all" { Some(0) } else { t.trim_start_matches("ch").trim().parse().ok() }
+                })),
             master: FloatParam::new("Master", -6.0, FloatRange::Linear { min: -60.0, max: 6.0 })
                 .with_unit(" dB")
                 .with_step_size(0.1)
@@ -1908,7 +1915,7 @@ impl Default for SynthParams {
             arp_mode: EnumParam::new("Arp Mode", ArpMode::Up),
             arp_div: EnumParam::new("Arp Rate", Div::D16),
             arp_oct: IntParam::new("Arp Octaves", 1, IntRange::Linear { min: 1, max: 4 }),
-            arp_gate: FloatParam::new("Arp Gate", 0.6, FloatRange::Linear { min: 0.05, max: 1.0 }).with_step_size(0.01).with_value_to_string(Arc::new(|v| format!("{:.0}%", v * 100.0))),
+            arp_gate: FloatParam::new("Arp Gate", 0.6, FloatRange::Linear { min: 0.05, max: 1.0 }).with_step_size(0.01).with_value_to_string(Arc::new(|v| format!("{:.0}%", v * 100.0))).with_string_to_value(Arc::new(|s| s.trim().trim_end_matches('%').trim().parse::<f32>().ok().map(|v| v / 100.0))),
             arp_swing: unit_param("Arp Swing", 0.0),
             arp_hold: BoolParam::new("Arp Hold", false),
             ir: Arc::new(std::sync::Mutex::new(String::new())),

@@ -595,9 +595,9 @@ fn knob_impl<P: Param>(ui: &mut Ui, setter: &ParamSetter, p: &P, label: &str, ce
         None => p.normalized_value_to_string(norm, true),
     };
     let vr = if compact {
-        Rect::from_center_size(Pos2::new(cell.center().x, c.y + r + 10.0), Vec2::new(cell.width().min(58.0), 14.0))
+        Rect::from_center_size(Pos2::new(cell.center().x, c.y + r + 10.0), Vec2::new((cell.width() - 4.0).min(58.0), 14.0))
     } else {
-        Rect::from_center_size(Pos2::new(cell.center().x, c.y + r + 14.0), Vec2::new(cell.width().min(84.0), 18.0))
+        Rect::from_center_size(Pos2::new(cell.center().x, c.y + r + 14.0), Vec2::new((cell.width() - 6.0).min(84.0), 18.0))
     };
     let edit_id = egui::Id::new(("knob_edit", resp.id));
     let vfont = if compact { mono(10.0) } else { mono(11.0) };
@@ -640,9 +640,18 @@ fn knob_impl<P: Param>(ui: &mut Ui, setter: &ParamSetter, p: &P, label: &str, ce
         let vresp = ui.allocate_rect(vr, Sense::click()).on_hover_text("Click to type a value");
         let painter = ui.painter();
         painter.rect_stroke(vr, CornerRadius::same(4), Stroke::new(1.0_f32, if vresp.hovered() { DIM } else { LINE }), StrokeKind::Inside);
+        // shrink the text if it would not fit the box
+        let gw = ui.fonts(|f| f.layout_no_wrap(val.clone(), vfont.clone(), WHITE).size().x);
+        let vfont = if gw > vr.width() - 5.0 { mono((vfont.size * (vr.width() - 5.0) / gw).max(7.0)) } else { vfont };
         painter.text(vr.center(), Align2::CENTER_CENTER, &val, vfont, WHITE);
         if vresp.clicked() {
-            let plain = val.trim().replace(" kHz", "k").split(' ').next().unwrap_or("").to_string();
+            let first = val.trim().replace(" kHz", "k").split(' ').next().unwrap_or("").to_string();
+            // keep the full text when the bare number alone would be read as a different value
+            let same = match desc {
+                Some(d) => d.parse(&first).map(|v| d.text(d.norm(v))).as_deref() == Some(val.as_str()),
+                None => p.string_to_normalized_value(&first).map(|m| p.normalized_value_to_string(m, true)).as_deref() == Some(val.as_str()),
+            };
+            let plain = if same { first } else { val.trim().to_string() };
             ui.data_mut(|d| d.insert_temp(edit_id, plain));
         }
     }

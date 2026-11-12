@@ -1334,16 +1334,20 @@ pub fn on_pill(ui: &mut Ui, setter: &ParamSetter, p: &BoolParam, r: Rect, tip: &
 
 /// Fill the area under a polyline with a mesh (egui cannot fill concave polygons).
 pub fn fill_under(painter: &egui::Painter, pts: &[Pos2], bottom: f32, color: Color32) {
+    // one triangle strip with shared vertices: neighbouring columns never overlap, so a
+    // translucent fill stays even (no brighter seams or specks)
+    if pts.len() < 2 {
+        return;
+    }
     let mut mesh = egui::epaint::Mesh::default();
-    for w in pts.windows(2) {
-        let (a, b) = (w[0], w[1]);
-        let i = mesh.vertices.len() as u32;
-        let v = |p: Pos2| egui::epaint::Vertex { pos: p, uv: egui::epaint::WHITE_UV, color };
-        mesh.vertices.push(v(a));
-        mesh.vertices.push(v(b));
-        mesh.vertices.push(v(Pos2::new(b.x, bottom)));
-        mesh.vertices.push(v(Pos2::new(a.x, bottom)));
-        mesh.indices.extend_from_slice(&[i, i + 1, i + 2, i, i + 2, i + 3]);
+    for (i, q) in pts.iter().enumerate() {
+        mesh.colored_vertex(*q, color);
+        mesh.colored_vertex(Pos2::new(q.x, bottom), color);
+        if i > 0 {
+            let k = (2 * i) as u32;
+            mesh.add_triangle(k - 2, k - 1, k);
+            mesh.add_triangle(k - 1, k + 1, k);
+        }
     }
     painter.add(egui::Shape::mesh(mesh));
 }
