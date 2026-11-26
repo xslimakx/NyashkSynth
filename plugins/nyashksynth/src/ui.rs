@@ -8,21 +8,23 @@ use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 use nih_plug_egui::egui::{self, epaint::PathStroke, text::LayoutJob, Align2, Color32, CornerRadius, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, TextFormat, Ui, UiBuilder, Vec2};
 
-pub const BG: Color32 = Color32::from_rgb(0x0a, 0x0a, 0x0a);
-pub const PANEL: Color32 = Color32::from_rgb(0x11, 0x11, 0x11);
-pub const PANEL2: Color32 = Color32::from_rgb(0x1c, 0x1c, 0x1c);
-pub const LINE: Color32 = Color32::from_rgb(0x2e, 0x2e, 0x2e);
-pub const WHITE: Color32 = Color32::from_rgb(0xf2, 0xf2, 0xf2);
-/// signature tone: brushed silver for values, active states, curves
-pub const ACCENT: Color32 = Color32::from_rgb(0xe4, 0xe4, 0xe4);
-/// modulation tone: pure bright white (rings, live dots, source chips)
-pub const MODC: Color32 = Color32::from_rgb(0xff, 0xff, 0xff);
+// SyntiTyzer palette: deep blue-graphite surfaces, warm coral for values and active states,
+// violet for modulation
+pub const BG: Color32 = Color32::from_rgb(11, 13, 19);
+pub const PANEL: Color32 = Color32::from_rgb(19, 22, 30);
+pub const PANEL2: Color32 = Color32::from_rgb(29, 33, 44);
+pub const LINE: Color32 = Color32::from_rgb(42, 47, 61);
+pub const WHITE: Color32 = Color32::from_rgb(232, 236, 244);
+/// signature tone: values, active states, curves
+pub const ACCENT: Color32 = Color32::from_rgb(255, 128, 92);
+/// modulation tone: rings, live dots, source chips
+pub const MODC: Color32 = Color32::from_rgb(170, 140, 255);
 pub fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
     let l = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t.clamp(0.0, 1.0)).round() as u8;
     Color32::from_rgb(l(a.r(), b.r()), l(a.g(), b.g()), l(a.b(), b.b()))
 }
-pub const DIM: Color32 = Color32::from_rgb(0x80, 0x80, 0x80);
-pub const MID: Color32 = Color32::from_rgb(0x7a, 0x7a, 0x7a);
+pub const DIM: Color32 = Color32::from_rgb(124, 132, 150);
+pub const MID: Color32 = Color32::from_rgb(112, 120, 138);
 
 // ---------------------------------------------------------------- modulation hooks
 //
@@ -293,7 +295,7 @@ pub fn learn_widget(ui: &Ui, ptr: ParamPtr, resp: &egui::Response, r: Rect) -> b
             MC.with(|m| m.borrow_mut().learn_unbind = Some(ptr));
         }
         let t = ui.input(|i| i.time);
-        let (w, col) = if is_target { (2.5_f32, WHITE) } else { (1.0_f32, Color32::from_rgb(90, 90, 90)) };
+        let (w, col) = if is_target { (2.5_f32, WHITE) } else { (1.0_f32, Color32::from_rgb(79, 85, 104)) };
         let ph = if is_target { ((t * 5.0).sin() * 0.5 + 0.5) as f32 * 2.0 } else { 0.0 };
         ui.painter().rect_stroke(r.expand(2.0 + ph), CornerRadius::same(5), Stroke::new(w, col), StrokeKind::Outside);
         if is_target {
@@ -532,9 +534,9 @@ fn knob_impl<P: Param>(ui: &mut Ui, setter: &ParamSetter, p: &P, label: &str, ce
             .collect();
         let shade = [255u8, 200, 150, 110][k];
         // the track of this ring (faint) shows where the full range would be
-        painter.add(egui::Shape::line(arc_r(rr, 0.0, 1.0), PathStroke::new(1.0_f32, Color32::from_rgb(34, 34, 34))));
+        painter.add(egui::Shape::line(arc_r(rr, 0.0, 1.0), PathStroke::new(1.0_f32, Color32::from_rgb(30, 32, 42))));
         if (b - a).abs() > 0.002 {
-            painter.add(egui::Shape::line(pts, PathStroke::new(if k == 0 { 2.2_f32 } else { 1.8 }, mix(Color32::from_rgb(34, 34, 34), MODC, shade as f32 / 255.0))));
+            painter.add(egui::Shape::line(pts, PathStroke::new(if k == 0 { 2.2_f32 } else { 1.8 }, mix(Color32::from_rgb(30, 32, 42), MODC, shade as f32 / 255.0))));
         }
         let _ = sidx;
     }
@@ -570,7 +572,7 @@ fn knob_impl<P: Param>(ui: &mut Ui, setter: &ParamSetter, p: &P, label: &str, ce
             painter.circle_stroke(c, r + 3.0 + ph * 2.0, Stroke::new(2.5_f32, WHITE));
             ui.ctx().request_repaint();
         } else {
-            painter.circle_stroke(c, r + 3.0, Stroke::new(1.0_f32, Color32::from_rgb(90, 90, 90)));
+            painter.circle_stroke(c, r + 3.0, Stroke::new(1.0_f32, Color32::from_rgb(79, 85, 104)));
         }
     }
     if let Some(cc) = bound_cc {
@@ -580,10 +582,10 @@ fn knob_impl<P: Param>(ui: &mut Ui, setter: &ParamSetter, p: &P, label: &str, ce
     }
     // round knob body
     let body = r * 0.72;
-    painter.circle_filled(c + Vec2::new(0.0, 1.5), body + 1.0, Color32::from_rgb(5, 5, 5));
-    painter.circle_filled(c, body, Color32::from_rgb(34, 34, 34));
-    painter.circle_filled(c, body * 0.84, Color32::from_rgb(24, 24, 24));
-    painter.circle_stroke(c, body, Stroke::new(1.0_f32, Color32::from_rgb(70, 70, 70)));
+    painter.circle_filled(c + Vec2::new(0.0, 1.5), body + 1.0, Color32::from_rgb(4, 5, 10));
+    painter.circle_filled(c, body, Color32::from_rgb(30, 32, 42));
+    painter.circle_filled(c, body * 0.84, Color32::from_rgb(21, 23, 31));
+    painter.circle_stroke(c, body, Stroke::new(1.0_f32, Color32::from_rgb(62, 66, 82)));
     // pointer
     painter.line_segment([pt(body * 0.30, norm), pt(body * 0.80, norm)], Stroke::new(3.0_f32, WHITE));
     painter.circle_filled(pt(body * 0.80, norm), 1.5, WHITE);
@@ -676,7 +678,7 @@ pub fn pill_tip(ui: &mut Ui, rect: Rect, text: &str, on: bool, tip: &str) -> boo
     let a = ui.ctx().animate_bool_with_time(id, on, 0.12);
     let h = ui.ctx().animate_bool_with_time(id.with("h"), resp.hovered(), 0.10);
     let painter = ui.painter();
-    let fill = mix(mix(Color32::from_rgb(0x12, 0x12, 0x12), PANEL2, h), ACCENT, a);
+    let fill = mix(mix(Color32::from_rgb(16, 17, 25), PANEL2, h), ACCENT, a);
     let edge = mix(mix(LINE, DIM, h), ACCENT, a);
     painter.rect_filled(rect, CornerRadius::same(6), fill);
     painter.rect_stroke(rect, CornerRadius::same(6), Stroke::new(1.0_f32, edge), StrokeKind::Inside);
@@ -694,10 +696,10 @@ pub fn icon_btn(ui: &mut Ui, rect: Rect, icon: Icon, on: bool, tip: &str) -> boo
     let a = ui.ctx().animate_bool_with_time(id, on, 0.12);
     let h = ui.ctx().animate_bool_with_time(id.with("h"), resp.hovered(), 0.10);
     let p = ui.painter();
-    let fill = mix(mix(Color32::from_rgb(0x12, 0x12, 0x12), PANEL2, h), ACCENT, a);
+    let fill = mix(mix(Color32::from_rgb(16, 17, 25), PANEL2, h), ACCENT, a);
     p.rect_filled(rect, CornerRadius::same(6), fill);
     p.rect_stroke(rect, CornerRadius::same(6), Stroke::new(1.0_f32, mix(mix(LINE, DIM, h), ACCENT, a)), StrokeKind::Inside);
-    let col = mix(mix(Color32::from_rgb(0xb0, 0xb0, 0xb0), WHITE, h), Color32::BLACK, a);
+    let col = mix(mix(Color32::from_rgb(155, 165, 199), WHITE, h), Color32::BLACK, a);
     let c = rect.center();
     let s = Stroke::new(1.6_f32, col);
     let r = rect.height().min(rect.width()) * 0.27;
@@ -752,7 +754,7 @@ pub fn icon_btn(ui: &mut Ui, rect: Rect, icon: Icon, on: bool, tip: &str) -> boo
 /// Dress a widget like the dark value boxes under the knobs (near-black fill, thin line, no grey button look).
 pub fn dark_field_style(ui: &mut Ui) {
     let v = ui.visuals_mut();
-    let fill = Color32::from_rgb(5, 5, 5);
+    let fill = Color32::from_rgb(4, 5, 10);
     for w in [&mut v.widgets.inactive, &mut v.widgets.hovered, &mut v.widgets.active, &mut v.widgets.open] {
         w.bg_fill = fill;
         w.weak_bg_fill = fill;

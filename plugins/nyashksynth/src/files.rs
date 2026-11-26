@@ -11,7 +11,15 @@ pub fn base_dir() -> Option<PathBuf> {
     } else {
         std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
     };
-    base.map(|b| b.join("NyashkSynth"))
+    // the synth was called NyashkSynth before 1.1: its folder moves over once
+    base.map(|b| {
+        let new = b.join("SyntiTyzer");
+        let old = b.join("NyashkSynth");
+        if !new.exists() && old.is_dir() && std::fs::rename(&old, &new).is_err() {
+            return old;
+        }
+        new
+    })
 }
 
 pub fn presets_dir() -> Option<PathBuf> {

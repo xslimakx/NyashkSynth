@@ -43,13 +43,13 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           cd target/bundled
-          zip -r -y "../../NyashkSynth-${{ matrix.name }}-VST3.zip" NyashkSynth.vst3
+          zip -r -y "../../SyntiTyzer-${{ matrix.name }}-VST3.zip" SyntiTyzer.vst3
           
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Compress-Archive -Path target/bundled/NyashkSynth.vst3 -DestinationPath NyashkSynth-Windows-VST3.zip
+          Compress-Archive -Path target/bundled/SyntiTyzer.vst3 -DestinationPath SyntiTyzer-Windows-VST3.zip
 
       - uses: actions/upload-artifact@v4
         with:

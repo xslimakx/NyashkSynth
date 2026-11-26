@@ -1,4 +1,5 @@
-//! NyashkSynth: wavetable synthesizer (VST3 instrument).
+//! SyntiTyzer (formerly NyashkSynth): wavetable synthesizer (VST3 instrument).
+//! The VST3 class id stays the old one, so projects made with NyashkSynth open with SyntiTyzer.
 
 use nih_plug::prelude::*;
 use std::num::NonZeroU32;
@@ -156,13 +157,15 @@ pub struct NyashkSynth {
     spec_pos: usize,
     cur_ir: Option<Arc<convolve::ConvIr>>,
     beat_clock: f64,
+    /// bass mono: two one-pole low-passes on the side signal
+    bm: [f32; 2],
 }
 
 impl Default for NyashkSynth {
     fn default() -> Self {
         let params = Arc::new(SynthParams::default());
         let patch = Patch::read(&params, 44100.0);
-        Self { engine: Engine::new(44100.0, patch), fx: FxRack::new(44100.0), params, meters: Arc::new(Meters::new()), shared: Arc::new(shared::Shared::new()), fs: 44100.0, peak_hold: 0.0, fx_mod_s: [0.0; 12], fx_mod_s2: [0.0; 12], gui_prev: [false; 128], tmap: std::array::from_fn(|i| i as u8), gmap: std::array::from_fn(|i| i as u8), mheld: [false; 128], nref: [0; 128], cc_count: 1, gui_bend_prev: f32::NAN.to_bits(), gui_mod_prev: f32::NAN.to_bits(), beat_last: 0, beat_age: 0, dec_n: 0, dec_acc: 0.0, spec_pos: 0, cur_ir: None, beat_clock: 0.0 }
+        Self { engine: Engine::new(44100.0, patch), fx: FxRack::new(44100.0), params, meters: Arc::new(Meters::new()), shared: Arc::new(shared::Shared::new()), fs: 44100.0, peak_hold: 0.0, fx_mod_s: [0.0; 12], fx_mod_s2: [0.0; 12], gui_prev: [false; 128], tmap: std::array::from_fn(|i| i as u8), gmap: std::array::from_fn(|i| i as u8), mheld: [false; 128], nref: [0; 128], cc_count: 1, gui_bend_prev: f32::NAN.to_bits(), gui_mod_prev: f32::NAN.to_bits(), beat_last: 0, beat_age: 0, dec_n: 0, dec_acc: 0.0, spec_pos: 0, cur_ir: None, beat_clock: 0.0, bm: [0.0; 2] }
     }
 }
 
@@ -369,7 +372,7 @@ pub fn rebuild_cc_map(params: &SynthParams, meters: &Meters) {
 }
 
 impl Plugin for NyashkSynth {
-    const NAME: &'static str = "NyashkSynth";
+    const NAME: &'static str = "SyntiTyzer";
     const VENDOR: &'static str = "Nyashk";
     const URL: &'static str = "https://nyashk.com";
     const EMAIL: &'static str = "";
@@ -620,6 +623,24 @@ impl Plugin for NyashkSynth {
             }
         }
 
+        // bass mono: the side signal loses everything below the frequency (tight, centred low end)
+        if self.params.bass_mono.value() {
+            let k = 1.0 - (-std::f32::consts::TAU * self.params.bass_mono_f.value() / self.fs).exp();
+            for i in 0..n {
+                let (m, s) = ((l_all[i] + r_all[i]) * 0.5, (l_all[i] - r_all[i]) * 0.5);
+                self.bm[0] += (s - self.bm[0]) * k;
+                self.bm[1] += (self.bm[0] - self.bm[1]) * k;
+                let s = s - self.bm[1];
+                l_all[i] = m + s;
+                r_all[i] = m - s;
+            }
+            if !self.bm[1].is_finite() {
+                self.bm = [0.0; 2];
+            }
+        } else {
+            self.bm = [0.0; 2];
+        }
+
         let mut pk = 0.0f32;
         for i in 0..n {
             let (mut l, mut r) = (l_all[i] * master, r_all[i] * master);
@@ -629,9 +650,10 @@ impl Plugin for NyashkSynth {
             if !r.is_finite() {
                 r = 0.0;
             }
-            // gentle safety clip
-            l = soft_clip(l);
-            r = soft_clip(r);
+            // safety only for runaway levels (above +12 dBFS): normal and hot levels pass untouched,
+            // the DAW mixes in floating point
+            l = safety(l);
+            r = safety(r);
             l_all[i] = l;
             r_all[i] = r;
             pk = pk.max(l.abs()).max(r.abs());
@@ -674,11 +696,12 @@ impl Plugin for NyashkSynth {
 }
 
 #[inline]
-fn soft_clip(x: f32) -> f32 {
-    if x.abs() < 0.85 {
+fn safety(x: f32) -> f32 {
+    const K: f32 = 3.98; // +12 dBFS
+    if x.abs() < K {
         x
     } else {
-        x.signum() * (0.85 + 0.15 * ((x.abs() - 0.85) / 0.15).tanh())
+        x.signum() * (K + ((x.abs() - K) * 0.25).tanh())
     }
 }
 

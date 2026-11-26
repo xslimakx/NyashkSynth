@@ -1844,7 +1844,7 @@ fn render_voice(p: &Patch, v: &mut Voice, c: &Ctx, out_l: &mut [f32], out_r: &mu
             if v.sub_ph >= 1.0 {
                 v.sub_ph -= 1.0;
             }
-            let x = sub_wave(p.sub_wave, v.sub_ph, sub_inc.min(0.45)) * sub_level * 0.7;
+            let x = sub_wave(p.sub_wave, v.sub_ph, sub_inc.min(0.45)) * sub_level;
             sub = [x * sub_l, x * sub_r];
         }
         let mut noise = [0.0f32; 2];

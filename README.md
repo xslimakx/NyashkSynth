@@ -1,8 +1,8 @@
 <div align="center">
 
-# NyashkSynth
+# SyntiTyzer
 
-NyashkSynth is a Serum-style wavetable synthesizer VST3 plugin.
+SyntiTyzer (formerly NyashkSynth) is a Serum-style wavetable synthesizer VST3 plugin.
 
 [![Build](https://github.com/xslimakx/NyashkSynth/actions/workflows/build.yml/badge.svg)](https://github.com/xslimakx/NyashkSynth/actions/workflows/build.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -15,12 +15,12 @@ NyashkSynth is a Serum-style wavetable synthesizer VST3 plugin.
 
 ---
 
-## 🎹 NyashkSynth: wavetable synthesizer
+## 🎹 SyntiTyzer: wavetable synthesizer
 
-A Serum-style wavetable synthesizer in the monochrome (black, white, silver) Nyashk design.
+A Serum-style wavetable synthesizer with a dark blue-graphite design, 3D wavetable views and a tabbed modulation section. Projects made with NyashkSynth open with SyntiTyzer.
 
-<p align="center"><img src="docs/img/nyashksynth.png" alt="NyashkSynth" width="820"></p>
-<p align="center"><img src="docs/img/nyashksynth_edit.png" alt="NyashkSynth wavetable editor" width="820"></p>
+<p align="center"><img src="docs/img/nyashksynth.png" alt="SyntiTyzer" width="820"></p>
+<p align="center"><img src="docs/img/nyashksynth_edit.png" alt="SyntiTyzer wavetable editor" width="820"></p>
 
 | | |
 |---|---|
@@ -36,6 +36,7 @@ A Serum-style wavetable synthesizer in the monochrome (black, white, silver) Nya
 | **Layout** | Serum-style pages: SOUND / MOD / MATRIX / FX / SEQ / SETTINGS |
 | **Workflow** | Undo / redo (Ctrl+Z / Ctrl+Y), SETTINGS tab (A4 / scale tuning, MIDI channel, velocity curve) |
 | **MIDI** | **MIDI learn** on every knob, OCT/SEMI transpose spinners (also MIDI-learnable), pitch and mod wheels (can be hidden) |
+| **Low end** | **BASS MONO** (mono below 40–400 Hz), clean output stage (no hidden limiter; a safety clip only above +12 dBFS), peak-normalised wavetables, full-level sub |
 | **Performance** | Poly / Mono / Legato, glide, sustain pedal, mod wheel, pitch bend, aftertouch, on-screen keyboard, oscilloscope |
 | **Presets** | 146 factory presets in categories (built into the plugin, can be hidden but not deleted), user presets / tables / noises as plain files you can drop into folders, `.nypack` preset packs (export / import), HYBRID (mix two presets) and RANDOM (a full new patch) |
 
@@ -45,7 +46,7 @@ A Serum-style wavetable synthesizer in the monochrome (black, white, silver) Nya
 
 **Drag and drop:** drop a `.wav` onto OSC A / OSC B to load it as a wavetable, onto the SUB/NOISE panel to use it as a noise sample, or drop a `.nyp` file anywhere to load a preset. Dropped files are also copied into your library folders (works on Linux/X11, Windows and macOS hosts that pass file drops to plugins).
 
-User data: `~/.config/NyashkSynth/{Presets,Tables,Noises,Packs}` (Windows: `%APPDATA%\NyashkSynth\…`, macOS: `~/Library/Application Support/NyashkSynth/…`). The 146 **factory presets are compiled into the plugin**, so they are not files: you cannot delete them, but the preset browser has a **HIDE** button (and **RESTORE**) to remove the ones you do not want from the list. Your own presets are plain `.nyp` files in `Presets/` and can be deleted with the DELETE button or in your file manager.
+User data: `~/.config/SyntiTyzer/{Presets,Tables,Noises,Packs}` (Windows: `%APPDATA%\SyntiTyzer\…`, macOS: `~/Library/Application Support/SyntiTyzer/…`; an old `NyashkSynth` folder is moved over automatically). The 146 **factory presets are compiled into the plugin**, so they are not files: you cannot delete them, but the preset browser has a **HIDE** button (and **RESTORE**) to remove the ones you do not want from the list. Your own presets are plain `.nyp` files in `Presets/` and can be deleted with the DELETE button or in your file manager.
 
 ### Wavetable editor in short
 
@@ -62,7 +63,7 @@ User data: `~/.config/NyashkSynth/{Presets,Tables,Noises,Packs}` (Windows: `%APP
 
 ## Installation
 
-Download the archive for your OS from [Releases](https://github.com/xslimakx/NyashkSynth/releases/latest), unzip it and copy `NyashkSynth.vst3` into your VST3 folder:
+Download the archive for your OS from [Releases](https://github.com/xslimakx/NyashkSynth/releases/latest), unzip it and copy `SyntiTyzer.vst3` into your VST3 folder (remove an old `NyashkSynth.vst3`: both are the same plugin):
 
 | OS | Path |
 |---|---|
@@ -77,7 +78,7 @@ Needs [Rust](https://rustup.rs/) (stable). Linux: `libasound2-dev libgl-dev libx
 ```bash
 git clone https://github.com/xslimakx/NyashkSynth.git
 cd NyashkSynth
-cargo xtask bundle -p nyashksynth --release   # -> target/bundled/NyashkSynth.vst3
+cargo xtask bundle -p nyashksynth --release   # -> target/bundled/SyntiTyzer.vst3
 cargo run --release -p nyashksynth --features standalone   # standalone test app
 ```
 
@@ -86,3 +87,7 @@ cargo run --release -p nyashksynth --features standalone   # standalone test app
 [MIT](LICENSE). Note: compiled `.vst3` builds link GPLv3 `vst3-sys` bindings (via NIH-plug), so GPLv3 terms apply when you distribute compiled binaries. Crates in `vendor/` keep their own licenses.
 
 Part of the Nyashk plugins family: [NyashkTune](https://github.com/xslimakx/NyashkTune) · [NyashkOpto](https://github.com/xslimakx/NyashkOpto)
+
+## Credits
+
+UI font: [Inter](https://rsms.me/inter/) by Rasmus Andersson, SIL Open Font License 1.1 (`plugins/nyashksynth/src/fonts/Inter-LICENSE.txt`).

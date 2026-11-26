@@ -487,7 +487,7 @@ impl WavEdit {
         }
         dark_box(ui, r);
         let fillr = Rect::from_min_size(r.min, Vec2::new(r.width() * *val, r.height()));
-        ui.painter().rect_filled(fillr.shrink(1.0), CornerRadius::same(3), Color32::from_rgb(70, 70, 70));
+        ui.painter().rect_filled(fillr.shrink(1.0), CornerRadius::same(3), Color32::from_rgb(62, 66, 82));
         ui.painter().text(r.center(), Align2::CENTER_CENTER, text, mono(10.0), WHITE);
     }
 
@@ -518,7 +518,7 @@ impl WavEdit {
         let cw = (r.width() - 2.0) / nf as f32;
         if let Some((a, b)) = self.sel {
             let band = Rect::from_min_max(Pos2::new(r.left() + 1.0 + cw * a as f32, r.top() + 1.0), Pos2::new(r.left() + 1.0 + cw * (b + 1) as f32, r.bottom() - 1.0));
-            painter.rect_filled(band, CornerRadius::ZERO, Color32::from_rgb(34, 34, 34));
+            painter.rect_filled(band, CornerRadius::ZERO, Color32::from_rgb(30, 32, 42));
         }
         let gpk = self.peaks.iter().fold(1.0f32, |a, b| a.max(*b));
         for i in 0..nf {
@@ -526,7 +526,7 @@ impl WavEdit {
             let h = 3.0 + 21.0 * (pk / gpk).min(1.0);
             let x = r.left() + 1.0 + cw * i as f32;
             let insel = self.sel.map_or(false, |(a, b)| i >= a && i <= b);
-            let c = if i == self.frame { WHITE } else if insel { Color32::from_rgb(175, 175, 175) } else { Color32::from_rgb(78, 78, 78) };
+            let c = if i == self.frame { WHITE } else if insel { Color32::from_rgb(154, 164, 198) } else { Color32::from_rgb(69, 73, 91) };
             painter.rect_filled(Rect::from_min_max(Pos2::new(x, r.bottom() - 3.0 - h), Pos2::new((x + cw - if cw > 3.0 { 1.0 } else { 0.0 }).max(x + 1.0), r.bottom() - 3.0)), CornerRadius::ZERO, c);
         }
     }
@@ -541,7 +541,7 @@ impl WavEdit {
             self.peaks = (0..nfr).map(|i| self.tbl.frame_time(i).iter().fold(0.0f32, |a, b| a.max(b.abs()))).collect();
             self.peaks_dirty = false;
         }
-        ui.painter().rect_filled(rect, CornerRadius::same(8), Color32::from_rgb(8, 8, 8));
+        ui.painter().rect_filled(rect, CornerRadius::same(8), Color32::from_rgb(7, 8, 14));
         ui.painter().rect_stroke(rect, CornerRadius::same(8), Stroke::new(1.0_f32, MID), StrokeKind::Inside);
         let x0 = rect.left() + 14.0;
         let w = rect.width() - 28.0;
@@ -592,8 +592,8 @@ impl WavEdit {
         let ct = y;
         let card = |ui: &Ui, c: usize, title: &str| {
             let r = Rect::from_min_size(Pos2::new(x0 + (cw + 10.0) * c as f32, ct), Vec2::new(cw, ch));
-            ui.painter().rect_filled(r, CornerRadius::same(7), Color32::from_rgb(15, 15, 15));
-            ui.painter().rect_stroke(r, CornerRadius::same(7), Stroke::new(1.0_f32, Color32::from_rgb(36, 36, 36)), StrokeKind::Inside);
+            ui.painter().rect_filled(r, CornerRadius::same(7), Color32::from_rgb(13, 14, 22));
+            ui.painter().rect_stroke(r, CornerRadius::same(7), Stroke::new(1.0_f32, Color32::from_rgb(32, 34, 45)), StrokeKind::Inside);
             ui.painter().text(Pos2::new(r.left() + 10.0, r.top() + 12.0), Align2::LEFT_CENTER, title, mono(10.0), DIM);
         };
         let inner = cw - 20.0;
@@ -1028,9 +1028,9 @@ impl WavEdit {
             let t = self.tbl.frame_time(i);
             let oy = base_y - dy * i as f32;
             let pts = curve(&t, i);
-            fill_under(&painter, &pts, oy + 1.0, Color32::from_rgb(8, 8, 8));
+            fill_under(&painter, &pts, oy + 1.0, Color32::from_rgb(7, 8, 14));
             let depth = i as f32 / nfr as f32;
-            let c = if in_sel(i) { Color32::from_rgb(200, 200, 200) } else { Color32::from_gray((60.0 + 80.0 * (1.0 - depth)) as u8) };
+            let c = if in_sel(i) { Color32::from_rgb(176, 188, 225) } else { Color32::from_gray((60.0 + 80.0 * (1.0 - depth)) as u8) };
             painter.add(egui::Shape::line(pts, PathStroke::new(if in_sel(i) { 1.4_f32 } else { 1.0 }, c)));
         }
         // the chosen frame is drawn last, on top, so it is always visible
@@ -1118,11 +1118,11 @@ impl WavEdit {
         let painter = ui.painter().with_clip_rect(r.shrink(1.0));
         for i in 1..8 {
             let x = r.left() + r.width() * i as f32 / 8.0;
-            painter.line_segment([Pos2::new(x, r.top()), Pos2::new(x, r.bottom())], Stroke::new(1.0_f32, Color32::from_rgb(18, 18, 18)));
+            painter.line_segment([Pos2::new(x, r.top()), Pos2::new(x, r.bottom())], Stroke::new(1.0_f32, Color32::from_rgb(16, 17, 25)));
         }
         for v in [-1.0f32, 0.0, 1.0] {
             let y = r.center().y - v * scale;
-            painter.line_segment([Pos2::new(r.left(), y), Pos2::new(r.right(), y)], Stroke::new(1.0_f32, if v == 0.0 { Color32::from_rgb(40, 40, 40) } else { Color32::from_rgb(58, 58, 58) }));
+            painter.line_segment([Pos2::new(r.left(), y), Pos2::new(r.right(), y)], Stroke::new(1.0_f32, if v == 0.0 { Color32::from_rgb(35, 38, 49) } else { Color32::from_rgb(51, 55, 69) }));
         }
         let m = 700usize;
         let pts: Vec<Pos2> = (0..=m)
@@ -1180,7 +1180,7 @@ impl WavEdit {
         let painter = ui.painter().with_clip_rect(ar.shrink(1.0));
         for g in [0.25f32, 0.5, 0.75] {
             let y = ar.bottom() - ar.height() * g;
-            painter.line_segment([Pos2::new(ar.left(), y), Pos2::new(ar.right(), y)], Stroke::new(1.0_f32, Color32::from_rgb(20, 20, 20)));
+            painter.line_segment([Pos2::new(ar.left(), y), Pos2::new(ar.right(), y)], Stroke::new(1.0_f32, Color32::from_rgb(18, 19, 27)));
         }
         for k in 1..=h {
             let (a, _) = amp_phase(&self.spec, k);
@@ -1198,7 +1198,7 @@ impl WavEdit {
         // number ticks
         let step = if h <= 64 { 8 } else if h <= 128 { 16 } else if h <= 256 { 32 } else { 128 };
         for k in (step..=h).step_by(step) {
-            painter.text(Pos2::new(ar.left() + (k as f32 - 0.5) * bw, ar.top() + 10.0), Align2::CENTER_CENTER, k.to_string(), mono(8.5), Color32::from_rgb(90, 90, 90));
+            painter.text(Pos2::new(ar.left() + (k as f32 - 0.5) * bw, ar.top() + 10.0), Align2::CENTER_CENTER, k.to_string(), mono(8.5), Color32::from_rgb(79, 85, 104));
         }
 
         // phase
@@ -1233,7 +1233,7 @@ impl WavEdit {
         }
         dark_box(ui, pr);
         let painter = ui.painter().with_clip_rect(pr.shrink(1.0));
-        painter.line_segment([Pos2::new(pr.left(), pr.center().y), Pos2::new(pr.right(), pr.center().y)], Stroke::new(1.0_f32, Color32::from_rgb(40, 40, 40)));
+        painter.line_segment([Pos2::new(pr.left(), pr.center().y), Pos2::new(pr.right(), pr.center().y)], Stroke::new(1.0_f32, Color32::from_rgb(35, 38, 49)));
         for k in 1..=h {
             let (a, ph) = amp_phase(&self.spec, k);
             if a < 1e-4 {
@@ -1243,7 +1243,7 @@ impl WavEdit {
             let yv = pr.center().y - ph / PI * pr.height() * 0.5;
             let xr = (x + bw - (bw * 0.12).min(1.0)).max(x + 1.0);
             let (t, b) = if yv < pr.center().y { (yv, pr.center().y) } else { (pr.center().y, yv) };
-            painter.rect_filled(Rect::from_min_max(Pos2::new(x, t), Pos2::new(xr, b.max(t + 1.0))), CornerRadius::ZERO, Color32::from_rgb(190, 190, 190));
+            painter.rect_filled(Rect::from_min_max(Pos2::new(x, t), Pos2::new(xr, b.max(t + 1.0))), CornerRadius::ZERO, Color32::from_rgb(167, 179, 214));
         }
         painter.text(Pos2::new(pr.left() + 8.0, pr.top() + 10.0), Align2::LEFT_CENTER, "PHASE", mono(9.5), DIM);
     }
@@ -1254,7 +1254,7 @@ fn cap_at(ui: &Ui, x: f32, y: f32, t: &str) {
 }
 
 fn dark_box(ui: &Ui, r: Rect) {
-    ui.painter().rect_filled(r, CornerRadius::same(4), Color32::from_rgb(5, 5, 5));
+    ui.painter().rect_filled(r, CornerRadius::same(4), Color32::from_rgb(4, 5, 10));
     ui.painter().rect_stroke(r, CornerRadius::same(4), Stroke::new(1.0_f32, LINE), StrokeKind::Inside);
 }
 

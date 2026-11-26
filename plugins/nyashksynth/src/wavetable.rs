@@ -195,8 +195,9 @@ impl Table {
             }
             fft(&mut re, &mut im);
             let peak = re.iter().fold(0.0f64, |p, v| p.max(v.abs())).max(1e-9);
-            let rms = (re.iter().map(|v| v * v).sum::<f64>() / N as f64).sqrt().max(1e-9);
-            let scale = (0.95 / peak).min(0.5 / rms);
+            // peak-normalised like other wavetable synths: a square is as loud as a saw (the old
+            // RMS cap made full-bodied waves 6 dB quieter than thin ones)
+            let scale = 0.95 / peak;
             t.fill(fr, spec, scale);
         }
         t

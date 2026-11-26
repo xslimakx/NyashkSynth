@@ -1467,12 +1467,12 @@ pub struct OscParams {
 }
 
 impl OscParams {
-    fn new(on: bool, level: f32) -> Self {
+    fn new(on: bool, level: f32, pos: f32) -> Self {
         Self {
             wave: Arc::new(std::sync::Mutex::new(String::new())),
             on: BoolParam::new("On", on),
             table: EnumParam::new("Table", TableId::Basic),
-            pos: unit_param("Position", 0.0),
+            pos: unit_param("Position", pos),
             warp_mode: EnumParam::new("Warp", WarpMode::Off),
             warp: unit_param("Warp Amount", 0.0),
             warp2_mode: EnumParam::new("Warp 2", WarpMode::Off),
@@ -1756,6 +1756,11 @@ pub struct SynthParams {
     pub midi_ch: IntParam,
     #[id = "mv"]
     pub master: FloatParam,
+    /// bass mono: no stereo below this frequency
+    #[id = "bmo"]
+    pub bass_mono: BoolParam,
+    #[id = "bmf"]
+    pub bass_mono_f: FloatParam,
 
     // ---- effects: two busses (each a full rack), routing between them
     #[nested(group = "FX")]
@@ -1849,13 +1854,13 @@ impl Default for SynthParams {
             quality: EnumParam::new("Osc Quality", OscQuality::Auto),
             kb_octave: IntParam::new("Octave", 0, IntRange::Linear { min: -4, max: 4 }),
             kb_transpose: IntParam::new("Transpose", 0, IntRange::Linear { min: -24, max: 24 }),
-            a: OscParams::new(true, 0.75),
-            b: OscParams::new(false, 0.75),
-            c: OscParams::new(false, 0.75),
+            a: OscParams::new(true, 0.75, 0.5),
+            b: OscParams::new(false, 0.75, 0.0),
+            c: OscParams::new(false, 0.75, 0.0),
             sub_on: BoolParam::new("Sub On", false),
             sub_wave: EnumParam::new("Sub Wave", SubWave::Sine),
             sub_oct: IntParam::new("Sub Octave", -1, IntRange::Linear { min: -3, max: 0 }),
-            sub_level: unit_param("Sub Level", 0.5),
+            sub_level: unit_param("Sub Level", 0.75),
             sub_pan: bi_param("Sub Pan", 0.0),
             noise_level: unit_param("Noise Level", 0.0),
             noise_type: EnumParam::new("Noise Type", NoiseType::None),
@@ -1868,7 +1873,7 @@ impl Default for SynthParams {
             f1: FilterParams::new(true),
             f2: FilterParams::new(false),
             fl_serial: BoolParam::new("Filters In Series", false),
-            e1: EnvParams::new(1.0, 400.0, 0.8, 120.0),
+            e1: EnvParams::new(1.0, 400.0, 1.0, 120.0),
             e2: EnvParams::new(1.0, 300.0, 0.0, 200.0),
             e3: EnvParams::new(1.0, 300.0, 0.0, 200.0),
             e4: EnvParams::new(1.0, 300.0, 0.0, 200.0),
@@ -1898,7 +1903,9 @@ impl Default for SynthParams {
                     let t = s.trim().to_lowercase();
                     if t == "omni" || t == "all" { Some(0) } else { t.trim_start_matches("ch").trim().parse().ok() }
                 })),
-            master: FloatParam::new("Master", -6.0, FloatRange::Linear { min: -60.0, max: 6.0 })
+            bass_mono: BoolParam::new("Bass Mono", false),
+            bass_mono_f: FloatParam::new("Bass Mono Freq", 120.0, FloatRange::Skewed { min: 40.0, max: 400.0, factor: FloatRange::skew_factor(-1.0) }).with_unit(" Hz").with_value_to_string(Arc::new(|v| format!("{v:.0}"))),
+            master: FloatParam::new("Master", 0.0, FloatRange::Linear { min: -60.0, max: 12.0 })
                 .with_unit(" dB")
                 .with_step_size(0.1)
                 .with_value_to_string(formatters::v2s_f32_rounded(1)),

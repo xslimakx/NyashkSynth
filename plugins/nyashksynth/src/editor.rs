@@ -1,4 +1,4 @@
-//! NyashkSynth GUI: black / white / grey, same look as NyashkTune.
+//! SyntiTyzer GUI: blue-graphite surfaces, coral values, violet modulation.
 
 use nih_plug::prelude::*;
 use nih_plug_egui::{
@@ -40,6 +40,8 @@ pub enum TblSrc {
 }
 
 pub struct Gui {
+    /// SOUND page modulation area: 0..3 = ENV 1-4, 4..11 = LFO 1-8
+    pub mod_tab: usize,
     auto_loaded: bool,
     auto_chaos: bool,
     pub tab: usize,
@@ -362,6 +364,7 @@ impl Gui {
             qoct: 4,
             status: String::new(),
             copy_menu: false,
+            mod_tab: 0,
             status_until: 0.0,
             auto: if std::env::var("NYASHK_AUTOTEST").is_ok() { Some((0, -1.0, 0.0, String::new())) } else { None },
         }
@@ -416,10 +419,10 @@ pub fn create(params: Arc<SynthParams>, meters: Arc<Meters>, shared: Arc<Shared>
             v.window_fill = PANEL;
             v.extreme_bg_color = PANEL;
             v.override_text_color = Some(WHITE);
-            v.selection.bg_fill = Color32::from_rgb(64, 64, 64);
+            v.selection.bg_fill = Color32::from_rgb(56, 60, 75);
             v.selection.stroke = Stroke::new(1.0_f32, WHITE);
             // one look for every combo / field: near-black fill, thin line, light on hover (no grey "button" slabs)
-            let dark = Color32::from_rgb(10, 10, 10);
+            let dark = Color32::from_rgb(9, 9, 16);
             for w in [&mut v.widgets.inactive, &mut v.widgets.noninteractive] {
                 w.bg_fill = dark;
                 w.weak_bg_fill = dark;
@@ -556,8 +559,7 @@ pub fn create(params: Arc<SynthParams>, meters: Arc<Meters>, shared: Arc<Shared>
                         osc_panel(ui, setter, p, &shared, st, rect(730.0, 62.0, 350.0, 346.0), 2);
                         filter_panel(ui, setter, p, st, rect(1088.0, 62.0, 356.0, 346.0));
                         sub_noise_panel(ui, setter, p, &shared, st, rect(14.0, 416.0, 350.0, 300.0), now);
-                        let c = page_panel("ENVELOPES", rect(372.0, 416.0, 1072.0, 300.0));
-                        env_tab(ui, setter, p, st, c, now);
+                        mod_area(ui, setter, p, &shared, &meters, st, rect(372.0, 416.0, 1072.0, 300.0), now);
                     }
                     1 => {
                         let c = page_panel("LFO 1-4", rect(14.0, 62.0, 1430.0, 322.0));
@@ -572,21 +574,21 @@ pub fn create(params: Arc<SynthParams>, meters: Arc<Meters>, shared: Arc<Shared>
                     3 => {
                         let c = page_panel("EFFECTS", rect(14.0, 62.0, 1430.0, 654.0));
                         let sr = fxui::fx_tab(ui, setter, p, st, c);
-                        painter.rect_filled(sr, CornerRadius::same(4), Color32::from_rgb(8, 8, 8));
+                        painter.rect_filled(sr, CornerRadius::same(4), Color32::from_rgb(7, 8, 14));
                         painter.rect_stroke(sr, CornerRadius::same(4), Stroke::new(1.0_f32, LINE), StrokeKind::Inside);
                         let inner = sr.shrink2(Vec2::new(40.0, 14.0));
                         let sp = painter.with_clip_rect(sr);
                         for db in [-60.0f32, -40.0, -20.0, 0.0] {
                             let y = inner.bottom() - inner.height() * (db + 80.0) / 80.0;
-                            sp.line_segment([Pos2::new(inner.left(), y), Pos2::new(inner.right(), y)], Stroke::new(1.0_f32, Color32::from_rgb(24, 24, 24)));
+                            sp.line_segment([Pos2::new(inner.left(), y), Pos2::new(inner.right(), y)], Stroke::new(1.0_f32, Color32::from_rgb(21, 23, 31)));
                             sp.text(Pos2::new(inner.left() - 6.0, y), Align2::RIGHT_CENTER, format!("{db:.0}"), mono(8.5), DIM);
                         }
                         for (f, t) in [(50.0f32, "50"), (100.0, "100"), (200.0, "200"), (500.0, "500"), (1000.0, "1k"), (2000.0, "2k"), (5000.0, "5k"), (10000.0, "10k")] {
                             let x = inner.left() + inner.width() * (f / 20.0).ln() / 1000.0f32.ln();
-                            sp.line_segment([Pos2::new(x, inner.top()), Pos2::new(x, inner.bottom())], Stroke::new(1.0_f32, Color32::from_rgb(24, 24, 24)));
+                            sp.line_segment([Pos2::new(x, inner.top()), Pos2::new(x, inner.bottom())], Stroke::new(1.0_f32, Color32::from_rgb(21, 23, 31)));
                             sp.text(Pos2::new(x, inner.bottom() + 8.0), Align2::CENTER_CENTER, t, mono(8.5), DIM);
                         }
-                        draw_spectrum(&sp, inner, &st.spec, st.spec_fs, -80.0, Color32::from_rgb(200, 200, 200));
+                        draw_spectrum(&sp, inner, &st.spec, st.spec_fs, -80.0, Color32::from_rgb(150, 164, 210));
                         sp.text(Pos2::new(sr.right() - 10.0, sr.top() + 10.0), Align2::RIGHT_CENTER, "OUTPUT SPECTRUM", mono(9.5), DIM);
                     }
                     4 => {
@@ -741,11 +743,19 @@ fn header(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, s
     let painter = ui.painter().clone();
     let rect = |x: f32, y: f32, w: f32, h: f32| Rect::from_min_size(Pos2::new(o.x + x, o.y + y), Vec2::new(w, h));
     let time = ui.input(|i| i.time);
-    painter.text(Pos2::new(o.x + 18.0, o.y + 30.0), Align2::LEFT_CENTER, "Nyashk", mono(19.0), WHITE);
-    painter.text(Pos2::new(o.x + 18.0 + 6.0 * 11.4, o.y + 30.0), Align2::LEFT_CENTER, "Synth", mono(19.0), DIM);
-    if ((time * 2.0) as i64) % 2 == 0 {
-        painter.text(Pos2::new(o.x + 18.0 + 11.0 * 11.4, o.y + 30.0), Align2::LEFT_CENTER, "_", mono(19.0), WHITE);
-    }
+    // brand: SYNTI in white, TYZER in the accent, a small wave mark before it
+    let bx = o.x + 18.0;
+    let by = o.y + 28.0;
+    let mark: Vec<Pos2> = (0..=24).map(|i| {
+        let t = i as f32 / 24.0;
+        Pos2::new(bx + t * 22.0, by - (t * std::f32::consts::TAU * 1.5).sin() * 6.0 * (1.0 - t * 0.5))
+    }).collect();
+    painter.add(egui::Shape::line(mark, PathStroke::new(2.2_f32, ACCENT)));
+    let g1 = painter.layout_no_wrap("Synti".to_string(), egui::FontId::proportional(20.0), WHITE);
+    let w1 = g1.size().x;
+    painter.galley(Pos2::new(bx + 30.0, by - g1.size().y * 0.5), g1, WHITE);
+    painter.text(Pos2::new(bx + 30.0 + w1, by), Align2::LEFT_CENTER, "Tyzer", egui::FontId::proportional(20.0), ACCENT);
+    let _ = time;
     painter.hline(o.x + 14.0..=o.x + BASE_W - 14.0, o.y + 54.0, Stroke::new(1.0_f32, LINE));
 
     // ---- preset selector
@@ -817,7 +827,7 @@ fn header(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, s
         }
     }
     let mr = rect(806.0, 9.0, 146.0, 38.0);
-    painter.rect_filled(mr, CornerRadius::same(4), Color32::from_rgb(5, 5, 5));
+    painter.rect_filled(mr, CornerRadius::same(4), Color32::from_rgb(4, 5, 10));
     painter.rect_stroke(mr, CornerRadius::same(4), Stroke::new(1.0_f32, LINE), StrokeKind::Inside);
     {
         let snap = meters.scope_snapshot();
@@ -826,7 +836,7 @@ fn header(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, s
         let pk = view.iter().fold(0.0f32, |a, b| a.max(b.abs()));
         let gain = 1.0 / pk.max(0.2);
         let inner = mr.shrink2(Vec2::new(3.0, 5.0));
-        painter.line_segment([Pos2::new(inner.left(), inner.center().y), Pos2::new(inner.right(), inner.center().y)], Stroke::new(1.0_f32, Color32::from_rgb(26, 26, 26)));
+        painter.line_segment([Pos2::new(inner.left(), inner.center().y), Pos2::new(inner.right(), inner.center().y)], Stroke::new(1.0_f32, Color32::from_rgb(23, 24, 34)));
         let n = 140;
         let pts: Vec<Pos2> = (0..n)
             .map(|i| {
@@ -834,10 +844,10 @@ fn header(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, s
                 Pos2::new(inner.left() + inner.width() * i as f32 / (n - 1) as f32, inner.center().y - v * inner.height() * 0.5)
             })
             .collect();
-        painter.add(egui::Shape::line(pts, PathStroke::new(1.3_f32, if pk > 0.002 { ACCENT } else { Color32::from_rgb(60, 60, 60) })));
+        painter.add(egui::Shape::line(pts, PathStroke::new(1.3_f32, if pk > 0.002 { ACCENT } else { Color32::from_rgb(53, 56, 71) })));
         let db = 20.0 * (meters.peak() + 1e-6).log10();
         let t = ((db + 48.0) / 48.0).clamp(0.0, 1.0);
-        painter.rect_filled(Rect::from_min_size(Pos2::new(mr.left() + 2.0, mr.bottom() - 4.0), Vec2::new((mr.width() - 4.0) * t, 2.0)), CornerRadius::same(1), if db > -1.0 { WHITE } else { Color32::from_rgb(150, 150, 150) });
+        painter.rect_filled(Rect::from_min_size(Pos2::new(mr.left() + 2.0, mr.bottom() - 4.0), Vec2::new((mr.width() - 4.0) * t, 2.0)), CornerRadius::same(1), if db > -1.0 { WHITE } else { Color32::from_rgb(132, 141, 170) });
     }
     // MIDI learn
     if icon_btn(ui, rect(968.0, 14.0, 28.0, 26.0), Icon::Midi, st.learn_on, "Bind a MIDI controller to any knob: switch this on, click a knob, then move a knob / fader on your keyboard.\nRight-click a bound knob to unbind it.") {
@@ -1117,7 +1127,7 @@ fn preset_overlay(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &S
         st.say(now, format!("{nhid} presets restored"));
     }
     if pill_tip(ui, Rect::from_min_size(Pos2::new(f.right() - 340.0, y), Vec2::new(122.0, 24.0)), "EXPORT PACK", false, "Bundle all your own presets into one .nypack file (Packs folder) that you can share") {
-        match presets::export_pack("NyashkSynth User Pack", None) {
+        match presets::export_pack("SyntiTyzer User Pack", None) {
             Ok((path, n)) => st.say(now, format!("{n} presets exported to {}", path.display())),
             Err(e) => st.say(now, e),
         }
@@ -1353,7 +1363,7 @@ pub fn fill_under(painter: &egui::Painter, pts: &[Pos2], bottom: f32, color: Col
 }
 
 pub fn dark_box(ui: &Ui, r: Rect) {
-    ui.painter().rect_filled(r, CornerRadius::same(4), Color32::from_rgb(5, 5, 5));
+    ui.painter().rect_filled(r, CornerRadius::same(4), Color32::from_rgb(4, 5, 10));
     ui.painter().rect_stroke(r, CornerRadius::same(4), Stroke::new(1.0_f32, LINE), StrokeKind::Inside);
 }
 
@@ -1535,7 +1545,7 @@ fn osc_knobs(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, r: Rect, o: usi
     // ---- unison group: its own row, with the mode picker in the last slot
     let y2 = y1 + dy;
     let unison_off = op.mode.value() == OscMode::Spectral;
-    ui.painter().hline(x0..=x0 + w * 5.0, y2 - 3.0, Stroke::new(1.0_f32, Color32::from_rgb(34, 34, 34)));
+    ui.painter().hline(x0..=x0 + w * 5.0, y2 - 3.0, Stroke::new(1.0_f32, Color32::from_rgb(30, 32, 42)));
     if unison_off {
         ui.painter().text(Pos2::new(x0 + w * 2.5, y2 + 30.0), Align2::CENTER_CENTER, "1 voice, 64 partials", mono(9.0), DIM);
     } else {
@@ -1564,7 +1574,7 @@ fn multi_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shar
             for (i, rg) in m.regions.iter().enumerate() {
                 let row = i % 6;
                 let y = disp.top() + 24.0 + 11.0 * row as f32;
-                painter.rect_filled(Rect::from_min_max(Pos2::new(kx(rg.lo as f32), y), Pos2::new(kx(rg.hi as f32 + 1.0).max(kx(rg.lo as f32) + 2.0), y + 8.0)), CornerRadius::same(1), Color32::from_rgb(70, 70, 70));
+                painter.rect_filled(Rect::from_min_max(Pos2::new(kx(rg.lo as f32), y), Pos2::new(kx(rg.hi as f32 + 1.0).max(kx(rg.lo as f32) + 2.0), y + 8.0)), CornerRadius::same(1), Color32::from_rgb(62, 66, 82));
                 painter.rect_filled(Rect::from_center_size(Pos2::new(kx(rg.root as f32 + 0.5), y + 4.0), Vec2::new(3.0, 8.0)), CornerRadius::ZERO, WHITE);
             }
             let nm = format!("{} ({} regions)", m.name, m.regions.len());
@@ -1677,15 +1687,15 @@ fn sample_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Sha
     }
     dark_box(ui, disp);
     let painter = ui.painter().with_clip_rect(disp.shrink(1.0));
-    painter.line_segment([Pos2::new(disp.left(), disp.center().y), Pos2::new(disp.right(), disp.center().y)], Stroke::new(1.0_f32, Color32::from_rgb(28, 28, 28)));
+    painter.line_segment([Pos2::new(disp.left(), disp.center().y), Pos2::new(disp.right(), disp.center().y)], Stroke::new(1.0_f32, Color32::from_rgb(25, 26, 36)));
     let xa = disp.left() + 2.0 + (disp.width() - 4.0) * s0;
     let xb = disp.left() + 2.0 + (disp.width() - 4.0) * s1;
     if gran {
         let sp = op.g_spray.value() * 0.5;
         let (ga, gb) = (disp.left() + 2.0 + (disp.width() - 4.0) * (s0 - sp).max(0.0), disp.left() + 2.0 + (disp.width() - 4.0) * (s0 + sp).min(1.0));
-        painter.rect_filled(Rect::from_min_max(Pos2::new(ga, disp.top()), Pos2::new(gb, disp.bottom())), CornerRadius::ZERO, Color32::from_rgb(26, 26, 26));
+        painter.rect_filled(Rect::from_min_max(Pos2::new(ga, disp.top()), Pos2::new(gb, disp.bottom())), CornerRadius::ZERO, Color32::from_rgb(23, 24, 34));
     } else {
-        painter.rect_filled(Rect::from_min_max(Pos2::new(xa, disp.top()), Pos2::new(xb, disp.bottom())), CornerRadius::ZERO, Color32::from_rgb(20, 20, 20));
+        painter.rect_filled(Rect::from_min_max(Pos2::new(xa, disp.top()), Pos2::new(xb, disp.bottom())), CornerRadius::ZERO, Color32::from_rgb(18, 19, 27));
     }
     let name = match &data {
         Some(sm) => {
@@ -1705,7 +1715,7 @@ fn sample_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Sha
                 }
                 let x = disp.left() + 2.0 + c as f32;
                 let inside = gran || (x >= xa && x <= xb);
-                painter.line_segment([Pos2::new(x, disp.center().y - hi * amp), Pos2::new(x, disp.center().y - lo * amp - 1.0)], Stroke::new(1.0_f32, if inside { WHITE } else { Color32::from_rgb(70, 70, 70) }));
+                painter.line_segment([Pos2::new(x, disp.center().y - hi * amp), Pos2::new(x, disp.center().y - lo * amp - 1.0)], Stroke::new(1.0_f32, if inside { WHITE } else { Color32::from_rgb(62, 66, 82) }));
             }
             sm.name.clone()
         }
@@ -1753,11 +1763,13 @@ fn wave_display(ui: &mut Ui, setter: &ParamSetter, r: Rect, op: &OscParams, tb: 
     let clicked = resp.clicked();
     dark_box(ui, r);
     let painter = ui.painter().with_clip_rect(r.shrink(1.0));
-    for i in 1..4 {
-        let x = r.left() + r.width() * i as f32 / 4.0;
-        painter.line_segment([Pos2::new(x, r.top()), Pos2::new(x, r.bottom())], Stroke::new(1.0_f32, Color32::from_rgb(20, 20, 20)));
+    if tb.frames() <= 1 {
+        for i in 1..4 {
+            let x = r.left() + r.width() * i as f32 / 4.0;
+            painter.line_segment([Pos2::new(x, r.top()), Pos2::new(x, r.bottom())], Stroke::new(1.0_f32, Color32::from_rgb(18, 19, 27)));
+        }
+        painter.line_segment([Pos2::new(r.left(), r.center().y), Pos2::new(r.right(), r.center().y)], Stroke::new(1.0_f32, Color32::from_rgb(25, 26, 36)));
     }
-    painter.line_segment([Pos2::new(r.left(), r.center().y), Pos2::new(r.right(), r.center().y)], Stroke::new(1.0_f32, Color32::from_rgb(28, 28, 28)));
     let pos = op.pos.value();
     let mode = op.warp_mode.value();
     let amt = op.warp.value();
@@ -1781,20 +1793,50 @@ fn wave_display(ui: &mut Ui, setter: &ParamSetter, r: Rect, op: &OscParams, tb: 
             })
             .collect()
     };
-    for d in [-0.16f32, -0.08, 0.08, 0.16] {
-        let fp = pos + d;
-        if (0.0..=1.0).contains(&fp) {
-            painter.add(egui::Shape::line(curve(fp, false), PathStroke::new(1.0_f32, Color32::from_rgb(42, 42, 42))));
+    if tb.frames() > 1 {
+        // 3D stack: every frame of the table, the back ones up and to the right, the current
+        // frame in front of its neighbours in the accent colour
+        let nfr = 28usize;
+        let (dx, dy) = (r.width() * 0.26, r.height() * 0.46);
+        let fw = r.width() - 8.0 - dx;
+        let famp = r.height() * 0.17;
+        let base_y = r.bottom() - 14.0 - famp;
+        let frame_pts = |fp: f32, warp: bool, k: f32| -> Vec<Pos2> {
+            let m = 90usize;
+            (0..=m)
+                .map(|i| {
+                    let ph = (i as f32 / m as f32).min(0.9999);
+                    let mut w = ph;
+                    if warp && mode != WarpMode::Off {
+                        w = warp_phase(mode, amt, w, 0.0);
+                    }
+                    if warp && mode2 != WarpMode::Off {
+                        w = warp_phase(mode2, amt2, w, 0.0);
+                    }
+                    let sm = tb.sample(0, fp, w);
+                    Pos2::new(r.left() + 4.0 + k * dx + fw * i as f32 / m as f32, base_y - k * dy - sm * famp)
+                })
+                .collect()
+        };
+        for j in (0..nfr).rev() {
+            let t = j as f32 / (nfr - 1) as f32;
+            let near = (1.0 - (t - pos).abs() * 6.0).clamp(0.0, 1.0);
+            let col = mix(Color32::from_rgb(40, 46, 62), Color32::from_rgb(96, 104, 128), near * 0.8 + (1.0 - t) * 0.2);
+            painter.add(egui::Shape::line(frame_pts(t, false, t), PathStroke::new(1.0_f32, col)));
         }
+        let cur = frame_pts(pos, true, pos);
+        fill_under(&painter, &cur, base_y - pos * dy, mix(PANEL, ACCENT, 0.18));
+        painter.add(egui::Shape::line(cur, PathStroke::new(1.8_f32, ACCENT)));
+    } else {
+        painter.add(egui::Shape::line(curve(pos, true), PathStroke::new(1.6_f32, ACCENT)));
     }
-    painter.add(egui::Shape::line(curve(pos, true), PathStroke::new(1.6_f32, ACCENT)));
     let sy = r.bottom() - 5.0;
     painter.line_segment([Pos2::new(r.left() + 4.0, sy), Pos2::new(r.right() - 4.0, sy)], Stroke::new(1.0_f32, LINE));
     let px = r.left() + 4.0 + (r.width() - 8.0) * pos;
     painter.circle_filled(Pos2::new(px, sy), 2.5, WHITE);
     let shown: String = if name.chars().count() > 26 { name.chars().take(25).collect::<String>() + "~" } else { name.to_string() };
     painter.text(Pos2::new(r.left() + 5.0, r.top() + 8.0), Align2::LEFT_CENTER, shown, mono(9.5), DIM);
-    painter.text(Pos2::new(r.right() - 5.0, r.top() + 8.0), Align2::RIGHT_CENTER, format!("{} fr", tb.frames()), mono(9.0), Color32::from_rgb(90, 90, 90));
+    painter.text(Pos2::new(r.right() - 5.0, r.top() + 8.0), Align2::RIGHT_CENTER, format!("{} fr", tb.frames()), mono(9.0), Color32::from_rgb(79, 85, 104));
     clicked
 }
 
@@ -2006,7 +2048,7 @@ fn custom_points(ui: &mut Ui, setter: &ParamSetter, fp: &FilterParams, fi: usize
         any = true;
         let c = dot(i);
         let is_sel = i == sel;
-        painter.line_segment([Pos2::new(c.x, d.top()), Pos2::new(c.x, d.bottom())], Stroke::new(1.0_f32, if is_sel { Color32::from_rgb(60, 60, 60) } else { Color32::from_rgb(30, 30, 30) }));
+        painter.line_segment([Pos2::new(c.x, d.top()), Pos2::new(c.x, d.bottom())], Stroke::new(1.0_f32, if is_sel { Color32::from_rgb(53, 56, 71) } else { Color32::from_rgb(26, 28, 38) }));
         if is_sel {
             painter.circle_filled(c, 6.0, WHITE);
         } else {
@@ -2106,15 +2148,15 @@ fn filter_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui
     }
     dark_box(ui, d);
     let painter = ui.painter().with_clip_rect(d.shrink(1.0));
-    draw_spectrum(&painter, d.shrink(1.0), &st.spec, st.spec_fs, -80.0, Color32::from_rgb(46, 46, 46));
+    draw_spectrum(&painter, d.shrink(1.0), &st.spec, st.spec_fs, -80.0, Color32::from_rgb(40, 43, 56));
     let (lo, hi) = (20.0f32, 20000.0f32);
     let xf = |f: f32| d.left() + d.width() * ((f / lo).ln() / (hi / lo).ln());
     for f in [100.0f32, 1000.0, 10000.0] {
-        painter.line_segment([Pos2::new(xf(f), d.top()), Pos2::new(xf(f), d.bottom())], Stroke::new(1.0_f32, Color32::from_rgb(24, 24, 24)));
+        painter.line_segment([Pos2::new(xf(f), d.top()), Pos2::new(xf(f), d.bottom())], Stroke::new(1.0_f32, Color32::from_rgb(21, 23, 31)));
     }
     let (dbmin, dbmax) = if is_custom { (-36.0f32, 36.0f32) } else { (-48.0f32, 30.0f32) };
     let yd = |db: f32| d.bottom() - d.height() * ((db.clamp(dbmin, dbmax) - dbmin) / (dbmax - dbmin));
-    painter.line_segment([Pos2::new(d.left(), yd(0.0)), Pos2::new(d.right(), yd(0.0))], Stroke::new(1.0_f32, Color32::from_rgb(30, 30, 30)));
+    painter.line_segment([Pos2::new(d.left(), yd(0.0)), Pos2::new(d.right(), yd(0.0))], Stroke::new(1.0_f32, Color32::from_rgb(26, 28, 38)));
     let cut = fl.cutoff.value();
     let res = fl.res.value();
     let ty = fl.fl_type.value();
@@ -2126,12 +2168,12 @@ fn filter_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui
         let mag = if !on { 1.0 } else if is_custom { custom_response(fl, f) } else { filter_response(ty, res, cut, f) };
         pts.push(Pos2::new(xf(f), yd(20.0 * mag.max(1e-6).log10())));
     }
-    fill_under(&painter, &pts, d.bottom(), Color32::from_rgb(30, 30, 30));
+    fill_under(&painter, &pts, d.bottom(), Color32::from_rgb(26, 28, 38));
     painter.add(egui::Shape::line(pts, PathStroke::new(1.8_f32, if on { ACCENT } else { DIM })));
     if is_custom {
         custom_points(ui, setter, fl, fi, d, &xf, &yd, (dbmin, dbmax));
     } else {
-        painter.line_segment([Pos2::new(xf(cut), d.top()), Pos2::new(xf(cut), d.bottom())], Stroke::new(1.0_f32, Color32::from_rgb(70, 70, 70)));
+        painter.line_segment([Pos2::new(xf(cut), d.top()), Pos2::new(xf(cut), d.bottom())], Stroke::new(1.0_f32, Color32::from_rgb(62, 66, 82)));
         // draggable node: x = cutoff, y = resonance
         let nc = Pos2::new(xf(cut).clamp(d.left() + 7.0, d.right() - 7.0), node_y(ty, fl.res.unmodulated_normalized_value(), cut, d));
         // grows only while the pointer is really on the node (not while a knob below is being dragged upwards)
@@ -2141,7 +2183,7 @@ fn filter_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui
         painter.circle_stroke(nc, if hot { 7.0 } else { 5.5 }, Stroke::new(1.6_f32, WHITE));
     }
     for (f, t) in [(100.0, "100"), (1000.0, "1k"), (10000.0, "10k")] {
-        painter.text(Pos2::new(xf(f) + 2.0, d.bottom() - 7.0), Align2::LEFT_CENTER, t, mono(8.5), Color32::from_rgb(90, 90, 90));
+        painter.text(Pos2::new(xf(f) + 2.0, d.bottom() - 7.0), Align2::LEFT_CENTER, t, mono(8.5), Color32::from_rgb(79, 85, 104));
     }
     let y = r.top() + 194.0;
     let w = 66.0;
@@ -2386,7 +2428,7 @@ fn env_curve(ui: &mut Ui, setter: &ParamSetter, e: &EnvParams, r: Rect, id: &str
             dense.push(Pos2::new(w[0].x + (w[1].x - w[0].x) * t, w[0].y + (w[1].y - w[0].y) * t));
         }
     }
-    fill_under(&painter, &dense, y(0.0), Color32::from_rgb(28, 28, 28));
+    fill_under(&painter, &dense, y(0.0), Color32::from_rgb(25, 26, 36));
     let base = Stroke::new(1.8_f32, WHITE);
     let hot = Stroke::new(2.8_f32, WHITE);
     let st_of = |i: usize| if active == Some(i) { hot } else { base };
@@ -2405,6 +2447,113 @@ fn env_curve(ui: &mut Ui, setter: &ParamSetter, e: &EnvParams, r: Rect, id: &str
     }
 }
 
+/// SOUND page, bottom: the modulators as tabs (ENV 1-4, LFO 1-8) with one big editor, and the
+/// output / low-end panel next to it.
+fn mod_area(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, meters: &Meters, st: &mut Gui, r: Rect, now: f64) {
+    let painter = ui.painter().clone();
+    painter.rect_filled(r, CornerRadius::same(6), PANEL);
+    painter.rect_stroke(r, CornerRadius::same(6), Stroke::new(1.0_f32, LINE), StrokeKind::Inside);
+    // tabs: a column on the left; each tab shows whether its modulator is used anywhere
+    let tabs: [(&str, ModSrc); 12] = [("ENV 1", ModSrc::Env1), ("ENV 2", ModSrc::Env2), ("ENV 3", ModSrc::Env3), ("ENV 4", ModSrc::Env4), ("LFO 1", lfo_src(0)), ("LFO 2", lfo_src(1)), ("LFO 3", lfo_src(2)), ("LFO 4", lfo_src(3)), ("LFO 5", lfo_src(4)), ("LFO 6", lfo_src(5)), ("LFO 7", lfo_src(6)), ("LFO 8", lfo_src(7))];
+    let (tx, tw, th) = (r.left() + 8.0, 66.0, 22.0);
+    for (k, (name, src)) in tabs.iter().enumerate() {
+        let gap = if k >= 4 { 6.0 } else { 0.0 };
+        let tr = Rect::from_min_size(Pos2::new(tx, r.top() + 8.0 + k as f32 * (th + 1.5) + gap), Vec2::new(tw, th));
+        let on = st.mod_tab == k;
+        let resp = ui.interact(tr, egui::Id::new(("modtab", k)), Sense::click()).on_hover_text("Show this modulator. Drag its chip (in the editor) onto any knob.");
+        let fill = if on { PANEL2 } else if resp.hovered() { Color32::from_rgb(25, 29, 39) } else { Color32::TRANSPARENT };
+        painter.rect_filled(tr, CornerRadius::same(4), fill);
+        if on {
+            painter.rect_filled(Rect::from_min_size(tr.min, Vec2::new(3.0, tr.height())), CornerRadius::same(2), if k < 4 { ACCENT } else { MODC });
+        }
+        painter.text(Pos2::new(tr.left() + 12.0, tr.center().y), Align2::LEFT_CENTER, *name, mono(10.5), if on { WHITE } else { DIM });
+        let used = crate::ui::source_uses(*src);
+        if used > 0 || k == 0 {
+            painter.circle_filled(Pos2::new(tr.right() - 8.0, tr.center().y), 2.5, if k < 4 { ACCENT } else { MODC });
+        }
+        if resp.clicked() {
+            st.mod_tab = k;
+        }
+    }
+    painter.vline(tx + tw + 6.0, r.top() + 8.0..=r.bottom() - 8.0, Stroke::new(1.0_f32, LINE));
+    // output / low end panel on the right
+    let out = Rect::from_min_max(Pos2::new(r.right() - 236.0, r.top() + 8.0), Pos2::new(r.right() - 8.0, r.bottom() - 8.0));
+    let c = Rect::from_min_max(Pos2::new(tx + tw + 16.0, r.top() + 14.0), Pos2::new(out.left() - 10.0, r.bottom() - 8.0));
+    if st.mod_tab < 4 {
+        env_big(ui, setter, p, st, c, st.mod_tab, now);
+    } else {
+        lfo_cards(ui, setter, p, shared, meters, st, c, vec![st.mod_tab - 4]);
+    }
+    out_panel(ui, setter, p, st, out);
+}
+
+/// One envelope, big: the curve over the whole width and every knob in one row.
+fn env_big(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, c: Rect, i: usize, now: f64) {
+    let envs: [&EnvParams; 4] = [&p.e1, &p.e2, &p.e3, &p.e4];
+    let e = envs[i];
+    let painter = ui.painter().clone();
+    let card = Rect::from_min_max(Pos2::new(c.left(), c.top() - 6.0), Pos2::new(c.right(), c.bottom()));
+    painter.rect_filled(card, CornerRadius::same(6), Color32::from_rgb(16, 18, 26));
+    painter.rect_stroke(card, CornerRadius::same(6), Stroke::new(1.0_f32, Color32::from_rgb(30, 33, 44)), StrokeKind::Inside);
+    let x = c.left() + 8.0;
+    let iw = c.width() - 16.0;
+    let es = [ModSrc::Env1, ModSrc::Env2, ModSrc::Env3, ModSrc::Env4][i];
+    source_chip(ui, setter, p, st, Rect::from_min_size(Pos2::new(x, c.top() - 1.0), Vec2::new(56.0, 22.0)), &format!("ENV {}", i + 1), es, "Drag this onto any knob", now);
+    painter.text(Pos2::new(x + 64.0, c.top() + 10.0), Align2::LEFT_CENTER, if i == 0 { "AMP: the volume of every note" } else { "drag the chip onto a knob to use it" }, mono(9.5), DIM);
+    if pill_tip(ui, Rect::from_min_size(Pos2::new(x + iw - 88.0, c.top() - 1.0), Vec2::new(88.0, 22.0)), "INV.LEGATO", e.relegato.value(), "Restart this envelope on every note even in Legato mode") {
+        set_b(setter, &e.relegato, !e.relegato.value());
+    }
+    env_curve(ui, setter, e, Rect::from_min_size(Pos2::new(x, c.top() + 26.0), Vec2::new(iw, 128.0)), &format!("envbig{i}"));
+    let ks: [(&FloatParam, &str, &str, bool); 9] = [
+        (&e.delay, "DELAY", "Time before the attack starts", false),
+        (&e.attack, "ATTACK", "Attack time", false),
+        (&e.hold, "HOLD", "Time the level is held at the top", false),
+        (&e.decay, "DECAY", "Decay time", false),
+        (&e.sustain, "SUSTAIN", "Sustain level", false),
+        (&e.release, "RELEASE", "Release time", false),
+        (&e.atk_curve, "A SLOPE", "Bend of the attack (also: drag the segment on the curve)", true),
+        (&e.dec_curve, "D SLOPE", "Bend of the decay", true),
+        (&e.rel_curve, "R SLOPE", "Bend of the release", true),
+    ];
+    let kw = iw / ks.len() as f32;
+    let ky = c.top() + 164.0;
+    for (k, (prm, lab, tip, bip)) in ks.iter().enumerate() {
+        knob_s(ui, setter, *prm, lab, cell(x + kw * k as f32, ky, kw), tip, *bip);
+    }
+}
+
+/// Output panel: the low end (BASS MONO), the master level and the output spectrum.
+fn out_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, r: Rect) {
+    let painter = ui.painter().clone();
+    painter.rect_filled(r, CornerRadius::same(6), Color32::from_rgb(16, 18, 26));
+    painter.rect_stroke(r, CornerRadius::same(6), Stroke::new(1.0_f32, Color32::from_rgb(30, 33, 44)), StrokeKind::Inside);
+    painter.text(Pos2::new(r.left() + 10.0, r.top() + 14.0), Align2::LEFT_CENTER, "OUTPUT", mono(10.5), WHITE);
+    // spectrum, the low end marked
+    let sp = Rect::from_min_size(Pos2::new(r.left() + 8.0, r.top() + 28.0), Vec2::new(r.width() - 16.0, 104.0));
+    dark_box(ui, sp);
+    let spp = painter.with_clip_rect(sp.shrink(1.0));
+    let xf = |f: f32| sp.left() + sp.width() * (f / 20.0).ln() / 1000.0f32.ln();
+    for (f, t) in [(50.0f32, "50"), (100.0, "100"), (500.0, "500"), (1000.0, "1k"), (5000.0, "5k")] {
+        spp.vline(xf(f), sp.top()..=sp.bottom(), Stroke::new(1.0_f32, Color32::from_rgb(26, 29, 40)));
+        spp.text(Pos2::new(xf(f), sp.bottom() - 6.0), Align2::CENTER_CENTER, t, mono(8.0), DIM);
+    }
+    draw_spectrum(&spp, sp.shrink2(Vec2::new(0.0, 4.0)), &st.spec, st.spec_fs, -80.0, Color32::from_rgb(150, 164, 210));
+    if p.bass_mono.value() {
+        let bx = xf(p.bass_mono_f.value());
+        spp.rect_filled(Rect::from_min_max(sp.min, Pos2::new(bx, sp.bottom())), CornerRadius::ZERO, Color32::from_rgba_unmultiplied(255, 128, 92, 18));
+        spp.vline(bx, sp.top()..=sp.bottom(), Stroke::new(1.0_f32, ACCENT));
+        spp.text(Pos2::new(bx - 4.0, sp.top() + 8.0), Align2::RIGHT_CENTER, "MONO", mono(8.0), ACCENT);
+    }
+    // bass mono + master
+    let y = sp.bottom() + 10.0;
+    if pill_tip(ui, Rect::from_min_size(Pos2::new(r.left() + 10.0, y + 18.0), Vec2::new(96.0, 22.0)), "BASS MONO", p.bass_mono.value(), "Bass mono: everything below the frequency is made mono (tight, centred low end that survives club systems and phone speakers)") {
+        set_b(setter, &p.bass_mono, !p.bass_mono.value());
+    }
+    let kw = (r.width() - 120.0) / 2.0;
+    knob_s(ui, setter, &p.bass_mono_f, "MONO BELOW", cell(r.left() + 112.0, y, kw), "Bass mono frequency", false);
+    knob_s(ui, setter, &p.master, "MASTER", cell(r.left() + 112.0 + kw, y, kw), "Output level (0 dB = full level; up to +12 dB)", false);
+}
+
 fn env_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, c: Rect, now: f64) {
     let w = (c.width() - 30.0) / 4.0;
     let envs: [&EnvParams; 4] = [&p.e1, &p.e2, &p.e3, &p.e4];
@@ -2412,8 +2561,8 @@ fn env_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, c: 
         let cx = c.left() + (w + 10.0) * i as f32;
         // each envelope lives in its own card
         let card = Rect::from_min_size(Pos2::new(cx, c.top() - 8.0), Vec2::new(w, 258.0));
-        ui.painter().rect_filled(card, CornerRadius::same(7), Color32::from_rgb(15, 15, 15));
-        ui.painter().rect_stroke(card, CornerRadius::same(7), Stroke::new(1.0_f32, Color32::from_rgb(34, 34, 34)), StrokeKind::Inside);
+        ui.painter().rect_filled(card, CornerRadius::same(7), Color32::from_rgb(13, 14, 22));
+        ui.painter().rect_stroke(card, CornerRadius::same(7), Stroke::new(1.0_f32, Color32::from_rgb(30, 32, 42)), StrokeKind::Inside);
         let x = cx + 9.0;
         let iw = w - 18.0;
         let es = [ModSrc::Env1, ModSrc::Env2, ModSrc::Env3, ModSrc::Env4][i];
@@ -2515,10 +2664,10 @@ fn clip_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, meters: &Meters,
             let y = gy + rh * r as f32;
             let black = matches!(pitch.rem_euclid(12), 1 | 3 | 6 | 8 | 10);
             if black {
-                pn.rect_filled(Rect::from_min_size(Pos2::new(gx, y), Vec2::new(grid.width(), rh)), CornerRadius::ZERO, Color32::from_rgb(16, 16, 16));
+                pn.rect_filled(Rect::from_min_size(Pos2::new(gx, y), Vec2::new(grid.width(), rh)), CornerRadius::ZERO, Color32::from_rgb(14, 15, 23));
             }
             if pitch == 0 {
-                pn.rect_filled(Rect::from_min_size(Pos2::new(gx, y), Vec2::new(grid.width(), rh)), CornerRadius::ZERO, Color32::from_rgb(34, 34, 34));
+                pn.rect_filled(Rect::from_min_size(Pos2::new(gx, y), Vec2::new(grid.width(), rh)), CornerRadius::ZERO, Color32::from_rgb(30, 32, 42));
                 pn.text(Pos2::new(gx - 4.0, y + rh / 2.0), Align2::RIGHT_CENTER, "KEY", mono(7.5), WHITE);
             } else if pitch % 12 == 0 {
                 pn.text(Pos2::new(gx - 4.0, y + rh / 2.0), Align2::RIGHT_CENTER, format!("{:+}", pitch), mono(7.5), DIM);
@@ -2528,7 +2677,7 @@ fn clip_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, meters: &Meters,
             let x = gx + cw * k as f32;
             let strong = k % 16 == 0;
             let beat = k % 4 == 0;
-            pn.line_segment([Pos2::new(x, gy), Pos2::new(x, grid.bottom())], Stroke::new(1.0_f32, if strong { Color32::from_rgb(70, 70, 70) } else if beat { Color32::from_rgb(38, 38, 38) } else { Color32::from_rgb(22, 22, 22) }));
+            pn.line_segment([Pos2::new(x, gy), Pos2::new(x, grid.bottom())], Stroke::new(1.0_f32, if strong { Color32::from_rgb(62, 66, 82) } else if beat { Color32::from_rgb(33, 36, 47) } else { Color32::from_rgb(19, 21, 29) }));
         }
     }
     {
@@ -2546,7 +2695,7 @@ fn clip_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, meters: &Meters,
         let lr = Rect::from_min_size(Pos2::new(gx, grid.bottom() + 6.0), Vec2::new(grid.width(), 40.0));
         dark_box(ui, lr);
         ui.painter().text(Pos2::new(gx - 4.0, lr.center().y), Align2::RIGHT_CENTER, "LANE", mono(7.5), DIM);
-        ui.painter().line_segment([Pos2::new(lr.left(), lr.center().y), Pos2::new(lr.right(), lr.center().y)], Stroke::new(1.0_f32, Color32::from_rgb(50, 50, 50)));
+        ui.painter().line_segment([Pos2::new(lr.left(), lr.center().y), Pos2::new(lr.right(), lr.center().y)], Stroke::new(1.0_f32, Color32::from_rgb(44, 47, 60)));
         for k in 0..steps {
             let v = clips[sel].lane.get(k).copied().unwrap_or(0);
             if v != 0 {
@@ -2677,8 +2826,8 @@ fn settings_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, meters: &Met
     // three quiet cards: sound & tuning | MIDI / play | bindings
     for (cx, cwid, chh) in [(c.left() - 6.0, 436.0, 500.0), (c.left() + 440.0, 312.0, 500.0), (c.left() + 760.0, c.width() - 760.0 + 6.0, 500.0)] {
         let r = Rect::from_min_size(Pos2::new(cx, c.top() - 8.0), Vec2::new(cwid, chh));
-        ui.painter().rect_filled(r, CornerRadius::same(7), Color32::from_rgb(15, 15, 15));
-        ui.painter().rect_stroke(r, CornerRadius::same(7), Stroke::new(1.0_f32, Color32::from_rgb(34, 34, 34)), StrokeKind::Inside);
+        ui.painter().rect_filled(r, CornerRadius::same(7), Color32::from_rgb(13, 14, 22));
+        ui.painter().rect_stroke(r, CornerRadius::same(7), Stroke::new(1.0_f32, Color32::from_rgb(30, 32, 42)), StrokeKind::Inside);
     }
     // ---------------- tuning
     let x0 = c.left() + 8.0;
@@ -2841,16 +2990,22 @@ fn lfo_preset(k: usize) -> LfoCurve {
 }
 
 fn lfo_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, meters: &Meters, st: &mut Gui, c: Rect, page: usize) {
-    let wo = (c.width() - 30.0) / 4.0;
-    for i in page * 4..page * 4 + 4 {
+    lfo_cards(ui, setter, p, shared, meters, st, c, (page * 4..page * 4 + 4).collect());
+}
+
+/// LFO cards side by side in `c` (one card fills the whole width).
+fn lfo_cards(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, meters: &Meters, st: &mut Gui, c: Rect, idx: Vec<usize>) {
+    let cnt = idx.len().max(1) as f32;
+    let wo = (c.width() - 10.0 * (cnt - 1.0)) / cnt;
+    for (slot, i) in idx.into_iter().enumerate() {
         let l = &p.lfo[i];
-        let xo = c.left() + (wo + 10.0) * (i % 4) as f32;
+        let xo = c.left() + (wo + 10.0) * slot as f32;
         // every LFO sits on its own quiet card, with 8 px of air inside
         let (x, w) = (xo + 8.0, wo - 16.0);
         let lnow = ui.input(|i| i.time);
         let card = Rect::from_min_max(Pos2::new(xo, c.top() - 6.0), Pos2::new(xo + wo, c.top() + 278.0));
-        ui.painter().rect_filled(card, CornerRadius::same(6), Color32::from_rgb(18, 18, 18));
-        ui.painter().rect_stroke(card, CornerRadius::same(6), Stroke::new(1.0_f32, Color32::from_rgb(34, 34, 34)), StrokeKind::Inside);
+        ui.painter().rect_filled(card, CornerRadius::same(6), Color32::from_rgb(16, 17, 25));
+        ui.painter().rect_stroke(card, CornerRadius::same(6), Stroke::new(1.0_f32, Color32::from_rgb(30, 32, 42)), StrokeKind::Inside);
         source_chip(ui, setter, p, st, Rect::from_min_size(Pos2::new(x, c.top() - 1.0), Vec2::new(48.0, 24.0)), &format!("LFO {}", i + 1), lfo_src(i), "Drag this onto any knob", lnow);
         enum_combo(ui, setter, &l.shape, &format!("lfoshape{i}"), Rect::from_min_size(Pos2::new(x + 52.0, c.top() - 1.0), Vec2::new(w - 52.0, 24.0)));
         let d = Rect::from_min_size(Pos2::new(x, c.top() + 28.0), Vec2::new(w, 92.0));
@@ -2893,7 +3048,7 @@ fn lfo_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, 
         }
         dark_box(ui, d);
         let painter = ui.painter().with_clip_rect(d.shrink(1.0));
-        painter.line_segment([Pos2::new(d.left(), d.center().y), Pos2::new(d.right(), d.center().y)], Stroke::new(1.0_f32, Color32::from_rgb(28, 28, 28)));
+        painter.line_segment([Pos2::new(d.left(), d.center().y), Pos2::new(d.right(), d.center().y)], Stroke::new(1.0_f32, Color32::from_rgb(25, 26, 36)));
         let n = 160;
         let cv = curve.as_deref();
         let lp3 = |k: usize| f32::from_bits(meters.lfo_pos[i * 3 + k].load(std::sync::atomic::Ordering::Relaxed));
@@ -3020,7 +3175,7 @@ fn matrix_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
         let y0 = c.top() + 14.0 + rh * r as f32;
         let y = y0 + ((rh - 26.0) * 0.5).floor();
         let active = s.src.value() != ModSrc::None && s.dst.value() != ModDst::None;
-        ui.painter().rect_filled(Rect::from_min_size(Pos2::new(c.left() - 3.0, y0), Vec2::new(c.width() + 6.0, rh - 4.0)), CornerRadius::same(4), if active { Color32::from_rgb(22, 22, 22) } else { Color32::from_rgb(14, 14, 14) });
+        ui.painter().rect_filled(Rect::from_min_size(Pos2::new(c.left() - 3.0, y0), Vec2::new(c.width() + 6.0, rh - 4.0)), CornerRadius::same(4), if active { Color32::from_rgb(19, 21, 29) } else { Color32::from_rgb(12, 13, 20) });
         // empty rows stay quiet, used rows pop
         ui.set_opacity(if active { 1.0 } else { 0.45 });
         if pill_tip(ui, Rect::from_min_size(Pos2::new(c.left(), y + 1.0), Vec2::new(24.0, 21.0)), &format!("{}", i + 1), s.on.value(), "Slot on / bypassed (click to toggle). Bypassed slots keep their settings but make no sound change.") {
@@ -3192,7 +3347,7 @@ fn pattern_editor(ui: &mut Ui, p: &SynthParams, r: Rect) {
     for k in 0..PAT_STEPS {
         let live = k < plen;
         let x = x0 + cw * k as f32;
-        let col_on = |a: bool| if !live { Color32::from_rgb(44, 44, 44) } else if a { WHITE } else { MID };
+        let col_on = |a: bool| if !live { Color32::from_rgb(39, 41, 53) } else if a { WHITE } else { MID };
         // step header: toggle / length
         let hr = Rect::from_min_size(Pos2::new(x + 2.0, ys[0]), Vec2::new(cw - 4.0, 24.0));
         let hresp = ui.interact(hr, egui::Id::new(("arp_step", k)), Sense::click()).on_hover_text("Click: step on / rest.  Right-click: the pattern ends at this step.");
@@ -3205,8 +3360,8 @@ fn pattern_editor(ui: &mut Ui, p: &SynthParams, r: Rect) {
             changed = true;
         }
         let pn = ui.painter();
-        pn.rect_filled(hr, CornerRadius::same(3), if live && pat[k].on { Color32::from_rgb(235, 235, 235) } else { Color32::from_rgb(18, 18, 18) });
-        pn.rect_stroke(hr, CornerRadius::same(3), Stroke::new(1.0_f32, if live { LINE } else { Color32::from_rgb(30, 30, 30) }), StrokeKind::Inside);
+        pn.rect_filled(hr, CornerRadius::same(3), if live && pat[k].on { Color32::from_rgb(227, 231, 235) } else { Color32::from_rgb(16, 17, 25) });
+        pn.rect_stroke(hr, CornerRadius::same(3), Stroke::new(1.0_f32, if live { LINE } else { Color32::from_rgb(26, 28, 38) }), StrokeKind::Inside);
         pn.text(hr.center(), Align2::CENTER_CENTER, format!("{}", k + 1), mono(10.0), if live && pat[k].on { Color32::BLACK } else { col_on(false) });
         // velocity bar
         let vr = Rect::from_min_size(Pos2::new(x + 2.0, ys[1]), Vec2::new(cw - 4.0, 70.0));
@@ -3218,9 +3373,9 @@ fn pattern_editor(ui: &mut Ui, p: &SynthParams, r: Rect) {
             }
         }
         let pn = ui.painter();
-        pn.rect_filled(vr, CornerRadius::same(2), Color32::from_rgb(14, 14, 14));
+        pn.rect_filled(vr, CornerRadius::same(2), Color32::from_rgb(12, 13, 20));
         let bh = vr.height() * pat[k].vel;
-        pn.rect_filled(Rect::from_min_max(Pos2::new(vr.left(), vr.bottom() - bh), vr.right_bottom()), CornerRadius::same(2), if live && pat[k].on { col_on(true) } else { Color32::from_rgb(50, 50, 50) });
+        pn.rect_filled(Rect::from_min_max(Pos2::new(vr.left(), vr.bottom() - bh), vr.right_bottom()), CornerRadius::same(2), if live && pat[k].on { col_on(true) } else { Color32::from_rgb(44, 47, 60) });
         // note index + transpose as small draggable number cells
         for (row, is_note) in [(2usize, true), (3usize, false)] {
             let nr = Rect::from_min_size(Pos2::new(x + 2.0, ys[row]), Vec2::new(cw - 4.0, 34.0));
@@ -3245,8 +3400,8 @@ fn pattern_editor(ui: &mut Ui, p: &SynthParams, r: Rect) {
                 changed = true;
             }
             let pn = ui.painter();
-            pn.rect_filled(nr, CornerRadius::same(3), Color32::from_rgb(10, 10, 10));
-            pn.rect_stroke(nr, CornerRadius::same(3), Stroke::new(1.0_f32, if nresp.hovered() { WHITE } else { Color32::from_rgb(34, 34, 34) }), StrokeKind::Inside);
+            pn.rect_filled(nr, CornerRadius::same(3), Color32::from_rgb(9, 9, 16));
+            pn.rect_stroke(nr, CornerRadius::same(3), Stroke::new(1.0_f32, if nresp.hovered() { WHITE } else { Color32::from_rgb(30, 32, 42) }), StrokeKind::Inside);
             let t = if is_note { format!("{}", pat[k].idx + 1) } else { format!("{:+}", pat[k].tr).replace("+0", "0") };
             pn.text(nr.center(), Align2::CENTER_CENTER, t, mono(11.0), col_on(true));
         }
@@ -3339,7 +3494,7 @@ fn source_chip(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui,
     let painter = ui.painter();
     painter.rect_filled(rr, CornerRadius::same(6), if dragging { MODC } else if resp.hovered() { PANEL2 } else { Color32::TRANSPARENT });
     painter.rect_stroke(rr, CornerRadius::same(6), Stroke::new(1.0_f32, if dragging { MODC } else if used { mix(LINE, MODC, 0.75) } else if resp.hovered() { MODC } else { LINE }), StrokeKind::Inside);
-    painter.text(rr.center(), Align2::CENTER_CENTER, label, mono(10.0), if dragging { Color32::BLACK } else if used { mix(WHITE, MODC, 0.35) } else { Color32::from_rgb(170, 170, 170) });
+    painter.text(rr.center(), Align2::CENTER_CENTER, label, mono(10.0), if dragging { Color32::BLACK } else if used { mix(WHITE, MODC, 0.35) } else { Color32::from_rgb(150, 160, 192) });
     let uses = source_uses(src);
     if uses > 0 && !dragging {
         let bc = Pos2::new(rr.right() - 5.0, rr.top() + 2.0);
@@ -3436,6 +3591,7 @@ pub fn draw_spectrum(painter: &egui::Painter, r: Rect, spec: &[f32], fs: f32, fl
     let w = r.width().floor() as usize;
     let bins = spec.len();
     let hz_per_bin = fs / (2.0 * bins as f32);
+    let mut top: Vec<Pos2> = Vec::with_capacity(w);
     for x in 0..w {
         let f0 = 20.0 * (1000.0f32).powf(x as f32 / w as f32);
         let f1 = 20.0 * (1000.0f32).powf((x + 1) as f32 / w as f32);
@@ -3453,10 +3609,15 @@ pub fn draw_spectrum(painter: &egui::Painter, r: Rect, spec: &[f32], fs: f32, fl
             }
         }
         let h = ((m - floor) / -floor).clamp(0.0, 1.0) * r.height();
+        let px = r.left() + x as f32 + 0.5;
         if h > 0.5 {
-            let px = r.left() + x as f32 + 0.5;
-            painter.line_segment([Pos2::new(px, r.bottom()), Pos2::new(px, r.bottom() - h)], Stroke::new(1.0_f32, col));
+            // soft fill, bright top line
+            painter.line_segment([Pos2::new(px, r.bottom()), Pos2::new(px, r.bottom() - h)], Stroke::new(1.0_f32, col.gamma_multiply(0.22)));
         }
+        top.push(Pos2::new(px, r.bottom() - h));
+    }
+    if top.len() > 1 {
+        painter.add(egui::Shape::line(top, egui::epaint::PathStroke::new(1.2_f32, col)));
     }
 }
 
@@ -3469,6 +3630,13 @@ fn install_fonts(ctx: &egui::Context) {
     use egui::{FontData, FontFamily};
     let mut fonts = egui::FontDefinitions::default();
     fonts.font_data.insert("dejavu".into(), std::sync::Arc::new(FontData::from_static(include_bytes!("fonts/DejaVuSans.ttf"))));
+    // Inter (SIL Open Font License, fonts/Inter-LICENSE.txt) is the UI font, for text and numbers
+    fonts.font_data.insert("inter".into(), std::sync::Arc::new(FontData::from_static(include_bytes!("fonts/Inter-Medium.ttf"))));
+    for fam in [FontFamily::Monospace, FontFamily::Proportional] {
+        if let Some(list) = fonts.families.get_mut(&fam) {
+            list.insert(0, "inter".into());
+        }
+    }
     let mut extra: Vec<String> = vec!["dejavu".into()];
     let sys = [
         ("C:\\Windows\\Fonts\\seguisym.ttf", "sys_sym"),
@@ -3606,7 +3774,7 @@ fn spinner(ui: &mut Ui, setter: &ParamSetter, prm: &IntParam, r: Rect, id: &str,
         setter.end_set_parameter(prm);
     }
     let pn = ui.painter();
-    pn.rect_filled(r, CornerRadius::same(4), Color32::from_rgb(8, 8, 8));
+    pn.rect_filled(r, CornerRadius::same(4), Color32::from_rgb(7, 8, 14));
     pn.rect_stroke(r, CornerRadius::same(4), Stroke::new(1.0_f32, if resp.hovered() { WHITE } else { LINE }), StrokeKind::Inside);
     pn.text(Pos2::new(r.left() + 16.0, r.center().y), Align2::CENTER_CENTER, format!("{:+}", prm.value()).replace("+0", "0"), mono(11.0), WHITE);
     let ax = r.right() - 8.0;
@@ -3632,18 +3800,18 @@ fn wheel(ui: &mut Ui, r: Rect, id: &str, pos: f32, out: &std::sync::atomic::Atom
         out.store(spring.unwrap_or(0.0).to_bits(), std::sync::atomic::Ordering::Relaxed);
     }
     let pn = ui.painter();
-    pn.rect_filled(r, CornerRadius::same(4), Color32::from_rgb(8, 8, 8));
+    pn.rect_filled(r, CornerRadius::same(4), Color32::from_rgb(7, 8, 14));
     pn.rect_stroke(r, CornerRadius::same(4), Stroke::new(1.0_f32, if resp.hovered() || resp.dragged() { WHITE } else { LINE }), StrokeKind::Inside);
     // ribs
     for k in 0..9 {
         let y = r.top() + 6.0 + (r.height() - 12.0) * k as f32 / 8.0;
-        pn.line_segment([Pos2::new(r.left() + 3.0, y), Pos2::new(r.right() - 3.0, y)], Stroke::new(1.0_f32, Color32::from_rgb(26, 26, 26)));
+        pn.line_segment([Pos2::new(r.left() + 3.0, y), Pos2::new(r.right() - 3.0, y)], Stroke::new(1.0_f32, Color32::from_rgb(23, 24, 34)));
     }
     let y = r.bottom() - 4.0 - (r.height() - 8.0) * pos.clamp(0.0, 1.0);
     // level fill from the rest position (bottom for the mod wheel, centre for the pitch wheel) up to the handle
     let y0 = r.bottom() - 4.0 - (r.height() - 8.0) * spring.unwrap_or(0.0);
     let fill = Rect::from_x_y_ranges((r.left() + 3.0)..=(r.right() - 3.0), y.min(y0)..=y.max(y0));
-    pn.rect_filled(fill, CornerRadius::same(1), Color32::from_rgb(70, 70, 70));
+    pn.rect_filled(fill, CornerRadius::same(1), Color32::from_rgb(62, 66, 82));
     pn.rect_filled(Rect::from_center_size(Pos2::new(r.center().x, y), Vec2::new(r.width() - 4.0, 6.0)), CornerRadius::same(2), WHITE);
 }
 
@@ -3711,20 +3879,20 @@ fn keyboard(ui: &mut Ui, meters: &Meters, r: Rect) {
         });
     }
     let painter = ui.painter();
-    painter.rect_filled(r.expand(2.0), CornerRadius::same(4), Color32::from_rgb(4, 4, 4));
+    painter.rect_filled(r.expand(2.0), CornerRadius::same(4), Color32::from_rgb(4, 4, 9));
     for (i, n) in whites.iter().enumerate() {
         let kr = white_rect(i).shrink2(Vec2::new(0.5, 0.0));
         let on = meters.is_sounding(*n) || meters.gui_keys[*n as usize].load(std::sync::atomic::Ordering::Relaxed);
-        painter.rect_filled(kr, CornerRadius { nw: 0, ne: 0, sw: 3, se: 3 }, if on { Color32::from_rgb(120, 120, 120) } else { Color32::from_rgb(216, 216, 216) });
+        painter.rect_filled(kr, CornerRadius { nw: 0, ne: 0, sw: 3, se: 3 }, if on { Color32::from_rgb(106, 113, 137) } else { Color32::from_rgb(208, 212, 216) });
         if n % 12 == 0 {
-            painter.text(Pos2::new(kr.center().x, kr.bottom() - 7.0), Align2::CENTER_CENTER, format!("C{}", *n as i32 / 12 - 1), mono(8.5), Color32::from_rgb(60, 60, 60));
+            painter.text(Pos2::new(kr.center().x, kr.bottom() - 7.0), Align2::CENTER_CENTER, format!("C{}", *n as i32 / 12 - 1), mono(8.5), Color32::from_rgb(53, 56, 71));
         }
     }
     for n in (FIRST..=LAST).filter(|n| is_black(*n)) {
         let kr = key_rect(n);
         let on = meters.is_sounding(n) || meters.gui_keys[n as usize].load(std::sync::atomic::Ordering::Relaxed);
-        painter.rect_filled(kr, CornerRadius { nw: 0, ne: 0, sw: 2, se: 2 }, if on { Color32::from_rgb(150, 150, 150) } else { Color32::from_rgb(14, 14, 14) });
-        painter.rect_stroke(kr, CornerRadius { nw: 0, ne: 0, sw: 2, se: 2 }, Stroke::new(1.0_f32, Color32::from_rgb(60, 60, 60)), StrokeKind::Inside);
+        painter.rect_filled(kr, CornerRadius { nw: 0, ne: 0, sw: 2, se: 2 }, if on { Color32::from_rgb(132, 141, 170) } else { Color32::from_rgb(12, 13, 20) });
+        painter.rect_stroke(kr, CornerRadius { nw: 0, ne: 0, sw: 2, se: 2 }, Stroke::new(1.0_f32, Color32::from_rgb(53, 56, 71)), StrokeKind::Inside);
     }
 }
 

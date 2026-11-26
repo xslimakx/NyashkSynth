@@ -4,7 +4,9 @@ use nyashksynth::*;
 
 fn engine() -> Engine {
     let params = SynthParams::default();
-    let patch = Patch::read(&params, 48000.0);
+    let mut patch = Patch::read(&params, 48000.0);
+    // these tests were written for a sine on osc A (the init sound is a saw since 1.1)
+    patch.osc[0].pos = 0.0;
     Engine::new(48000.0, patch)
 }
 
