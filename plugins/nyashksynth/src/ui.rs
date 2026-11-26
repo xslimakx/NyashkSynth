@@ -687,7 +687,7 @@ pub fn pill_tip(ui: &mut Ui, rect: Rect, text: &str, on: bool, tip: &str) -> boo
 }
 
 #[derive(Clone, Copy, PartialEq)]
-pub enum Icon { Save, Undo, Redo, Prev, Next, Midi, Trash }
+pub enum Icon { Save, Undo, Redo, Prev, Next, Midi, Trash, Menu }
 
 /// Square icon button (Serum style): a drawn glyph instead of a text label.
 pub fn icon_btn(ui: &mut Ui, rect: Rect, icon: Icon, on: bool, tip: &str) -> bool {
@@ -707,6 +707,11 @@ pub fn icon_btn(ui: &mut Ui, rect: Rect, icon: Icon, on: bool, tip: &str) -> boo
         (0..=24).map(|i| { let t = a0 + (a1 - a0) * i as f32 / 24.0; Pos2::new(cx + rad * t.cos(), cy + rad * t.sin()) }).collect()
     };
     match icon {
+        Icon::Menu => {
+            for k in [-1.0f32, 0.0, 1.0] {
+                p.line_segment([Pos2::new(c.x - r, c.y + k * r * 0.7), Pos2::new(c.x + r, c.y + k * r * 0.7)], Stroke::new(1.8_f32, col));
+            }
+        }
         Icon::Prev | Icon::Next => {
             let d = if icon == Icon::Prev { -1.0 } else { 1.0 };
             p.add(egui::Shape::line(vec![Pos2::new(c.x - d * r * 0.5, c.y - r), Pos2::new(c.x + d * r * 0.5, c.y), Pos2::new(c.x - d * r * 0.5, c.y + r)], PathStroke::new(1.8_f32, col)));

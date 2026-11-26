@@ -179,6 +179,92 @@ fn choice_combo(ui: &mut Ui, setter: &ParamSetter, prm: &FloatParam, d: &D, rect
 }
 
 /// Draws the FX page. Returns the free area at the bottom of the detail view (the editor draws the spectrum there).
+/// A small drawn icon for each effect kind (our own glyphs, not artwork from another synth).
+pub fn fx_icon(pa: &egui::Painter, kind: usize, r: Rect, col: Color32) {
+    use egui::epaint::PathStroke;
+    let st = PathStroke::new(1.4_f32, col);
+    let (l, t, w, h) = (r.left(), r.top(), r.width(), r.height());
+    let wave = |amp: f32, cyc: f32, ph: f32, yoff: f32, f: &dyn Fn(f32) -> f32| -> Vec<Pos2> {
+        (0..=24).map(|i| {
+            let x = i as f32 / 24.0;
+            Pos2::new(l + x * w, t + h * 0.5 + yoff - f((x * cyc + ph) * std::f32::consts::TAU) * amp * h * 0.5)
+        }).collect()
+    };
+    match kind {
+        // HYPER: three detuned waves
+        0 => {
+            for (k, ph) in [0.0f32, 0.12, 0.24].iter().enumerate() {
+                pa.add(egui::Shape::line(wave(0.55, 1.5 + k as f32 * 0.15, *ph, 0.0, &|x| x.sin()), PathStroke::new(1.1_f32, col.gamma_multiply(1.0 - k as f32 * 0.25))));
+            }
+        }
+        // DIST: a clipped sine
+        1 => {
+            pa.add(egui::Shape::line(wave(0.8, 1.0, 0.0, 0.0, &|x| (x.sin() * 2.5).clamp(-1.0, 1.0)), st));
+        }
+        // FLANGER: comb teeth
+        2 => {
+            let pts: Vec<Pos2> = (0..=24).map(|i| { let x = i as f32 / 24.0; Pos2::new(l + x * w, t + h * (0.25 + 0.55 * (x * std::f32::consts::TAU * 3.0).cos().abs())) }).collect();
+            pa.add(egui::Shape::line(pts, st));
+        }
+        // PHASER: two crossing waves
+        3 => {
+            pa.add(egui::Shape::line(wave(0.6, 1.0, 0.0, 0.0, &|x| x.sin()), st.clone()));
+            pa.add(egui::Shape::line(wave(0.6, 1.0, 0.5, 0.0, &|x| x.sin()), PathStroke::new(1.1_f32, col.gamma_multiply(0.6))));
+        }
+        // CHORUS: two waves, one shifted down
+        4 => {
+            pa.add(egui::Shape::line(wave(0.35, 1.5, 0.0, -h * 0.15, &|x| x.sin()), st.clone()));
+            pa.add(egui::Shape::line(wave(0.35, 1.5, 0.2, h * 0.15, &|x| x.sin()), PathStroke::new(1.1_f32, col.gamma_multiply(0.6))));
+        }
+        // DELAY: repeats getting smaller
+        5 => {
+            for k in 0..4 {
+                let x = l + w * (0.12 + k as f32 * 0.25);
+                let hh = h * (0.8 - k as f32 * 0.18);
+                pa.line_segment([Pos2::new(x, t + h - 1.0), Pos2::new(x, t + h - hh)], egui::Stroke::new(2.0_f32, col.gamma_multiply(1.0 - k as f32 * 0.2)));
+            }
+        }
+        // COMP: transfer curve with a knee
+        6 => {
+            pa.add(egui::Shape::line(vec![Pos2::new(l, t + h), Pos2::new(l + w * 0.55, t + h * 0.4), Pos2::new(l + w, t + h * 0.22)], st));
+        }
+        // REVERB: a burst and a long tail
+        7 => {
+            let pts: Vec<Pos2> = (0..=24).map(|i| { let x = i as f32 / 24.0; Pos2::new(l + x * w, t + h - h * 0.9 * (-x * 3.0).exp()) }).collect();
+            pa.add(egui::Shape::line(pts, st));
+            for k in 1..6 {
+                let x = l + w * k as f32 / 6.0;
+                pa.line_segment([Pos2::new(x, t + h), Pos2::new(x, t + h - h * 0.8 * (-(k as f32) / 2.0).exp())], egui::Stroke::new(1.0_f32, col.gamma_multiply(0.5)));
+            }
+        }
+        // EQ: a bell
+        8 => {
+            let pts: Vec<Pos2> = (0..=24).map(|i| { let x = i as f32 / 24.0; Pos2::new(l + x * w, t + h * 0.7 - h * 0.5 * (-((x - 0.5) * 5.0).powi(2)).exp()) }).collect();
+            pa.add(egui::Shape::line(pts, st));
+        }
+        // FILTER: a low-pass with a resonant bump
+        9 => {
+            let pts: Vec<Pos2> = (0..=24).map(|i| { let x = i as f32 / 24.0; let y = if x < 0.55 { 0.35 - 0.25 * (-((x - 0.55) * 9.0).powi(2)).exp() } else { 0.1 + (x - 0.55) * 1.9 }; Pos2::new(l + x * w, t + h * y.min(0.98)) }).collect();
+            pa.add(egui::Shape::line(pts, st));
+        }
+        // BODE: a wave and an arrow to the right
+        10 => {
+            pa.add(egui::Shape::line(wave(0.4, 1.0, 0.0, 0.0, &|x| x.sin()).into_iter().map(|q| Pos2::new(l + (q.x - l) * 0.6, q.y)).collect::<Vec<_>>(), st.clone()));
+            let y = t + h * 0.5;
+            pa.line_segment([Pos2::new(l + w * 0.62, y), Pos2::new(l + w, y)], egui::Stroke::new(1.4_f32, col));
+            pa.add(egui::Shape::line(vec![Pos2::new(l + w * 0.85, y - h * 0.18), Pos2::new(l + w, y), Pos2::new(l + w * 0.85, y + h * 0.18)], st));
+        }
+        // UTILITY: two faders
+        _ => {
+            for (k, v) in [0.35f32, 0.65].iter().enumerate() {
+                let x = l + w * (0.3 + k as f32 * 0.4);
+                pa.line_segment([Pos2::new(x, t), Pos2::new(x, t + h)], egui::Stroke::new(1.0_f32, col.gamma_multiply(0.5)));
+                pa.rect_filled(Rect::from_center_size(Pos2::new(x, t + h * v), egui::Vec2::new(w * 0.3, 3.0)), egui::CornerRadius::same(1), col);
+            }
+        }
+    }
+}
+
 pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, c: Rect) -> Rect {
     // an old project: wait until the values are stable (a preset load is still travelling to the audio side), then convert
     if p.rackver.value() == 0 {
@@ -264,7 +350,8 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
             let dot = Pos2::new(r.left() + 16.0, r.center().y);
             painter.circle_filled(dot, 5.0, if on { WHITE } else { Color32::from_rgb(44, 47, 60) });
             painter.circle_stroke(dot, 5.0, Stroke::new(1.0_f32, if on { WHITE } else { DIM }));
-            painter.text(Pos2::new(r.left() + 34.0, r.center().y), Align2::LEFT_CENTER, format!("{}  {}", pos + 1, fxdesc::KIND_NAMES[kind]), mono(11.5), if on { WHITE } else { DIM });
+            fx_icon(painter, kind, Rect::from_center_size(Pos2::new(r.left() + 44.0, r.center().y), egui::Vec2::new(22.0, 14.0)), if on { ACCENT } else { DIM });
+            painter.text(Pos2::new(r.left() + 62.0, r.center().y), Align2::LEFT_CENTER, format!("{}  {}", pos + 1, fxdesc::KIND_NAMES[kind]), mono(11.5), if on { WHITE } else { DIM });
             painter.text(Pos2::new(r.right() - 12.0, r.center().y), Align2::CENTER_CENTER, "x", mono(13.0), if resp.hovered() { WHITE } else { DIM });
         }
         if resp.drag_started() {
@@ -346,7 +433,8 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
             egui::Frame::popup(ui.style()).show(ui, |ui| {
                 ui.set_min_width(lw - 16.0);
                 for (kind, name, desc) in fxdesc::MENU {
-                    let resp = ui.selectable_label(false, egui::RichText::new(name).font(mono(12.0))).on_hover_text(desc);
+                    let resp = ui.selectable_label(false, egui::RichText::new(format!("       {name}")).font(mono(12.0))).on_hover_text(desc);
+                    fx_icon(ui.painter(), kind, Rect::from_center_size(Pos2::new(resp.rect.left() + 16.0, resp.rect.center().y), egui::Vec2::new(20.0, 12.0)), ACCENT);
                     if resp.clicked() {
                         if let Some(i) = add_effect(setter, p, bus, kind) {
                             st.fx_sel = i;
@@ -375,7 +463,8 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
     let r = slot_reals(s, kind);
     let fp = fxdesc::patch_for(kind, &r, 120.0);
     let pos_in = list.iter().position(|&i| i == si).unwrap_or(0) + 1;
-    ui.painter().text(Pos2::new(dx, top + 6.0), Align2::LEFT_CENTER, fxdesc::KIND_NAMES[kind], mono(13.0), WHITE);
+    fx_icon(ui.painter(), kind, Rect::from_center_size(Pos2::new(dx + 12.0, top + 6.0), egui::Vec2::new(24.0, 16.0)), ACCENT);
+    ui.painter().text(Pos2::new(dx + 32.0, top + 6.0), Align2::LEFT_CENTER, fxdesc::KIND_NAMES[kind], mono(13.0), WHITE);
     ui.painter().text(Pos2::new(dx + 130.0, top + 6.0), Align2::LEFT_CENTER, format!("effect {pos_in} of {} on bus {}", list.len(), bus + 1), mono(9.0), DIM);
     if pill_tip(ui, Rect::from_min_size(Pos2::new(dx + 330.0, top - 5.0), Vec2::new(60.0, 22.0)), if s.on.value() { "ON" } else { "OFF" }, s.on.value(), "Effect on / off") {
         set_b(setter, &s.on, !s.on.value());
