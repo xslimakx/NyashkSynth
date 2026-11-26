@@ -22,6 +22,7 @@ pub mod params;
 pub mod presets;
 mod ui;
 pub mod files;
+pub mod theme;
 pub mod formula;
 pub mod sample;
 pub mod shared;

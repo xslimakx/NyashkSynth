@@ -8,23 +8,169 @@ use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 use nih_plug_egui::egui::{self, epaint::PathStroke, text::LayoutJob, Align2, Color32, CornerRadius, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, TextFormat, Ui, UiBuilder, Vec2};
 
-// SyntiTyzer palette: deep blue-graphite surfaces, warm coral for values and active states,
-// violet for modulation
-pub const BG: Color32 = Color32::from_rgb(11, 13, 19);
-pub const PANEL: Color32 = Color32::from_rgb(19, 22, 30);
-pub const PANEL2: Color32 = Color32::from_rgb(29, 33, 44);
-pub const LINE: Color32 = Color32::from_rgb(42, 47, 61);
-pub const WHITE: Color32 = Color32::from_rgb(232, 236, 244);
-/// signature tone: values, active states, curves
-pub const ACCENT: Color32 = Color32::from_rgb(255, 128, 92);
+// ---------------------------------------------------------------- palette (from the theme)
+//
+// Colours come from the active theme (see theme.rs). `ACCENT()` is the colour of the module
+// category being drawn: every module sets its category with `CatGuard`, so its values, curves and
+// active buttons take that colour without each widget knowing about it.
+
+use crate::theme::{k, Pal};
+thread_local! {
+    static PAL: Cell<Pal> = Cell::new(Pal::default());
+    static CAT: Cell<usize> = const { Cell::new(k::ACCENT) };
+}
+pub fn set_palette(p: Pal) {
+    PAL.with(|c| c.set(p));
+}
+pub fn palette() -> Pal {
+    PAL.with(|c| c.get())
+}
+#[inline]
+fn pc(i: usize) -> Color32 {
+    PAL.with(|c| c.get().c[i])
+}
+#[allow(non_snake_case)]
+pub fn BG() -> Color32 {
+    pc(k::BG)
+}
+#[allow(non_snake_case)]
+pub fn PANEL() -> Color32 {
+    pc(k::PANEL)
+}
+#[allow(non_snake_case)]
+pub fn PANEL2() -> Color32 {
+    pc(k::PANEL2)
+}
+#[allow(non_snake_case)]
+pub fn LINE() -> Color32 {
+    pc(k::LINE)
+}
+#[allow(non_snake_case)]
+pub fn WHITE() -> Color32 {
+    pc(k::TEXT)
+}
+#[allow(non_snake_case)]
+pub fn DIM() -> Color32 {
+    pc(k::DIM)
+}
+#[allow(non_snake_case)]
+pub fn MID() -> Color32 {
+    pc(k::MID)
+}
+/// colour of the category being drawn (values, active states, curves)
+#[allow(non_snake_case)]
+pub fn ACCENT() -> Color32 {
+    let p = palette();
+    let c = CAT.with(|c| c.get());
+    if p.by_cat { p.c[c] } else { p.c[k::ACCENT] }
+}
+/// the theme accent, whatever category is being drawn
+pub fn base_accent() -> Color32 {
+    pc(k::ACCENT)
+}
+pub fn cat_col() -> Color32 {
+    ACCENT()
+}
+/// colour of a given category
+pub fn col_of(cat: usize) -> Color32 {
+    let p = palette();
+    if p.by_cat { p.c[cat] } else { p.c[k::ACCENT] }
+}
 /// modulation tone: rings, live dots, source chips
-pub const MODC: Color32 = Color32::from_rgb(170, 140, 255);
+#[allow(non_snake_case)]
+pub fn MODC() -> Color32 {
+    pc(k::MODC)
+}
+/// Grey ramp of the theme: 0 = background, 1 = text colour (outside 0..1 extrapolates a little).
+pub fn shade(t: f32) -> Color32 {
+    let (a, b) = (BG(), WHITE());
+    let l = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round().clamp(0.0, 255.0) as u8;
+    Color32::from_rgb(l(a.r(), b.r()), l(a.g(), b.g()), l(a.b(), b.b()))
+}
+/// Corner radius scaled by the theme roundness.
+pub fn rad(n: u8) -> CornerRadius {
+    CornerRadius::same(radu(n))
+}
+pub fn radu(n: u8) -> u8 {
+    (n as f32 * palette().round).round().clamp(0.0, 40.0) as u8
+}
+pub fn cur_cat() -> usize {
+    CAT.with(|c| c.get())
+}
+
+// ---------------------------------------------------------------- theme pictures
+thread_local! {
+    /// textures of the active theme's pictures: (slot, texture, size in pixels)
+    static TEX: RefCell<Vec<(usize, egui::TextureId, Vec2)>> = const { RefCell::new(Vec::new()) };
+}
+pub fn set_textures(v: Vec<(usize, egui::TextureId, Vec2)>) {
+    TEX.with(|t| *t.borrow_mut() = v);
+}
+pub fn texture(slot: usize) -> Option<(egui::TextureId, Vec2)> {
+    TEX.with(|t| t.borrow().iter().find(|(s, _, _)| *s == slot).map(|(_, id, sz)| (*id, *sz)))
+}
+/// uv rectangle that makes a picture of `size` cover `r` (centre crop, no stretching)
+pub fn cover_uv(size: Vec2, r: Rect) -> Rect {
+    let ia = size.x / size.y.max(1.0);
+    let ra = r.width() / r.height().max(1.0);
+    if ia > ra {
+        let w = ra / ia;
+        Rect::from_min_max(Pos2::new(0.5 - w / 2.0, 0.0), Pos2::new(0.5 + w / 2.0, 1.0))
+    } else {
+        let h = ia / ra;
+        Rect::from_min_max(Pos2::new(0.0, 0.5 - h / 2.0), Pos2::new(1.0, 0.5 + h / 2.0))
+    }
+}
+/// Paints a picture so it covers `r`, with rounded corners and the given tint.
+pub fn paint_cover(painter: &egui::Painter, slot: usize, r: Rect, corner: CornerRadius, tint: Color32) -> bool {
+    if let Some((id, sz)) = texture(slot) {
+        painter.add(egui::epaint::RectShape::filled(r, corner, tint).with_texture(id, cover_uv(sz, r)));
+        true
+    } else {
+        false
+    }
+}
+/// The panel colour: see-through by the theme's PANEL OPACITY when a window picture is set.
+pub fn panel_fill() -> Color32 {
+    let c = PANEL();
+    if texture(crate::theme::k::BG).is_some() {
+        with_alpha(c, (palette().alpha * 255.0) as u8)
+    } else {
+        c
+    }
+}
+/// A module (or page) background: see-through panel, the picture of the current category if the
+/// theme has one, a thin border.
+pub fn module_back(ui: &Ui, r: Rect) {
+    let pa = ui.painter();
+    pa.rect_filled(r, rad(6), panel_fill());
+    let pal = palette();
+    if pal.mod_img > 0.0 {
+        let a = (pal.mod_img * 255.0) as u8;
+        paint_cover(pa, cur_cat(), r, rad(6), Color32::from_rgba_unmultiplied(255, 255, 255, a));
+    }
+    pa.rect_stroke(r, rad(6), Stroke::new(1.0_f32, LINE()), StrokeKind::Inside);
+}
+
+/// Draws everything inside with the colour of `cat`; restores the previous category on drop.
+pub struct CatGuard(usize);
+impl CatGuard {
+    pub fn new(cat: usize) -> CatGuard {
+        CatGuard(CAT.with(|c| c.replace(cat)))
+    }
+}
+impl Drop for CatGuard {
+    fn drop(&mut self) {
+        CAT.with(|c| c.set(self.0));
+    }
+}
+pub fn with_alpha(c: Color32, a: u8) -> Color32 {
+    Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), a)
+}
 pub fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
     let l = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t.clamp(0.0, 1.0)).round() as u8;
     Color32::from_rgb(l(a.r(), b.r()), l(a.g(), b.g()), l(a.b(), b.b()))
 }
-pub const DIM: Color32 = Color32::from_rgb(124, 132, 150);
-pub const MID: Color32 = Color32::from_rgb(112, 120, 138);
 
 // ---------------------------------------------------------------- modulation hooks
 //
@@ -98,7 +244,7 @@ pub fn end_frame(ctx: &egui::Context) -> Option<(usize, usize)> {
             if let Some(pp) = pos {
                 let lp = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("mod_ghost")));
                 let g = Rect::from_center_size(pp + Vec2::new(14.0, 14.0), Vec2::new(46.0, 22.0));
-                lp.rect_filled(g, CornerRadius::same(6), WHITE);
+                lp.rect_filled(g, rad(6), WHITE());
                 lp.text(g.center(), Align2::CENTER_CENTER, &m.drag_label, mono(10.0), Color32::BLACK);
             }
             ctx.request_repaint();
@@ -295,16 +441,16 @@ pub fn learn_widget(ui: &Ui, ptr: ParamPtr, resp: &egui::Response, r: Rect) -> b
             MC.with(|m| m.borrow_mut().learn_unbind = Some(ptr));
         }
         let t = ui.input(|i| i.time);
-        let (w, col) = if is_target { (2.5_f32, WHITE) } else { (1.0_f32, Color32::from_rgb(79, 85, 104)) };
+        let (w, col) = if is_target { (2.5_f32, WHITE()) } else { (1.0_f32, Color32::from_rgb(79, 85, 104)) };
         let ph = if is_target { ((t * 5.0).sin() * 0.5 + 0.5) as f32 * 2.0 } else { 0.0 };
-        ui.painter().rect_stroke(r.expand(2.0 + ph), CornerRadius::same(5), Stroke::new(w, col), StrokeKind::Outside);
+        ui.painter().rect_stroke(r.expand(2.0 + ph), rad(5), Stroke::new(w, col), StrokeKind::Outside);
         if is_target {
             ui.ctx().request_repaint();
         }
     }
     if let Some(cc) = bound_cc {
         let tag = Rect::from_center_size(Pos2::new(r.center().x, r.top() - 1.0), Vec2::new(34.0, 11.0));
-        ui.painter().rect_filled(tag, CornerRadius::same(3), WHITE);
+        ui.painter().rect_filled(tag, rad(3), WHITE());
         ui.painter().text(tag.center(), Align2::CENTER_CENTER, format!("CC{cc}"), mono(8.0), Color32::BLACK);
     }
     learn_on
@@ -313,10 +459,13 @@ pub fn learn_widget(ui: &Ui, ptr: ParamPtr, resp: &egui::Response, r: Rect) -> b
 #[allow(clippy::too_many_arguments)]
 fn knob_impl<P: Param>(ui: &mut Ui, setter: &ParamSetter, p: &P, label: &str, cell: Rect, tooltip: &str, bipolar: bool, r: f32, compact: bool) -> KnobEv {
     let c = Pos2::new(cell.center().x, cell.top() + r + 3.0);
-    let hit = Rect::from_center_size(c, Vec2::splat(2.0 * r + 8.0));
     let dst = NEXT_DST.with(|d| d.replace(0));
     let desc = NEXT_DESC.with(|d| d.take());
     let mods = if dst != 0 { mods_for(dst) } else { Vec::new() };
+    // the knob takes the whole square; a modulated knob also gets the band of its modulation
+    // rings around it (only there does a drag change a modulation amount), kept inside its cell
+    let band = if mods.is_empty() { 0.0 } else if compact { 4.0 + 2.8 * mods.len().min(4) as f32 } else { 5.0 + 3.4 * mods.len().min(4) as f32 };
+    let hit = Rect::from_center_size(c, Vec2::splat(2.0 * (r + band) + 8.0)).intersect(Rect::from_min_max(Pos2::new(cell.left(), cell.top() - 6.0), Pos2::new(cell.right(), c.y + r + band + 4.0)));
     if dst != 0 {
         MC.with(|m| m.borrow_mut().rects.push((hit, dst)));
     }
@@ -342,7 +491,7 @@ fn knob_impl<P: Param>(ui: &mut Ui, setter: &ParamSetter, p: &P, label: &str, ce
         for (_, s, a) in &mods {
             t.push_str(&format!("\n  {}  {:+.0}%", ModSrc::variants()[*s], a * 100.0));
         }
-        t.push_str("\nDrag a ring (one per source) = its amount, right-click = list of sources (amount, bipolar, remove)");
+        t.push_str("\nDrag a ring (outside the knob, one per source) or Ctrl+drag the knob = its amount; dragging the knob itself only turns the knob. Right-click = list of sources (amount, bipolar, remove)");
         t
     };
     let resp = if tip_full.is_empty() { resp } else { resp.on_hover_text(tip_full) };
@@ -358,7 +507,7 @@ fn knob_impl<P: Param>(ui: &mut Ui, setter: &ParamSetter, p: &P, label: &str, ce
         if let Some(pp) = MC.with(|m| m.borrow().params.clone()) {
             resp.context_menu(|ui| {
                 ui.set_min_width(210.0);
-                ui.label(egui::RichText::new(format!("{}  {label}", if mods.is_empty() && byp.is_empty() { "PARAMETER" } else { "MODULATION" })).monospace().size(10.0).color(DIM));
+                ui.label(egui::RichText::new(format!("{}  {label}", if mods.is_empty() && byp.is_empty() { "PARAMETER" } else { "MODULATION" })).monospace().size(10.0).color(DIM()));
                 ui.separator();
                 // Lock parameter: presets leave this control alone
                 if let Some(id) = pp.param_map().into_iter().find(|(_, q, _)| *q == ptr).map(|(id, _, _)| id) {
@@ -399,8 +548,8 @@ fn knob_impl<P: Param>(ui: &mut Ui, setter: &ParamSetter, p: &P, label: &str, ce
                 }
                 for (i, sidx) in &byp {
                     ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new(format!("{:<7}", ModSrc::variants()[*sidx])).monospace().size(11.0).color(DIM));
-                        ui.label(egui::RichText::new("bypassed").size(10.0).color(DIM));
+                        ui.label(egui::RichText::new(format!("{:<7}", ModSrc::variants()[*sidx])).monospace().size(11.0).color(DIM()));
+                        ui.label(egui::RichText::new("bypassed").size(10.0).color(DIM()));
                         if ui.button("on").on_hover_text("Enable this source again").clicked() {
                             set_b(setter, &pp.slot[*i].on, true);
                             ui.close_menu();
@@ -427,8 +576,12 @@ fn knob_impl<P: Param>(ui: &mut Ui, setter: &ParamSetter, p: &P, label: &str, ce
     let mut mod_editing = false;
     if !mods.is_empty() {
         if resp.drag_started() {
-            let dist = resp.interact_pointer_pos().map(|pp| ((pp.x - c.x).powi(2) + (pp.y - c.y).powi(2)).sqrt()).unwrap_or(0.0);
-            if dist > r * 0.82 || ui.input(|i| i.modifiers.ctrl) {
+            // where the button went down, not where the drag was recognised
+            let at = ui.input(|i| i.pointer.press_origin()).or(resp.interact_pointer_pos());
+            let dist = at.map(|pp| ((pp.x - c.x).powi(2) + (pp.y - c.y).powi(2)).sqrt()).unwrap_or(0.0);
+            // the knob itself (body and value arc, up to r + 2) always turns the knob: only the
+            // ring band outside it, or Ctrl + drag, changes a modulation amount
+            if dist > r + 2.0 || ui.input(|i| i.modifiers.ctrl) {
                 // each source has its own ring: pick the one under the pointer (Ctrl = the first one)
                 let base = r - 2.5 + if compact { 3.6 } else { 4.6 };
                 let step = if compact { 2.8 } else { 3.4 };
@@ -508,14 +661,25 @@ fn knob_impl<P: Param>(ui: &mut Ui, setter: &ParamSetter, p: &P, label: &str, ce
         (0..=n).map(|i| pt(rad, from + (to - from) * i as f32 / n as f32)).collect()
     };
     // track + value arc with round caps
-    painter.add(egui::Shape::line(arc(0.0, 1.0), PathStroke::new(sw, LINE)));
-    painter.circle_filled(pt(ring, 0.0), 2.0, LINE);
-    painter.circle_filled(pt(ring, 1.0), 2.0, LINE);
+    painter.add(egui::Shape::line(arc(0.0, 1.0), PathStroke::new(sw, LINE())));
+    painter.circle_filled(pt(ring, 0.0), 2.0, LINE());
+    painter.circle_filled(pt(ring, 1.0), 2.0, LINE());
     let from = if bipolar { 0.5 } else { 0.0 };
     if (norm - from).abs() > 0.002 {
-        painter.add(egui::Shape::line(arc(from, norm), PathStroke::new(sw, ACCENT)));
-        painter.circle_filled(pt(ring, from), 2.0, ACCENT);
-        painter.circle_filled(pt(ring, norm), 2.0, ACCENT);
+        let kc = cat_col();
+        painter.add(egui::Shape::line(arc(from, norm), PathStroke::new(sw, kc)));
+        painter.circle_filled(pt(ring, from), 2.0, kc);
+        painter.circle_filled(pt(ring, norm), 2.0, kc);
+    }
+    // pointer over the ring band: the band lights up, so a drag there is clearly "amount"
+    if !mods.is_empty() {
+        if let Some(hp) = resp.hover_pos() {
+            let dist = ((hp.x - c.x).powi(2) + (hp.y - c.y).powi(2)).sqrt();
+            if dist > r + 2.0 && !resp.dragged() {
+                painter.circle_stroke(c, ring + if compact { 3.6 } else { 4.6 } + 1.0, Stroke::new(if compact { 5.0_f32 } else { 6.0 }, with_alpha(MODC(), 40)));
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+            }
+        }
     }
     // modulation ranges: one concentric ring per source (so several sources never hide each other)
     for (k, (_, sidx, amt)) in mods.iter().take(4).enumerate() {
@@ -532,11 +696,11 @@ fn knob_impl<P: Param>(ui: &mut Ui, setter: &ParamSetter, p: &P, label: &str, ce
                 Pos2::new(c.x + rr * ang.cos(), c.y + rr * ang.sin())
             })
             .collect();
-        let shade = [255u8, 200, 150, 110][k];
+        let lvl = [255u8, 200, 150, 110][k];
         // the track of this ring (faint) shows where the full range would be
-        painter.add(egui::Shape::line(arc_r(rr, 0.0, 1.0), PathStroke::new(1.0_f32, Color32::from_rgb(30, 32, 42))));
+        painter.add(egui::Shape::line(arc_r(rr, 0.0, 1.0), PathStroke::new(1.0_f32, shade(0.085))));
         if (b - a).abs() > 0.002 {
-            painter.add(egui::Shape::line(pts, PathStroke::new(if k == 0 { 2.2_f32 } else { 1.8 }, mix(Color32::from_rgb(30, 32, 42), MODC, shade as f32 / 255.0))));
+            painter.add(egui::Shape::line(pts, PathStroke::new(if k == 0 { 2.2_f32 } else { 1.8 }, mix(shade(0.085), MODC(), lvl as f32 / 255.0))));
         }
         let _ = sidx;
     }
@@ -547,7 +711,7 @@ fn knob_impl<P: Param>(ui: &mut Ui, setter: &ParamSetter, p: &P, label: &str, ce
         let ang = a0 + t * sweep;
         let dp = Pos2::new(c.x + rr * ang.cos(), c.y + rr * ang.sin());
         painter.circle_filled(dp, 3.2, Color32::BLACK);
-        painter.circle_filled(dp, 2.2, MODC);
+        painter.circle_filled(dp, 2.2, MODC());
     }
     // pulse a freshly routed destination so the user sees where the modulation landed
     if dst != 0 {
@@ -555,21 +719,21 @@ fn knob_impl<P: Param>(ui: &mut Ui, setter: &ParamSetter, p: &P, label: &str, ce
         let now = ui.input(|i| i.time);
         if fd == dst && now < until {
             let ph = ((now * 6.0).sin() * 0.5 + 0.5) as f32;
-            painter.circle_stroke(c, r + 5.0 + ph * 3.0, Stroke::new(2.5_f32, WHITE));
+            painter.circle_stroke(c, r + 5.0 + ph * 3.0, Stroke::new(2.5_f32, WHITE()));
             ui.ctx().request_repaint();
         }
     }
     // drop target highlight while a source is dragged
     if dst != 0 && drag_src().is_some() {
         let over = MC.with(|m| m.borrow().hover_dst) == Some(dst);
-        painter.circle_stroke(c, r + 3.0, Stroke::new(if over { 2.0_f32 } else { 1.0 }, if over { WHITE } else { MID }));
+        painter.circle_stroke(c, r + 3.0, Stroke::new(if over { 2.0_f32 } else { 1.0 }, if over { WHITE() } else { MID() }));
     }
     // MIDI learn: hint ring on every knob, bright ring on the one waiting, tag on the bound ones
     if learn_on {
         let now = ui.input(|i| i.time);
         if is_target {
             let ph = ((now * 5.0).sin() * 0.5 + 0.5) as f32;
-            painter.circle_stroke(c, r + 3.0 + ph * 2.0, Stroke::new(2.5_f32, WHITE));
+            painter.circle_stroke(c, r + 3.0 + ph * 2.0, Stroke::new(2.5_f32, WHITE()));
             ui.ctx().request_repaint();
         } else {
             painter.circle_stroke(c, r + 3.0, Stroke::new(1.0_f32, Color32::from_rgb(79, 85, 104)));
@@ -577,19 +741,19 @@ fn knob_impl<P: Param>(ui: &mut Ui, setter: &ParamSetter, p: &P, label: &str, ce
     }
     if let Some(cc) = bound_cc {
         let tag = Rect::from_center_size(Pos2::new(c.x, cell.top() + 2.0), Vec2::new(34.0, 11.0));
-        painter.rect_filled(tag, CornerRadius::same(3), WHITE);
+        painter.rect_filled(tag, rad(3), WHITE());
         painter.text(tag.center(), Align2::CENTER_CENTER, format!("CC{cc}"), mono(8.0), Color32::BLACK);
     }
     // round knob body
     let body = r * 0.72;
-    painter.circle_filled(c + Vec2::new(0.0, 1.5), body + 1.0, Color32::from_rgb(4, 5, 10));
-    painter.circle_filled(c, body, Color32::from_rgb(30, 32, 42));
-    painter.circle_filled(c, body * 0.84, Color32::from_rgb(21, 23, 31));
-    painter.circle_stroke(c, body, Stroke::new(1.0_f32, Color32::from_rgb(62, 66, 82)));
+    painter.circle_filled(c + Vec2::new(0.0, 1.5), body + 1.0, shade(-0.037));
+    painter.circle_filled(c, body, shade(0.085));
+    painter.circle_filled(c, body * 0.84, shade(0.044));
+    painter.circle_stroke(c, body, Stroke::new(1.0_f32, shade(0.238)));
     // pointer
-    painter.line_segment([pt(body * 0.30, norm), pt(body * 0.80, norm)], Stroke::new(3.0_f32, WHITE));
-    painter.circle_filled(pt(body * 0.80, norm), 1.5, WHITE);
-    painter.circle_filled(pt(body * 0.30, norm), 1.5, WHITE);
+    painter.line_segment([pt(body * 0.30, norm), pt(body * 0.80, norm)], Stroke::new(3.0_f32, WHITE()));
+    painter.circle_filled(pt(body * 0.80, norm), 1.5, WHITE());
+    painter.circle_filled(pt(body * 0.30, norm), 1.5, WHITE());
 
     // value + label (click the value box to type a number)
     let val = match desc {
@@ -605,7 +769,7 @@ fn knob_impl<P: Param>(ui: &mut Ui, setter: &ParamSetter, p: &P, label: &str, ce
     let vfont = if compact { mono(10.0) } else { mono(11.0) };
     let editing: Option<String> = ui.data(|d| d.get_temp::<String>(edit_id));
     if compact {
-        ui.painter().text(Pos2::new(cell.center().x, vr.bottom() + 7.0), Align2::CENTER_CENTER, label, mono(9.5), DIM);
+        ui.painter().text(Pos2::new(cell.center().x, vr.bottom() + 7.0), Align2::CENTER_CENTER, label, mono(9.5), DIM());
     } else {
         painter_label(ui, cell, vr, label);
     }
@@ -641,11 +805,11 @@ fn knob_impl<P: Param>(ui: &mut Ui, setter: &ParamSetter, p: &P, label: &str, ce
     } else {
         let vresp = ui.allocate_rect(vr, Sense::click()).on_hover_text("Click to type a value");
         let painter = ui.painter();
-        painter.rect_stroke(vr, CornerRadius::same(4), Stroke::new(1.0_f32, if vresp.hovered() { DIM } else { LINE }), StrokeKind::Inside);
+        painter.rect_stroke(vr, rad(4), Stroke::new(1.0_f32, if vresp.hovered() { DIM() } else { LINE() }), StrokeKind::Inside);
         // shrink the text if it would not fit the box
-        let gw = ui.fonts(|f| f.layout_no_wrap(val.clone(), vfont.clone(), WHITE).size().x);
+        let gw = ui.fonts(|f| f.layout_no_wrap(val.clone(), vfont.clone(), WHITE()).size().x);
         let vfont = if gw > vr.width() - 5.0 { mono((vfont.size * (vr.width() - 5.0) / gw).max(7.0)) } else { vfont };
-        painter.text(vr.center(), Align2::CENTER_CENTER, &val, vfont, WHITE);
+        painter.text(vr.center(), Align2::CENTER_CENTER, &val, vfont, WHITE());
         if vresp.clicked() {
             let first = val.trim().replace(" kHz", "k").split(' ').next().unwrap_or("").to_string();
             // keep the full text when the bare number alone would be read as a different value
@@ -662,7 +826,7 @@ fn knob_impl<P: Param>(ui: &mut Ui, setter: &ParamSetter, p: &P, label: &str, ce
 }
 
 pub fn painter_label(ui: &Ui, cell: Rect, vr: Rect, label: &str) {
-    ui.painter().text(Pos2::new(cell.center().x, vr.bottom() + 9.0), Align2::CENTER_CENTER, label, mono(10.0), DIM);
+    ui.painter().text(Pos2::new(cell.center().x, vr.bottom() + 9.0), Align2::CENTER_CENTER, label, mono(10.0), DIM());
 }
 
 pub fn pill(ui: &mut Ui, rect: Rect, text: &str, on: bool) -> bool {
@@ -678,11 +842,12 @@ pub fn pill_tip(ui: &mut Ui, rect: Rect, text: &str, on: bool, tip: &str) -> boo
     let a = ui.ctx().animate_bool_with_time(id, on, 0.12);
     let h = ui.ctx().animate_bool_with_time(id.with("h"), resp.hovered(), 0.10);
     let painter = ui.painter();
-    let fill = mix(mix(Color32::from_rgb(16, 17, 25), PANEL2, h), ACCENT, a);
-    let edge = mix(mix(LINE, DIM, h), ACCENT, a);
-    painter.rect_filled(rect, CornerRadius::same(6), fill);
-    painter.rect_stroke(rect, CornerRadius::same(6), Stroke::new(1.0_f32, edge), StrokeKind::Inside);
-    painter.text(rect.center(), Align2::CENTER_CENTER, text, mono(11.0), mix(WHITE, Color32::BLACK, a));
+    // active (Serum-like): a dark fill tinted by the category colour, coloured text and edge
+    let fill = mix(mix(shade(0.018), PANEL2(), h), ACCENT(), a * 0.24);
+    let edge = mix(mix(LINE(), DIM(), h), ACCENT(), a);
+    painter.rect_filled(rect, rad(6), fill);
+    painter.rect_stroke(rect, rad(6), Stroke::new(1.0_f32, edge), StrokeKind::Inside);
+    painter.text(rect.center(), Align2::CENTER_CENTER, text, mono(11.0), mix(WHITE(), mix(ACCENT(), Color32::WHITE, 0.25), a));
     resp.clicked()
 }
 
@@ -696,10 +861,10 @@ pub fn icon_btn(ui: &mut Ui, rect: Rect, icon: Icon, on: bool, tip: &str) -> boo
     let a = ui.ctx().animate_bool_with_time(id, on, 0.12);
     let h = ui.ctx().animate_bool_with_time(id.with("h"), resp.hovered(), 0.10);
     let p = ui.painter();
-    let fill = mix(mix(Color32::from_rgb(16, 17, 25), PANEL2, h), ACCENT, a);
-    p.rect_filled(rect, CornerRadius::same(6), fill);
-    p.rect_stroke(rect, CornerRadius::same(6), Stroke::new(1.0_f32, mix(mix(LINE, DIM, h), ACCENT, a)), StrokeKind::Inside);
-    let col = mix(mix(Color32::from_rgb(155, 165, 199), WHITE, h), Color32::BLACK, a);
+    let fill = mix(mix(shade(0.018), PANEL2(), h), ACCENT(), a * 0.24);
+    p.rect_filled(rect, rad(6), fill);
+    p.rect_stroke(rect, rad(6), Stroke::new(1.0_f32, mix(mix(LINE(), DIM(), h), ACCENT(), a)), StrokeKind::Inside);
+    let col = mix(mix(shade(0.66), WHITE(), h), ACCENT(), a);
     let c = rect.center();
     let s = Stroke::new(1.6_f32, col);
     let r = rect.height().min(rect.width()) * 0.27;
@@ -719,7 +884,7 @@ pub fn icon_btn(ui: &mut Ui, rect: Rect, icon: Icon, on: bool, tip: &str) -> boo
         Icon::Save => {
             // floppy disk
             let b = Rect::from_center_size(c, Vec2::splat(r * 2.1));
-            p.rect_stroke(b, CornerRadius::same(2), s, StrokeKind::Inside);
+            p.rect_stroke(b, rad(2), s, StrokeKind::Inside);
             p.rect_filled(Rect::from_min_size(b.min + Vec2::new(r * 0.45, 0.0), Vec2::new(r * 1.2, r * 0.75)), CornerRadius::ZERO, col);
             p.rect_stroke(Rect::from_min_max(Pos2::new(b.left() + r * 0.4, b.center().y + r * 0.1), Pos2::new(b.right() - r * 0.4, b.bottom())), CornerRadius::ZERO, s, StrokeKind::Inside);
         }
@@ -759,18 +924,18 @@ pub fn icon_btn(ui: &mut Ui, rect: Rect, icon: Icon, on: bool, tip: &str) -> boo
 /// Dress a widget like the dark value boxes under the knobs (near-black fill, thin line, no grey button look).
 pub fn dark_field_style(ui: &mut Ui) {
     let v = ui.visuals_mut();
-    let fill = Color32::from_rgb(4, 5, 10);
+    let fill = shade(-0.037);
     for w in [&mut v.widgets.inactive, &mut v.widgets.hovered, &mut v.widgets.active, &mut v.widgets.open] {
         w.bg_fill = fill;
         w.weak_bg_fill = fill;
-        w.corner_radius = CornerRadius::same(4);
+        w.corner_radius = rad(4);
         w.expansion = 0.0;
     }
-    v.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, LINE);
-    v.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, DIM);
-    v.widgets.active.bg_stroke = Stroke::new(1.0_f32, WHITE);
-    v.widgets.open.bg_stroke = Stroke::new(1.0_f32, DIM);
-    v.widgets.hovered.fg_stroke = Stroke::new(1.0_f32, WHITE);
+    v.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, LINE());
+    v.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, DIM());
+    v.widgets.active.bg_stroke = Stroke::new(1.0_f32, WHITE());
+    v.widgets.open.bg_stroke = Stroke::new(1.0_f32, DIM());
+    v.widgets.hovered.fg_stroke = Stroke::new(1.0_f32, WHITE());
 }
 
 pub fn enum_combo<E: Enum + PartialEq + 'static>(ui: &mut Ui, setter: &ParamSetter, p: &EnumParam<E>, id: &str, rect: Rect) {
@@ -808,10 +973,10 @@ pub fn enum_combo_styled<E: Enum + PartialEq + 'static>(ui: &mut Ui, setter: &Pa
 
 pub fn section_title(ui: &Ui, pos: Pos2, num: &str, title: &str) {
     let mut job = LayoutJob::default();
-    job.append("\u{2116}", 0.0, TextFormat { font_id: FontId::proportional(11.0), color: DIM, ..Default::default() });
-    job.append(&format!(" {num}  {title}"), 0.0, TextFormat { font_id: mono(10.5), color: DIM, ..Default::default() });
+    job.append("\u{2116}", 0.0, TextFormat { font_id: FontId::proportional(11.0), color: DIM(), ..Default::default() });
+    job.append(&format!(" {num}  {title}"), 0.0, TextFormat { font_id: mono(10.5), color: DIM(), ..Default::default() });
     let galley = ui.fonts(|f| f.layout_job(job));
-    ui.painter().galley(pos, galley, DIM);
+    ui.painter().galley(pos, galley, DIM());
 }
 
 /// Noise-type picker: "None" first, then the generators, the sample file last.

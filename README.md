@@ -17,10 +17,12 @@ SyntiTyzer (formerly NyashkSynth) is a Serum-style wavetable synthesizer VST3 pl
 
 ## 🎹 SyntiTyzer: wavetable synthesizer
 
-A Serum-style wavetable synthesizer with a dark blue-graphite design, 3D wavetable views and a tabbed modulation section. Projects made with NyashkSynth open with SyntiTyzer.
+A Serum-style wavetable synthesizer with a black / grey / white design where every module type has its own colour, **themes you can make and share (pictures included)**, movable modules, 3D wavetable views and a tabbed modulation section. Projects made with NyashkSynth open with SyntiTyzer.
 
 <p align="center"><img src="docs/img/nyashksynth.png" alt="SyntiTyzer" width="820"></p>
 <p align="center"><img src="docs/img/nyashksynth_edit.png" alt="SyntiTyzer wavetable editor" width="820"></p>
+<p align="center"><img src="docs/img/themes.png" alt="SyntiTyzer with a theme that has pictures" width="820"></p>
+<p align="center"><img src="docs/img/theme_page.png" alt="Theme and layout page" width="820"></p>
 
 | | |
 |---|---|
@@ -33,7 +35,8 @@ A Serum-style wavetable synthesizer with a dark blue-graphite design, 3D wavetab
 | **Effects** | **Effect rack**: up to 10 effects per bus, any order, the **same effect as often as you like** (Hyper/Dimension, Distortion, Flanger, Phaser, Chorus, Delay, Compressor, Reverb, EQ, Filter, **Bode** frequency shifter with shift / ring mod / spread + LFO + feedback, Utility); **two FX buses** with series / parallel / low-high / low-mid-high / mid-side routing; 14 distortion shapers, reverb algorithms incl. **Convolve** (your own impulse response), Delay HQ; live graph for every effect |
 | **Arpeggiator** | 7 patterns + **16-step Pattern editor**, 18 rates incl. triplets/dotted, gate, swing, octaves, hold |
 | **Browser** | categories, search, favorites, **star ratings and tags** |
-| **Layout** | Serum-style pages: SOUND / MOD / MATRIX / FX / SEQ / SETTINGS |
+| **Layout** | Serum-style pages: OSC / MIX / FX / MATRIX / GLOBAL; the modules of the OSC page can be rearranged (drag one onto another) |
+| **Themes** | 5 built-in themes, a colour picker for all 20 colours, roundness, see-through panels, a **background picture for the window and for each module type**; save a theme as one `.theme` file (pictures inside) and send it, drop a received one onto the window |
 | **Workflow** | Undo / redo (Ctrl+Z / Ctrl+Y), SETTINGS tab (A4 / scale tuning, MIDI channel, velocity curve) |
 | **MIDI** | **MIDI learn** on every knob, OCT/SEMI transpose spinners (also MIDI-learnable), pitch and mod wheels (can be hidden) |
 | **Low end** | **BASS MONO** (mono below 40–400 Hz), clean output stage (no hidden limiter; a safety clip only above +12 dBFS), peak-normalised wavetables, full-level sub |
@@ -44,9 +47,9 @@ A Serum-style wavetable synthesizer with a dark blue-graphite design, 3D wavetab
 
 ![Custom point filter](docs/img/filter_points.png)
 
-**Drag and drop:** drop a `.wav` onto OSC A / OSC B to load it as a wavetable, onto the SUB/NOISE panel to use it as a noise sample, or drop a `.nyp` file anywhere to load a preset. Dropped files are also copied into your library folders (works on Linux/X11, Windows and macOS hosts that pass file drops to plugins).
+**Drag and drop:** drop a `.wav` onto OSC A / OSC B to load it as a wavetable, onto the SUB/NOISE panel to use it as a noise sample, drop a `.nyp` file anywhere to load a preset, a `.theme` file to add a theme, or a PNG / JPG onto a module to use it as that module's picture. Dropped files are also copied into your library folders (works on Linux/X11, Windows and macOS hosts that pass file drops to plugins).
 
-User data: `~/.config/SyntiTyzer/{Presets,Tables,Noises,Packs}` (Windows: `%APPDATA%\SyntiTyzer\…`, macOS: `~/Library/Application Support/SyntiTyzer/…`; an old `NyashkSynth` folder is moved over automatically). The 146 **factory presets are compiled into the plugin**, so they are not files: you cannot delete them, but the preset browser has a **HIDE** button (and **RESTORE**) to remove the ones you do not want from the list. Your own presets are plain `.nyp` files in `Presets/` and can be deleted with the DELETE button or in your file manager.
+User data: `~/.config/SyntiTyzer/{Presets,Tables,Noises,Packs,Themes}` (Windows: `%APPDATA%\SyntiTyzer\…`, macOS: `~/Library/Application Support/SyntiTyzer/…`; an old `NyashkSynth` folder is moved over automatically). The 146 **factory presets are compiled into the plugin**, so they are not files: you cannot delete them, but the preset browser has a **HIDE** button (and **RESTORE**) to remove the ones you do not want from the list. Your own presets are plain `.nyp` files in `Presets/` and can be deleted with the DELETE button or in your file manager.
 
 ### Wavetable editor in short
 

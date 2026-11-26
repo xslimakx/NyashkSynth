@@ -47,9 +47,9 @@ pub fn footer(rect: Rect) -> Rect {
 #[allow(clippy::too_many_arguments)]
 pub fn browser(ui: &mut Ui, rect: Rect, title: &str, items: &[BItem], sel: Option<usize>, st: &mut BState, allow_fav: bool, id: &str) -> BAct {
     let mut act = BAct::None;
-    ui.painter().rect_filled(rect, CornerRadius::same(8), Color32::from_rgb(8, 8, 8));
-    ui.painter().rect_stroke(rect, CornerRadius::same(8), Stroke::new(1.0_f32, MID), StrokeKind::Inside);
-    ui.painter().text(Pos2::new(rect.left() + 16.0, rect.top() + 22.0), Align2::LEFT_CENTER, title, mono(12.0), WHITE);
+    ui.painter().rect_filled(rect, rad(8), shade(-0.025));
+    ui.painter().rect_stroke(rect, rad(8), Stroke::new(1.0_f32, MID()), StrokeKind::Inside);
+    ui.painter().text(Pos2::new(rect.left() + 16.0, rect.top() + 22.0), Align2::LEFT_CENTER, title, mono(12.0), WHITE());
     if pill_tip(ui, Rect::from_min_size(Pos2::new(rect.right() - 44.0, rect.top() + 10.0), Vec2::new(32.0, 24.0)), "x", false, "Close (Esc)") || ui.input(|i| i.key_pressed(egui::Key::Escape)) && !ui.memory(|m| m.focused().is_some()) {
         act = BAct::Close;
     }
@@ -63,8 +63,8 @@ pub fn browser(ui: &mut Ui, rect: Rect, title: &str, items: &[BItem], sel: Optio
     let cats_w = 190.0;
     let cat_r = Rect::from_min_size(body.min, Vec2::new(cats_w, body.height()));
     let list_r = Rect::from_min_max(Pos2::new(body.left() + cats_w + 8.0, body.top()), body.max);
-    ui.painter().rect_stroke(cat_r, CornerRadius::same(4), Stroke::new(1.0_f32, LINE), StrokeKind::Inside);
-    ui.painter().rect_stroke(list_r, CornerRadius::same(4), Stroke::new(1.0_f32, LINE), StrokeKind::Inside);
+    ui.painter().rect_stroke(cat_r, rad(4), Stroke::new(1.0_f32, LINE()), StrokeKind::Inside);
+    ui.painter().rect_stroke(list_r, rad(4), Stroke::new(1.0_f32, LINE()), StrokeKind::Inside);
 
     // categories
     let mut cats: Vec<String> = items.iter().map(|i| i.cat.clone()).collect();
@@ -109,11 +109,11 @@ pub fn browser(ui: &mut Ui, rect: Rect, title: &str, items: &[BItem], sel: Optio
         let resp = ui.interact(vis, egui::Id::new(("bcat", id, i)), Sense::click());
         let on = st.cat == *key;
         if on {
-            cpt.rect_filled(rr, CornerRadius::same(4), WHITE);
+            cpt.rect_filled(rr, rad(4), WHITE());
         } else if resp.hovered() {
-            cpt.rect_filled(rr, CornerRadius::same(4), PANEL2);
+            cpt.rect_filled(rr, rad(4), PANEL2());
         }
-        cpt.text(Pos2::new(rr.left() + 8.0, rr.center().y), Align2::LEFT_CENTER, label, mono(11.0), if on { Color32::BLACK } else { WHITE });
+        cpt.text(Pos2::new(rr.left() + 8.0, rr.center().y), Align2::LEFT_CENTER, label, mono(11.0), if on { Color32::BLACK } else { WHITE() });
         if resp.clicked() {
             st.cat = key.clone();
             st.scroll = 0.0;
@@ -166,11 +166,11 @@ pub fn browser(ui: &mut Ui, rect: Rect, title: &str, items: &[BItem], sel: Optio
         let resp = ui.interact(vis, egui::Id::new(("brow", id, i)), Sense::click());
         let on = sel == Some(i);
         if on {
-            lpt.rect_filled(rr, CornerRadius::same(4), WHITE);
+            lpt.rect_filled(rr, rad(4), WHITE());
         } else if resp.hovered() {
-            lpt.rect_filled(rr, CornerRadius::same(4), PANEL2);
+            lpt.rect_filled(rr, rad(4), PANEL2());
         }
-        let fg = if on { Color32::BLACK } else { WHITE };
+        let fg = if on { Color32::BLACK } else { WHITE() };
         lpt.text(Pos2::new(rr.left() + 10.0, rr.center().y), Align2::LEFT_CENTER, &it.name, mono(12.0), fg);
         if allow_fav {
             // five clickable stars, then tags
@@ -179,7 +179,7 @@ pub fn browser(ui: &mut Ui, rect: Rect, title: &str, items: &[BItem], sel: Optio
                 let sr = Rect::from_center_size(Pos2::new(rr.right() - 244.0 + 12.0 * k as f32, rr.center().y), Vec2::new(12.0, 18.0));
                 let r = ui.interact(sr.intersect(list_r), egui::Id::new(("brate", id, i, k)), Sense::click());
                 let filled = k < it.rating;
-                lpt.text(sr.center(), Align2::CENTER_CENTER, if filled { "\u{2605}" } else { "\u{2606}" }, mono(9.5), if filled { if on { Color32::BLACK } else { WHITE } } else if r.hovered() { WHITE } else if on { Color32::from_rgb(120, 120, 120) } else { MID });
+                lpt.text(sr.center(), Align2::CENTER_CENTER, if filled { "\u{2605}" } else { "\u{2606}" }, mono(9.5), if filled { if on { Color32::BLACK } else { WHITE() } } else if r.hovered() { WHITE() } else if on { shade(0.479) } else { MID() });
                 if r.clicked() {
                     rated = Some(if it.rating == k + 1 { 0 } else { k + 1 });
                 }
@@ -190,19 +190,19 @@ pub fn browser(ui: &mut Ui, rect: Rect, title: &str, items: &[BItem], sel: Optio
             }
             if !it.tags.is_empty() {
                 let t = it.tags.iter().take(3).map(|t| format!("#{t}")).collect::<Vec<_>>().join(" ");
-                lpt.text(Pos2::new(rr.right() - 262.0, rr.center().y), Align2::RIGHT_CENTER, t, mono(9.0), if on { Color32::from_rgb(70, 70, 70) } else { DIM });
+                lpt.text(Pos2::new(rr.right() - 262.0, rr.center().y), Align2::RIGHT_CENTER, t, mono(9.0), if on { shade(0.254) } else { DIM() });
             }
         }
         if st.cat.is_empty() || st.cat == FAV_CAT || star_of(&st.cat).is_some() {
-            lpt.text(Pos2::new(rr.right() - 70.0, rr.center().y), Align2::RIGHT_CENTER, &it.cat, mono(9.5), if on { Color32::from_rgb(60, 60, 60) } else { DIM });
+            lpt.text(Pos2::new(rr.right() - 70.0, rr.center().y), Align2::RIGHT_CENTER, &it.cat, mono(9.5), if on { shade(0.209) } else { DIM() });
         }
         if it.user {
-            lpt.text(Pos2::new(rr.right() - 34.0, rr.center().y), Align2::RIGHT_CENTER, "user", mono(9.0), if on { Color32::from_rgb(60, 60, 60) } else { MID });
+            lpt.text(Pos2::new(rr.right() - 34.0, rr.center().y), Align2::RIGHT_CENTER, "user", mono(9.0), if on { shade(0.209) } else { MID() });
         }
         if allow_fav {
             let star = Rect::from_center_size(Pos2::new(rr.right() - 14.0, rr.center().y), Vec2::splat(18.0));
             let sresp = ui.interact(star.intersect(list_r), egui::Id::new(("bstar", id, i)), Sense::click());
-            lpt.text(star.center(), Align2::CENTER_CENTER, if it.fav { "\u{2605}" } else { "\u{2606}" }, mono(13.0), if it.fav { if on { Color32::BLACK } else { WHITE } } else if on { Color32::from_rgb(90, 90, 90) } else { MID });
+            lpt.text(star.center(), Align2::CENTER_CENTER, if it.fav { "\u{2605}" } else { "\u{2606}" }, mono(13.0), if it.fav { if on { Color32::BLACK } else { WHITE() } } else if on { shade(0.344) } else { MID() });
             if sresp.clicked() {
                 act = BAct::Fav(i);
                 continue;
@@ -216,10 +216,10 @@ pub fn browser(ui: &mut Ui, rect: Rect, title: &str, items: &[BItem], sel: Optio
     if total > list_r.height() {
         let th = (list_r.height() / total).clamp(0.08, 1.0) * list_r.height();
         let ty = list_r.top() + (list_r.height() - th) * (st.scroll / (total - list_r.height() + 4.0).max(1.0));
-        ui.painter().rect_filled(Rect::from_min_size(Pos2::new(list_r.right() - 5.0, ty), Vec2::new(3.0, th)), CornerRadius::same(2), MID);
+        ui.painter().rect_filled(Rect::from_min_size(Pos2::new(list_r.right() - 5.0, ty), Vec2::new(3.0, th)), rad(2), MID());
     }
     if vis_idx.is_empty() {
-        ui.painter().text(list_r.center(), Align2::CENTER_CENTER, "nothing here", mono(11.0), DIM);
+        ui.painter().text(list_r.center(), Align2::CENTER_CENTER, "nothing here", mono(11.0), DIM());
     }
     act
 }

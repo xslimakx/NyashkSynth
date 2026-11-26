@@ -367,12 +367,12 @@ pub(super) fn key_mods(mods: KeyButMask) -> Modifiers {
     let key_masks = [
         (KeyButMask::SHIFT, Modifiers::SHIFT),
         (KeyButMask::CONTROL, Modifiers::CONTROL),
-        // X11's mod keys are configurable, but this seems
-        // like a reasonable default for US keyboards, at least,
-        // where the "windows" key seems to be MOD_MASK_4.
-        (KeyButMask::BUTTON1, Modifiers::ALT),
-        (KeyButMask::BUTTON2, Modifiers::NUM_LOCK),
-        (KeyButMask::BUTTON4, Modifiers::META),
+        // X11's mod keys are configurable, but this is the usual setup: Mod1 = Alt,
+        // Mod2 = Num Lock, Mod4 = the "windows" key. (Upstream used the BUTTON masks here, so
+        // holding the left mouse button looked like Alt and the middle one like Num Lock.)
+        (KeyButMask::MOD1, Modifiers::ALT),
+        (KeyButMask::MOD2, Modifiers::NUM_LOCK),
+        (KeyButMask::MOD4, Modifiers::META),
         (KeyButMask::LOCK, Modifiers::CAPS_LOCK),
     ];
     for (mask, modifiers) in &key_masks {

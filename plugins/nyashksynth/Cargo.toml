@@ -11,6 +11,9 @@ crate-type = ["cdylib", "lib"]
 [dependencies]
 nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", default-features = false, features = ["vst3"] }
 nih_plug_egui = { path = "../../vendor/nih_plug_egui" }
+# background images for themes (pure Rust decoders)
+png = "0.17"
+jpeg-decoder = { version = "0.3", default-features = false }
 
 [features]
 standalone = ["nih_plug/standalone"]

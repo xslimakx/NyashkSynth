@@ -259,7 +259,7 @@ pub fn fx_icon(pa: &egui::Painter, kind: usize, r: Rect, col: Color32) {
             for (k, v) in [0.35f32, 0.65].iter().enumerate() {
                 let x = l + w * (0.3 + k as f32 * 0.4);
                 pa.line_segment([Pos2::new(x, t), Pos2::new(x, t + h)], egui::Stroke::new(1.0_f32, col.gamma_multiply(0.5)));
-                pa.rect_filled(Rect::from_center_size(Pos2::new(x, t + h * v), egui::Vec2::new(w * 0.3, 3.0)), egui::CornerRadius::same(1), col);
+                pa.rect_filled(Rect::from_center_size(Pos2::new(x, t + h * v), egui::Vec2::new(w * 0.3, 3.0)), rad(1), col);
             }
         }
     }
@@ -279,8 +279,8 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
     let bus = st.fx_bus.min(1);
     // ---- header card: busses, routing, bus 2 level, signal path
     let hdr = Rect::from_min_max(Pos2::new(c.left(), c.top() - 8.0), Pos2::new(c.right(), c.top() + 62.0));
-    ui.painter().rect_filled(hdr, CornerRadius::same(7), Color32::from_rgb(13, 14, 22));
-    ui.painter().rect_stroke(hdr, CornerRadius::same(7), Stroke::new(1.0_f32, Color32::from_rgb(30, 32, 42)), StrokeKind::Inside);
+    ui.painter().rect_filled(hdr, rad(7), shade(0.005));
+    ui.painter().rect_stroke(hdr, rad(7), Stroke::new(1.0_f32, shade(0.085)), StrokeKind::Inside);
     let hx = c.left() + 12.0;
     let hy = c.top() + 14.0;
     for k in 0..2 {
@@ -289,7 +289,7 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
             st.fx_sel = 0;
         }
     }
-    ui.painter().text(Pos2::new(hx + 160.0, hy + 13.0), Align2::LEFT_CENTER, "ROUTING", mono(9.0), DIM);
+    ui.painter().text(Pos2::new(hx + 160.0, hy + 13.0), Align2::LEFT_CENTER, "ROUTING", mono(9.0), DIM());
     enum_combo(ui, setter, &p.fx_route, "fx_route", Rect::from_min_size(Pos2::new(hx + 218.0, hy), Vec2::new(190.0, 26.0)));
     let mut rx = hx + 430.0;
     match p.fx_route.value() {
@@ -312,19 +312,19 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
         FxRoute::SplitLmh => "lows > bus 1, mids > bus 2, highs dry",
         FxRoute::SplitMs => "mid > bus 1, side > bus 2",
     };
-    ui.painter().text(Pos2::new(c.right() - 14.0, hdr.center().y), Align2::RIGHT_CENTER, format!("IN  >  {route}  >  OUT"), mono(9.5), DIM);
+    ui.painter().text(Pos2::new(c.right() - 14.0, hdr.center().y), Align2::RIGHT_CENTER, format!("IN  >  {route}  >  OUT"), mono(9.5), DIM());
 
     // ---- chain list (left)
     let top = c.top() + 78.0;
     let lw = 292.0;
     let card = Rect::from_min_max(Pos2::new(c.left() + lw + 14.0, top - 14.0), Pos2::new(c.right(), c.bottom() - 2.0));
-    ui.painter().rect_filled(card, CornerRadius::same(7), Color32::from_rgb(13, 14, 22));
-    ui.painter().rect_stroke(card, CornerRadius::same(7), Stroke::new(1.0_f32, Color32::from_rgb(30, 32, 42)), StrokeKind::Inside);
+    ui.painter().rect_filled(card, rad(7), shade(0.005));
+    ui.painter().rect_stroke(card, rad(7), Stroke::new(1.0_f32, shade(0.085)), StrokeKind::Inside);
     let lcard = Rect::from_min_max(Pos2::new(c.left(), top - 14.0), Pos2::new(c.left() + lw, c.bottom() - 2.0));
-    ui.painter().rect_filled(lcard, CornerRadius::same(7), Color32::from_rgb(13, 14, 22));
-    ui.painter().rect_stroke(lcard, CornerRadius::same(7), Stroke::new(1.0_f32, Color32::from_rgb(30, 32, 42)), StrokeKind::Inside);
+    ui.painter().rect_filled(lcard, rad(7), shade(0.005));
+    ui.painter().rect_stroke(lcard, rad(7), Stroke::new(1.0_f32, shade(0.085)), StrokeKind::Inside);
     let list = used(p, bus);
-    ui.painter().text(Pos2::new(c.left() + 12.0, top + 6.0), Align2::LEFT_CENTER, format!("BUS {} CHAIN   {} / {}", bus + 1, list.len(), RACK_SLOTS), mono(10.0), WHITE);
+    ui.painter().text(Pos2::new(c.left() + 12.0, top + 6.0), Align2::LEFT_CENTER, format!("BUS {} CHAIN   {} / {}", bus + 1, list.len(), RACK_SLOTS), mono(10.0), WHITE());
     let rows_top = top + 22.0;
     let (rh, gap) = (36.0f32, 4.0f32);
     let row = |pos: usize| Rect::from_min_size(Pos2::new(c.left() + 10.0, rows_top + (rh + gap) * pos as f32), Vec2::new(lw - 20.0, rh));
@@ -345,14 +345,14 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
         let dragging = st.fx_drag == Some(pos);
         {
             let painter = ui.painter();
-            painter.rect_filled(r, CornerRadius::same(5), if sel { Color32::from_rgb(30, 32, 42) } else if resp.hovered() { PANEL2 } else { Color32::from_rgb(12, 13, 20) });
-            painter.rect_stroke(r, CornerRadius::same(5), Stroke::new(1.0_f32, if dragging || sel { WHITE } else { LINE }), StrokeKind::Inside);
+            painter.rect_filled(r, rad(5), if sel { shade(0.085) } else if resp.hovered() { PANEL2() } else { shade(-0.000) });
+            painter.rect_stroke(r, rad(5), Stroke::new(1.0_f32, if dragging || sel { WHITE() } else { LINE() }), StrokeKind::Inside);
             let dot = Pos2::new(r.left() + 16.0, r.center().y);
-            painter.circle_filled(dot, 5.0, if on { WHITE } else { Color32::from_rgb(44, 47, 60) });
-            painter.circle_stroke(dot, 5.0, Stroke::new(1.0_f32, if on { WHITE } else { DIM }));
-            fx_icon(painter, kind, Rect::from_center_size(Pos2::new(r.left() + 44.0, r.center().y), egui::Vec2::new(22.0, 14.0)), if on { ACCENT } else { DIM });
-            painter.text(Pos2::new(r.left() + 62.0, r.center().y), Align2::LEFT_CENTER, format!("{}  {}", pos + 1, fxdesc::KIND_NAMES[kind]), mono(11.5), if on { WHITE } else { DIM });
-            painter.text(Pos2::new(r.right() - 12.0, r.center().y), Align2::CENTER_CENTER, "x", mono(13.0), if resp.hovered() { WHITE } else { DIM });
+            painter.circle_filled(dot, 5.0, if on { WHITE() } else { shade(0.153) });
+            painter.circle_stroke(dot, 5.0, Stroke::new(1.0_f32, if on { WHITE() } else { DIM() }));
+            fx_icon(painter, kind, Rect::from_center_size(Pos2::new(r.left() + 44.0, r.center().y), egui::Vec2::new(22.0, 14.0)), if on { ACCENT() } else { DIM() });
+            painter.text(Pos2::new(r.left() + 62.0, r.center().y), Align2::LEFT_CENTER, format!("{}  {}", pos + 1, fxdesc::KIND_NAMES[kind]), mono(11.5), if on { WHITE() } else { DIM() });
+            painter.text(Pos2::new(r.right() - 12.0, r.center().y), Align2::CENTER_CENTER, "x", mono(13.0), if resp.hovered() { WHITE() } else { DIM() });
         }
         if resp.drag_started() {
             st.fx_drag = Some(pos);
@@ -404,10 +404,10 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
         if let Some(pos) = ui.input(|i| i.pointer.latest_pos()) {
             let to = (((pos.y - rows_top) / (rh + gap)).floor().max(0.0) as usize).min(list.len().max(1) - 1);
             let y = rows_top + (rh + gap) * (if to > from { to + 1 } else { to }) as f32 - gap * 0.5;
-            ui.painter().line_segment([Pos2::new(c.left() + 10.0, y), Pos2::new(c.left() + lw - 10.0, y)], Stroke::new(2.0_f32, WHITE));
+            ui.painter().line_segment([Pos2::new(c.left() + 10.0, y), Pos2::new(c.left() + lw - 10.0, y)], Stroke::new(2.0_f32, WHITE()));
             let lp = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("fx_ghost")));
             let g = Rect::from_center_size(pos + Vec2::new(14.0, 12.0), Vec2::new(150.0, 24.0));
-            lp.rect_filled(g, CornerRadius::same(5), WHITE);
+            lp.rect_filled(g, rad(5), WHITE());
             if let Some(&si) = list.get(from) {
                 let kind = (slot_of(p, bus, si).ty.value() as usize - 1).min(NKINDS - 1);
                 lp.text(g.center(), Align2::CENTER_CENTER, fxdesc::KIND_NAMES[kind], mono(10.5), Color32::BLACK);
@@ -421,11 +421,11 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
             st.fx_menu = !st.fx_menu;
         }
     } else {
-        ui.painter().text(add_r.center(), Align2::CENTER_CENTER, "chain is full", mono(10.0), DIM);
+        ui.painter().text(add_r.center(), Align2::CENTER_CENTER, "chain is full", mono(10.0), DIM());
     }
     if list.is_empty() {
-        ui.painter().text(Pos2::new(c.left() + lw + 40.0, top + 70.0), Align2::LEFT_CENTER, "This bus has no effects yet.  Press  + ADD EFFECT  on the left.", mono(12.0), DIM);
-        ui.painter().text(Pos2::new(c.left() + lw + 40.0, top + 96.0), Align2::LEFT_CENTER, "Every effect can be used several times, in any order (drag the rows to reorder).", mono(10.0), DIM);
+        ui.painter().text(Pos2::new(c.left() + lw + 40.0, top + 70.0), Align2::LEFT_CENTER, "This bus has no effects yet.  Press  + ADD EFFECT  on the left.", mono(12.0), DIM());
+        ui.painter().text(Pos2::new(c.left() + lw + 40.0, top + 96.0), Align2::LEFT_CENTER, "Every effect can be used several times, in any order (drag the rows to reorder).", mono(10.0), DIM());
     }
     if st.fx_menu && list.len() < RACK_SLOTS {
         let pos = Pos2::new(add_r.left(), add_r.bottom() + 2.0);
@@ -434,14 +434,14 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
                 ui.set_min_width(lw - 16.0);
                 for (kind, name, desc) in fxdesc::MENU {
                     let resp = ui.selectable_label(false, egui::RichText::new(format!("       {name}")).font(mono(12.0))).on_hover_text(desc);
-                    fx_icon(ui.painter(), kind, Rect::from_center_size(Pos2::new(resp.rect.left() + 16.0, resp.rect.center().y), egui::Vec2::new(20.0, 12.0)), ACCENT);
+                    fx_icon(ui.painter(), kind, Rect::from_center_size(Pos2::new(resp.rect.left() + 16.0, resp.rect.center().y), egui::Vec2::new(20.0, 12.0)), ACCENT());
                     if resp.clicked() {
                         if let Some(i) = add_effect(setter, p, bus, kind) {
                             st.fx_sel = i;
                         }
                         st.fx_menu = false;
                     }
-                    ui.label(egui::RichText::new(desc).font(mono(8.5)).color(DIM));
+                    ui.label(egui::RichText::new(desc).font(mono(8.5)).color(DIM()));
                     ui.add_space(2.0);
                 }
             });
@@ -463,9 +463,9 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
     let r = slot_reals(s, kind);
     let fp = fxdesc::patch_for(kind, &r, 120.0);
     let pos_in = list.iter().position(|&i| i == si).unwrap_or(0) + 1;
-    fx_icon(ui.painter(), kind, Rect::from_center_size(Pos2::new(dx + 12.0, top + 6.0), egui::Vec2::new(24.0, 16.0)), ACCENT);
-    ui.painter().text(Pos2::new(dx + 32.0, top + 6.0), Align2::LEFT_CENTER, fxdesc::KIND_NAMES[kind], mono(13.0), WHITE);
-    ui.painter().text(Pos2::new(dx + 130.0, top + 6.0), Align2::LEFT_CENTER, format!("effect {pos_in} of {} on bus {}", list.len(), bus + 1), mono(9.0), DIM);
+    fx_icon(ui.painter(), kind, Rect::from_center_size(Pos2::new(dx + 12.0, top + 6.0), egui::Vec2::new(24.0, 16.0)), ACCENT());
+    ui.painter().text(Pos2::new(dx + 32.0, top + 6.0), Align2::LEFT_CENTER, fxdesc::KIND_NAMES[kind], mono(13.0), WHITE());
+    ui.painter().text(Pos2::new(dx + 130.0, top + 6.0), Align2::LEFT_CENTER, format!("effect {pos_in} of {} on bus {}", list.len(), bus + 1), mono(9.0), DIM());
     if pill_tip(ui, Rect::from_min_size(Pos2::new(dx + 330.0, top - 5.0), Vec2::new(60.0, 22.0)), if s.on.value() { "ON" } else { "OFF" }, s.on.value(), "Effect on / off") {
         set_b(setter, &s.on, !s.on.value());
     }
@@ -480,7 +480,7 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
             }
         }
     }
-    ui.painter().text(Pos2::new(dx + 570.0, top + 6.0), Align2::LEFT_CENTER, fxdesc::MENU.iter().find(|m| m.0 == kind).map(|m| m.2).unwrap_or(""), mono(9.0), DIM);
+    ui.painter().text(Pos2::new(dx + 570.0, top + 6.0), Align2::LEFT_CENTER, fxdesc::MENU.iter().find(|m| m.0 == kind).map(|m| m.2).unwrap_or(""), mono(9.0), DIM());
 
     // knobs
     let vis = visible(kind, &r);
@@ -494,7 +494,7 @@ pub fn fx_tab(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, 
         let prm = &s.v[i].v;
         match d.fm {
             fxdesc::Fm::Choice => {
-                ui.painter().text(Pos2::new(x + cw * 0.5, ky + 14.0), Align2::CENTER_CENTER, d.name, mono(9.5), DIM);
+                ui.painter().text(Pos2::new(x + cw * 0.5, ky + 14.0), Align2::CENTER_CENTER, d.name, mono(9.5), DIM());
                 choice_combo(ui, setter, prm, d, Rect::from_min_size(Pos2::new(x + 2.0, ky + 28.0), Vec2::new(cw - 4.0, 26.0)), ("fxch", bus, si, i));
             }
             fxdesc::Fm::Toggle => {
@@ -574,21 +574,21 @@ fn graph(ui: &mut Ui, g: Rect, f: impl Fn(f32) -> f32, range: (f32, f32), spec: 
     dark_box(ui, g);
     let pa = ui.painter().with_clip_rect(g.shrink(1.0));
     if let Some((sp, fs)) = spec {
-        crate::editor::draw_spectrum(&pa, g.shrink(1.0), sp, fs, -80.0, Color32::from_rgb(40, 43, 56));
+        crate::editor::draw_spectrum(&pa, g.shrink(1.0), sp, fs, -80.0, shade(0.135));
     }
     let (lo, hi) = (20.0f32, 20000.0f32);
     let xf = |fr: f32| g.left() + g.width() * ((fr / lo).ln() / (hi / lo).ln());
     let yd = |db: f32| g.bottom() - g.height() * ((db.clamp(range.0, range.1) - range.0) / (range.1 - range.0));
     for fr in [100.0f32, 1000.0, 10000.0] {
-        pa.line_segment([Pos2::new(xf(fr), g.top()), Pos2::new(xf(fr), g.bottom())], Stroke::new(1.0_f32, Color32::from_rgb(21, 23, 31)));
+        pa.line_segment([Pos2::new(xf(fr), g.top()), Pos2::new(xf(fr), g.bottom())], Stroke::new(1.0_f32, shade(0.044)));
     }
-    pa.line_segment([Pos2::new(g.left(), yd(0.0)), Pos2::new(g.right(), yd(0.0))], Stroke::new(1.0_f32, Color32::from_rgb(30, 32, 42)));
+    pa.line_segment([Pos2::new(g.left(), yd(0.0)), Pos2::new(g.right(), yd(0.0))], Stroke::new(1.0_f32, shade(0.085)));
     let pts: Vec<Pos2> = (0..=240).map(|i| {
         let fr = lo * (hi / lo).powf(i as f32 / 240.0);
         Pos2::new(xf(fr), yd(f(fr)))
     }).collect();
-    fill_under(&pa, &pts, yd(0.0).min(g.bottom()), Color32::from_rgb(26, 28, 38));
-    pa.add(egui::Shape::line(pts, PathStroke::new(1.6_f32, ACCENT)));
+    fill_under(&pa, &pts, yd(0.0).min(g.bottom()), shade(0.067));
+    pa.add(egui::Shape::line(pts, PathStroke::new(1.6_f32, ACCENT())));
 }
 
 /// Draggable EQ nodes on top of the response graph (drag = frequency / gain, wheel on the mid node = Q).
@@ -637,8 +637,8 @@ fn eq_nodes(ui: &mut Ui, setter: &ParamSetter, s: &FxSlotP, g: Rect, key: (usize
         }
         let hot = resp.hovered() || resp.dragged();
         ui.painter().circle_filled(c, if hot { 7.0 } else { 5.5 }, Color32::BLACK);
-        ui.painter().circle_stroke(c, if hot { 7.0 } else { 5.5 }, Stroke::new(1.6_f32, WHITE));
-        ui.painter().text(c + Vec2::new(0.0, -13.0), Align2::CENTER_CENTER, format!("{}", i + 1), mono(8.5), DIM);
+        ui.painter().circle_stroke(c, if hot { 7.0 } else { 5.5 }, Stroke::new(1.6_f32, WHITE()));
+        ui.painter().text(c + Vec2::new(0.0, -13.0), Align2::CENTER_CENTER, format!("{}", i + 1), mono(8.5), DIM());
     }
 }
 
@@ -696,7 +696,7 @@ fn ff_node(ui: &mut Ui, setter: &ParamSetter, s: &FxSlotP, g: Rect, key: (usize,
     }
     let hot = area.hovered() || area.dragged();
     ui.painter().circle_filled(c, if hot { 7.0 } else { 5.5 }, Color32::BLACK);
-    ui.painter().circle_stroke(c, if hot { 7.0 } else { 5.5 }, Stroke::new(1.6_f32, WHITE));
+    ui.painter().circle_stroke(c, if hot { 7.0 } else { 5.5 }, Stroke::new(1.6_f32, WHITE()));
 }
 
 
@@ -704,8 +704,8 @@ fn ff_node(ui: &mut Ui, setter: &ParamSetter, s: &FxSlotP, g: Rect, key: (usize,
 fn dist_curve(ui: &mut Ui, g: Rect, fp: &crate::fx::FxPatch) {
     dark_box(ui, g);
     let pa = ui.painter().with_clip_rect(g.shrink(1.0));
-    pa.line_segment([Pos2::new(g.left(), g.center().y), Pos2::new(g.right(), g.center().y)], Stroke::new(1.0_f32, Color32::from_rgb(25, 26, 36)));
-    pa.line_segment([Pos2::new(g.center().x, g.top()), Pos2::new(g.center().x, g.bottom())], Stroke::new(1.0_f32, Color32::from_rgb(25, 26, 36)));
+    pa.line_segment([Pos2::new(g.left(), g.center().y), Pos2::new(g.right(), g.center().y)], Stroke::new(1.0_f32, shade(0.060)));
+    pa.line_segment([Pos2::new(g.center().x, g.top()), Pos2::new(g.center().x, g.bottom())], Stroke::new(1.0_f32, shade(0.060)));
     let drv = 1.0 + fp.ds_drive * 14.0;
     let pts: Vec<Pos2> = (0..=160)
         .map(|i| {
@@ -722,8 +722,8 @@ fn dist_curve(ui: &mut Ui, g: Rect, fp: &crate::fx::FxPatch) {
             Pos2::new(g.left() + g.width() * i as f32 / 160.0, g.center().y - y.clamp(-1.1, 1.1) * g.height() * 0.42)
         })
         .collect();
-    pa.add(egui::Shape::line(pts, PathStroke::new(1.6_f32, ACCENT)));
-    pa.text(Pos2::new(g.left() + 8.0, g.top() + 9.0), Align2::LEFT_CENTER, "TRANSFER CURVE  (input > output)", mono(9.0), DIM);
+    pa.add(egui::Shape::line(pts, PathStroke::new(1.6_f32, ACCENT())));
+    pa.text(Pos2::new(g.left() + 8.0, g.top() + 9.0), Align2::LEFT_CENTER, "TRANSFER CURVE  (input > output)", mono(9.0), DIM());
 }
 
 /// Where every input frequency lands after the Bode shifter.
@@ -734,10 +734,10 @@ fn bode_map(ui: &mut Ui, g: Rect, fp: &crate::fx::FxPatch) {
     let fmax = 6000.0f32;
     let xy = |fi: f32, fo: f32| Pos2::new(sq.left() + sq.width() * (fi / fmax).clamp(0.0, 1.0), sq.bottom() - sq.height() * (fo / fmax).clamp(0.0, 1.0));
     for f in [1000.0f32, 2000.0, 3000.0, 4000.0, 5000.0] {
-        pa.line_segment([xy(f, 0.0), xy(f, fmax)], Stroke::new(1.0_f32, Color32::from_rgb(19, 21, 29)));
-        pa.line_segment([xy(0.0, f), xy(fmax, f)], Stroke::new(1.0_f32, Color32::from_rgb(19, 21, 29)));
+        pa.line_segment([xy(f, 0.0), xy(f, fmax)], Stroke::new(1.0_f32, shade(0.035)));
+        pa.line_segment([xy(0.0, f), xy(fmax, f)], Stroke::new(1.0_f32, shade(0.035)));
     }
-    pa.line_segment([xy(0.0, 0.0), xy(fmax, fmax)], Stroke::new(1.0_f32, Color32::from_rgb(46, 49, 62)));
+    pa.line_segment([xy(0.0, 0.0), xy(fmax, fmax)], Stroke::new(1.0_f32, shade(0.162)));
     let sh = fp.bd_shift + fp.bd_fine;
     // a negative output frequency folds back to a positive one (and is heard that way)
     let line = |shift: f32, col: Color32| {
@@ -749,20 +749,20 @@ fn bode_map(ui: &mut Ui, g: Rect, fp: &crate::fx::FxPatch) {
     };
     match fp.bd_mode {
         1 => {
-            line(sh, WHITE);
+            line(sh, WHITE());
             line(-sh, Color32::from_rgb(167, 179, 214));
         }
         2 => {
-            line(sh, WHITE);
+            line(sh, WHITE());
             line(-sh, Color32::from_rgb(114, 122, 148));
         }
-        _ => line(sh, WHITE),
+        _ => line(sh, WHITE()),
     }
     if fp.bd_lfo_depth > 1.0 {
         let d = fp.bd_lfo_depth;
         for s in [sh + d, sh - d] {
             let pts: Vec<Pos2> = (0..=60).map(|i| { let fi = fmax * i as f32 / 60.0; xy(fi, (fi + s).abs()) }).collect();
-            pa.add(egui::Shape::line(pts, PathStroke::new(1.0_f32, Color32::from_rgb(62, 66, 82))));
+            pa.add(egui::Shape::line(pts, PathStroke::new(1.0_f32, shade(0.238))));
         }
     }
     let note = match fp.bd_mode {
@@ -770,8 +770,8 @@ fn bode_map(ui: &mut Ui, g: Rect, fp: &crate::fx::FxPatch) {
         2 => format!("SPREAD  left f{:+.0}  (white)   right f{:+.0}  (grey)", sh, -sh),
         _ => format!("SHIFT  every partial moves by {:+.1} Hz  (not a pitch shift: the sound turns inharmonic)", sh),
     };
-    pa.text(Pos2::new(g.left() + 8.0, g.top() + 9.0), Align2::LEFT_CENTER, note, mono(9.0), DIM);
-    pa.text(Pos2::new(sq.right() - 6.0, sq.bottom() - 8.0), Align2::RIGHT_CENTER, "x: input Hz   y: output Hz   (0 - 6 kHz)", mono(8.5), DIM);
+    pa.text(Pos2::new(g.left() + 8.0, g.top() + 9.0), Align2::LEFT_CENTER, note, mono(9.0), DIM());
+    pa.text(Pos2::new(sq.right() - 6.0, sq.bottom() - 8.0), Align2::RIGHT_CENTER, "x: input Hz   y: output Hz   (0 - 6 kHz)", mono(8.5), DIM());
 }
 
 fn comp_curve(ui: &mut Ui, g: Rect, fp: &crate::fx::FxPatch) {
@@ -781,10 +781,10 @@ fn comp_curve(ui: &mut Ui, g: Rect, fp: &crate::fx::FxPatch) {
     let sq = Rect::from_min_size(Pos2::new(g.left() + 14.0, g.top() + 8.0), Vec2::splat(side));
     let xy = |inp: f32, out: f32| Pos2::new(sq.left() + sq.width() * ((inp + 60.0) / 60.0).clamp(0.0, 1.0), sq.bottom() - sq.height() * ((out + 60.0) / 60.0).clamp(0.0, 1.0));
     for db in [-48.0f32, -36.0, -24.0, -12.0] {
-        pa.line_segment([xy(db, -60.0), xy(db, 0.0)], Stroke::new(1.0_f32, Color32::from_rgb(19, 21, 29)));
-        pa.line_segment([xy(-60.0, db), xy(0.0, db)], Stroke::new(1.0_f32, Color32::from_rgb(19, 21, 29)));
+        pa.line_segment([xy(db, -60.0), xy(db, 0.0)], Stroke::new(1.0_f32, shade(0.035)));
+        pa.line_segment([xy(-60.0, db), xy(0.0, db)], Stroke::new(1.0_f32, shade(0.035)));
     }
-    pa.line_segment([xy(-60.0, -60.0), xy(0.0, 0.0)], Stroke::new(1.0_f32, Color32::from_rgb(39, 41, 53)));
+    pa.line_segment([xy(-60.0, -60.0), xy(0.0, 0.0)], Stroke::new(1.0_f32, shade(0.127)));
     let pts: Vec<Pos2> = (0..=60)
         .map(|i| {
             let inp = -60.0 + i as f32;
@@ -792,11 +792,11 @@ fn comp_curve(ui: &mut Ui, g: Rect, fp: &crate::fx::FxPatch) {
             xy(inp, out)
         })
         .collect();
-    pa.add(egui::Shape::line(pts, PathStroke::new(1.8_f32, ACCENT)));
+    pa.add(egui::Shape::line(pts, PathStroke::new(1.8_f32, ACCENT())));
     let tp = xy(fp.cp_thresh, fp.cp_thresh + fp.cp_gain);
     pa.circle_filled(tp, 4.0, Color32::BLACK);
-    pa.circle_stroke(tp, 4.0, Stroke::new(1.5_f32, WHITE));
-    pa.text(Pos2::new(sq.right() + 14.0, sq.top() + 6.0), Align2::LEFT_CENTER, "INPUT dB  >  OUTPUT dB (dot = threshold)", mono(9.0), DIM);
+    pa.circle_stroke(tp, 4.0, Stroke::new(1.5_f32, WHITE()));
+    pa.text(Pos2::new(sq.right() + 14.0, sq.top() + 6.0), Align2::LEFT_CENTER, "INPUT dB  >  OUTPUT dB (dot = threshold)", mono(9.0), DIM());
 }
 
 /// Repeats of the delay: bar height = level, left channel up, right channel down.
@@ -806,10 +806,10 @@ fn delay_taps(ui: &mut Ui, g: Rect, fp: &crate::fx::FxPatch) {
     let (l, r) = (fp.dl_ms_l.max(1.0), fp.dl_ms_r.max(1.0));
     let tmax = (l.max(r) * 8.0).max(400.0);
     let mid = g.center().y;
-    pa.line_segment([Pos2::new(g.left(), mid), Pos2::new(g.right(), mid)], Stroke::new(1.0_f32, Color32::from_rgb(30, 32, 42)));
+    pa.line_segment([Pos2::new(g.left(), mid), Pos2::new(g.right(), mid)], Stroke::new(1.0_f32, shade(0.085)));
     let xt = |t: f32| g.left() + 14.0 + (g.width() - 28.0) * (t / tmax);
     let h = g.height() * 0.42;
-    pa.line_segment([Pos2::new(xt(0.0), mid - h), Pos2::new(xt(0.0), mid + h)], Stroke::new(3.0_f32, WHITE));
+    pa.line_segment([Pos2::new(xt(0.0), mid - h), Pos2::new(xt(0.0), mid + h)], Stroke::new(3.0_f32, WHITE()));
     let fb = fp.dl_fb.clamp(0.0, 0.98);
     let mut amp = 1.0f32;
     for k in 1..=64 {
@@ -821,13 +821,13 @@ fn delay_taps(ui: &mut Ui, g: Rect, fp: &crate::fx::FxPatch) {
         let (tl, tr) = (l * k as f32, r * k as f32);
         let (show_l, show_r) = if fp.dl_pp { (k % 2 == 1, k % 2 == 0) } else { (true, true) };
         if show_l && tl <= tmax {
-            pa.line_segment([Pos2::new(xt(tl), mid), Pos2::new(xt(tl), mid - h * amp)], Stroke::new(3.0_f32, Color32::from_rgb(212, 216, 220)));
+            pa.line_segment([Pos2::new(xt(tl), mid), Pos2::new(xt(tl), mid - h * amp)], Stroke::new(3.0_f32, shade(0.907)));
         }
         if show_r && tr <= tmax {
             pa.line_segment([Pos2::new(xt(tr) + 4.0, mid), Pos2::new(xt(tr) + 4.0, mid + h * amp)], Stroke::new(3.0_f32, Color32::from_rgb(132, 141, 170)));
         }
     }
-    pa.text(Pos2::new(g.left() + 8.0, g.top() + 9.0), Align2::LEFT_CENTER, format!("REPEATS  (L up, R down)   0 - {:.0} ms", tmax), mono(9.0), DIM);
+    pa.text(Pos2::new(g.left() + 8.0, g.top() + 9.0), Align2::LEFT_CENTER, format!("REPEATS  (L up, R down)   0 - {:.0} ms", tmax), mono(9.0), DIM());
 }
 
 /// Rough decay curve of the reverb (level over time).
@@ -844,9 +844,9 @@ fn reverb_decay(ui: &mut Ui, g: Rect, fp: &crate::fx::FxPatch) {
             Pos2::new(g.left() + 14.0 + (g.width() - 28.0) * t / tmax, g.bottom() - 10.0 - (g.height() - 30.0) * ((db + 60.0) / 60.0).clamp(0.0, 1.0))
         })
         .collect();
-    fill_under(&pa, &pts, g.bottom() - 10.0, Color32::from_rgb(26, 28, 38));
-    pa.add(egui::Shape::line(pts, PathStroke::new(1.8_f32, ACCENT)));
-    pa.text(Pos2::new(g.left() + 8.0, g.top() + 9.0), Align2::LEFT_CENTER, format!("DECAY (about {:.1} s to -60 dB)   axis 0 - 8 s", t60 + pre), mono(9.0), DIM);
+    fill_under(&pa, &pts, g.bottom() - 10.0, shade(0.067));
+    pa.add(egui::Shape::line(pts, PathStroke::new(1.8_f32, ACCENT())));
+    pa.text(Pos2::new(g.left() + 8.0, g.top() + 9.0), Align2::LEFT_CENTER, format!("DECAY (about {:.1} s to -60 dB)   axis 0 - 8 s", t60 + pre), mono(9.0), DIM());
 }
 
 // ---------------------------------------------------------------- animated pictures of the modulation effects
@@ -857,7 +857,7 @@ fn live_phase(ui: &Ui, rate_hz: f32) -> f32 {
 }
 
 fn caption(pa: &egui::Painter, g: Rect, t: String) {
-    pa.text(Pos2::new(g.left() + 8.0, g.top() + 9.0), Align2::LEFT_CENTER, t, mono(9.0), DIM);
+    pa.text(Pos2::new(g.left() + 8.0, g.top() + 9.0), Align2::LEFT_CENTER, t, mono(9.0), DIM());
 }
 
 /// Comb filter of the flanger, moving with its LFO (the notches sweep exactly like the sound does).
@@ -931,16 +931,16 @@ fn chorus_view(ui: &mut Ui, g: Rect, fp: &crate::fx::FxPatch) {
     let (ymin, ymax) = (0.0f32, (fp.ch_delay * 1.9).max(hi * 1.1).max(4.0));
     let yv = |ms: f32| g.bottom() - 18.0 - (g.height() - 40.0) * ((ms - ymin) / (ymax - ymin)).clamp(0.0, 1.0);
     let xv = |u: f32| g.left() + 14.0 + (g.width() - 28.0) * u;
-    pa.rect_filled(Rect::from_min_max(Pos2::new(g.left() + 1.0, yv(hi)), Pos2::new(g.right() - 1.0, yv(lo))), CornerRadius::ZERO, Color32::from_rgb(18, 19, 27));
-    pa.line_segment([Pos2::new(g.left(), yv(fp.ch_delay)), Pos2::new(g.right(), yv(fp.ch_delay))], Stroke::new(1.0_f32, Color32::from_rgb(35, 38, 49)));
+    pa.rect_filled(Rect::from_min_max(Pos2::new(g.left() + 1.0, yv(hi)), Pos2::new(g.right() - 1.0, yv(lo))), CornerRadius::ZERO, shade(0.027));
+    pa.line_segment([Pos2::new(g.left(), yv(fp.ch_delay)), Pos2::new(g.right(), yv(fp.ch_delay))], Stroke::new(1.0_f32, shade(0.112)));
     let f = |u: f32| fp.ch_delay + span * (u * 2.0 * std::f32::consts::TAU).sin();
     let pts: Vec<Pos2> = (0..=160).map(|i| Pos2::new(xv(i as f32 / 160.0), yv(f(i as f32 / 160.0)))).collect();
-    pa.add(egui::Shape::line(pts, PathStroke::new(1.6_f32, ACCENT)));
+    pa.add(egui::Shape::line(pts, PathStroke::new(1.6_f32, ACCENT())));
     let u = ph * 0.5;
     let dot = Pos2::new(xv(u), yv(f(u)));
-    pa.circle_filled(dot, 4.5, WHITE);
+    pa.circle_filled(dot, 4.5, WHITE());
     pa.circle_stroke(dot, 7.0, Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 110)));
-    pa.text(Pos2::new(dot.x + 12.0, dot.y - 10.0), Align2::LEFT_CENTER, format!("{:.1} ms", f(u)), mono(9.0), WHITE);
+    pa.text(Pos2::new(dot.x + 12.0, dot.y - 10.0), Align2::LEFT_CENTER, format!("{:.1} ms", f(u)), mono(9.0), WHITE());
     caption(&pa, g, format!("DELAY TIME  {:.1} - {:.1} ms around {:.1} ms   (higher delay = lower pitch)", lo, hi, fp.ch_delay));
 }
 
@@ -951,23 +951,23 @@ fn hyper_view(ui: &mut Ui, g: Rect, fp: &crate::fx::FxPatch) {
     let pa = ui.painter().with_clip_rect(g.shrink(1.0));
     let n = fp.hy_uni.clamp(2, 8);
     let mid = g.center().y;
-    pa.line_segment([Pos2::new(g.left() + 10.0, mid), Pos2::new(g.right() - 10.0, mid)], Stroke::new(1.0_f32, Color32::from_rgb(30, 32, 42)));
+    pa.line_segment([Pos2::new(g.left() + 10.0, mid), Pos2::new(g.right() - 10.0, mid)], Stroke::new(1.0_f32, shade(0.085)));
     let half = (g.width() - 60.0) * 0.5;
     let cx = g.center().x;
-    pa.line_segment([Pos2::new(cx, g.top() + 24.0), Pos2::new(cx, g.bottom() - 10.0)], Stroke::new(1.0_f32, Color32::from_rgb(40, 43, 56)));
+    pa.line_segment([Pos2::new(cx, g.top() + 24.0), Pos2::new(cx, g.bottom() - 10.0)], Stroke::new(1.0_f32, shade(0.135)));
     for j in 0..n {
         let base = j as f32 / (n - 1) as f32 * 2.0 - 1.0;
         let wob = (ph * std::f32::consts::TAU + j as f32 * 1.7).sin() * 0.25;
         let pos = ((base + wob * base.abs().max(0.3)) * fp.hy_detune.clamp(0.0, 1.0)).clamp(-1.0, 1.0);
         let x = cx + pos * half;
         let h = (g.height() - 50.0) * (0.45 + 0.55 * (1.0 - base.abs() * 0.5));
-        pa.line_segment([Pos2::new(x, mid + h * 0.5), Pos2::new(x, mid - h * 0.5)], Stroke::new(3.0_f32, Color32::from_rgb(222, 226, 230)));
+        pa.line_segment([Pos2::new(x, mid + h * 0.5), Pos2::new(x, mid - h * 0.5)], Stroke::new(3.0_f32, shade(0.952)));
         // dimension: the same copy mirrored a little to the other side
         let xd = cx - pos * half * fp.hy_dim.clamp(0.0, 1.0) * 0.6;
         pa.circle_filled(Pos2::new(xd, mid + h * 0.5 + 10.0), 2.5, Color32::from_rgb(114, 122, 148));
     }
-    pa.text(Pos2::new(cx - half, g.bottom() - 10.0), Align2::LEFT_CENTER, "flat", mono(8.5), DIM);
-    pa.text(Pos2::new(cx + half, g.bottom() - 10.0), Align2::RIGHT_CENTER, "sharp", mono(8.5), DIM);
+    pa.text(Pos2::new(cx - half, g.bottom() - 10.0), Align2::LEFT_CENTER, "flat", mono(8.5), DIM());
+    pa.text(Pos2::new(cx + half, g.bottom() - 10.0), Align2::RIGHT_CENTER, "sharp", mono(8.5), DIM());
     caption(&pa, g, format!("{n} COPIES drifting apart (detune)  -  dots = stereo dimension"));
 }
 
@@ -979,11 +979,11 @@ fn utility_view(ui: &mut Ui, g: Rect, fp: &crate::fx::FxPatch) {
     let r = (g.height() * 0.5 - 22.0).max(20.0);
     // L / R diamond
     let dia = [Pos2::new(c.x, c.y - r), Pos2::new(c.x + r, c.y), Pos2::new(c.x, c.y + r), Pos2::new(c.x - r, c.y), Pos2::new(c.x, c.y - r)];
-    pa.add(egui::Shape::line(dia.to_vec(), PathStroke::new(1.0_f32, Color32::from_rgb(40, 43, 56))));
-    pa.line_segment([Pos2::new(c.x, c.y - r), Pos2::new(c.x, c.y + r)], Stroke::new(1.0_f32, Color32::from_rgb(26, 28, 38)));
-    pa.line_segment([Pos2::new(c.x - r, c.y), Pos2::new(c.x + r, c.y)], Stroke::new(1.0_f32, Color32::from_rgb(26, 28, 38)));
+    pa.add(egui::Shape::line(dia.to_vec(), PathStroke::new(1.0_f32, shade(0.135))));
+    pa.line_segment([Pos2::new(c.x, c.y - r), Pos2::new(c.x, c.y + r)], Stroke::new(1.0_f32, shade(0.067)));
+    pa.line_segment([Pos2::new(c.x - r, c.y), Pos2::new(c.x + r, c.y)], Stroke::new(1.0_f32, shade(0.067)));
     for (t, dx, dy) in [("MID", 0.0, -r - 9.0), ("L", -r - 10.0, 0.0), ("R", r + 10.0, 0.0)] {
-        pa.text(Pos2::new(c.x + dx, c.y + dy), Align2::CENTER_CENTER, t, mono(9.0), DIM);
+        pa.text(Pos2::new(c.x + dx, c.y + dy), Align2::CENTER_CENTER, t, mono(9.0), DIM());
     }
     // the sound: an ellipse as wide as the stereo width, shifted by the balance, as tall as the gain
     let gain = 10f32.powf(fp.ut_gain / 20.0).clamp(0.05, 2.0);
@@ -994,7 +994,7 @@ fn utility_view(ui: &mut Ui, g: Rect, fp: &crate::fx::FxPatch) {
         let a = i as f32 / 64.0 * std::f32::consts::TAU;
         Pos2::new(c.x + ox + rx * a.cos(), c.y - ry * a.sin())
     }).collect();
-    let col = if fp.ut_invert { Color32::from_rgb(176, 188, 225) } else { WHITE };
+    let col = if fp.ut_invert { Color32::from_rgb(176, 188, 225) } else { WHITE() };
     if rx < 1.5 {
         pa.line_segment([Pos2::new(c.x + ox, c.y - ry), Pos2::new(c.x + ox, c.y + ry)], Stroke::new(3.0_f32, col));
     } else {
