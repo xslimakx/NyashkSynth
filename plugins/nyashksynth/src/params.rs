@@ -1771,6 +1771,9 @@ pub struct SynthParams {
     pub bass_mono: BoolParam,
     #[id = "bmf"]
     pub bass_mono_f: FloatParam,
+    /// output limiter at -0.3 dBFS (loud chords never clip the DAW)
+    #[id = "lim"]
+    pub limit: BoolParam,
 
     // ---- effects: two busses (each a full rack), routing between them
     #[nested(group = "FX")]
@@ -1918,6 +1921,7 @@ impl Default for SynthParams {
                 })),
             bass_mono: BoolParam::new("Bass Mono", false),
             bass_mono_f: FloatParam::new("Bass Mono Freq", 120.0, FloatRange::Skewed { min: 40.0, max: 400.0, factor: FloatRange::skew_factor(-1.0) }).with_unit(" Hz").with_value_to_string(Arc::new(|v| format!("{v:.0}"))),
+            limit: BoolParam::new("Limiter", true),
             master: FloatParam::new("Master", 0.0, FloatRange::Linear { min: -60.0, max: 12.0 })
                 .with_unit(" dB")
                 .with_step_size(0.1)

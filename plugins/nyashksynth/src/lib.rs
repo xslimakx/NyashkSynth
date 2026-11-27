@@ -24,6 +24,7 @@ mod ui;
 pub mod files;
 pub mod theme;
 pub mod pick;
+pub mod limiter;
 pub mod formula;
 pub mod sample;
 pub mod shared;
@@ -38,6 +39,12 @@ pub const SCOPE_LEN: usize = 1024;
 
 pub struct Meters {
     pub peak: AtomicU32,
+    /// output level per side (f32 bits, peak with a short hold) and the limiter gain reduction (dB)
+    pub out_l: AtomicU32,
+    pub out_r: AtomicU32,
+    pub lim_gr: AtomicU32,
+    /// set when the output went over 0 dBFS (limiter off); the GUI clears it on click
+    pub clipped: std::sync::atomic::AtomicBool,
     pub voices: AtomicU32,
     /// decimated copy of the output for the oscilloscope
     pub scope: Vec<AtomicU32>,
@@ -80,6 +87,10 @@ impl Meters {
     fn new() -> Self {
         Self {
             peak: AtomicU32::new(0),
+            out_l: AtomicU32::new(0),
+            out_r: AtomicU32::new(0),
+            lim_gr: AtomicU32::new(0),
+            clipped: std::sync::atomic::AtomicBool::new(false),
             voices: AtomicU32::new(0),
             scope: (0..SCOPE_LEN).map(|_| AtomicU32::new(0)).collect(),
             scope_w: AtomicU32::new(0),
@@ -149,6 +160,9 @@ pub struct NyashkSynth {
     /// smoothed master gain
     master_s: f32,
     master_k: f32,
+    limiter: limiter::Limiter,
+    out_hold: [f32; 2],
+    gr_hold: f32,
     gui_prev: [bool; 128],
     tmap: [u8; 128],
     /// GUI keyboard: key -> sounding note, and how many held keys currently use each sounding note
@@ -173,7 +187,7 @@ impl Default for NyashkSynth {
     fn default() -> Self {
         let params = Arc::new(SynthParams::default());
         let patch = Patch::read(&params, 44100.0);
-        Self { engine: Engine::new(44100.0, patch), fx: FxRack::new(44100.0), params, meters: Arc::new(Meters::new()), shared: Arc::new(shared::Shared::new()), fs: 44100.0, peak_hold: 0.0, fx_mod_s: [0.0; 12], fx_mod_s2: [0.0; 12], gui_prev: [false; 128], tmap: std::array::from_fn(|i| i as u8), gmap: std::array::from_fn(|i| i as u8), mheld: [false; 128], nref: [0; 128], cc_count: 1, gui_bend_prev: f32::NAN.to_bits(), gui_mod_prev: f32::NAN.to_bits(), beat_last: 0, beat_age: 0, dec_n: 0, dec_acc: 0.0, spec_pos: 0, cur_ir: None, beat_clock: 0.0, bm: [0.0; 2], fxp: [ChainPatch::empty(), ChainPatch::empty()], fxc: [ChainPatch::empty(), ChainPatch::empty()], master_s: 1.0, master_k: 0.004 }
+        Self { engine: Engine::new(44100.0, patch), fx: FxRack::new(44100.0), params, meters: Arc::new(Meters::new()), shared: Arc::new(shared::Shared::new()), fs: 44100.0, peak_hold: 0.0, fx_mod_s: [0.0; 12], fx_mod_s2: [0.0; 12], gui_prev: [false; 128], tmap: std::array::from_fn(|i| i as u8), gmap: std::array::from_fn(|i| i as u8), mheld: [false; 128], nref: [0; 128], cc_count: 1, gui_bend_prev: f32::NAN.to_bits(), gui_mod_prev: f32::NAN.to_bits(), beat_last: 0, beat_age: 0, dec_n: 0, dec_acc: 0.0, spec_pos: 0, cur_ir: None, beat_clock: 0.0, bm: [0.0; 2], fxp: [ChainPatch::empty(), ChainPatch::empty()], fxc: [ChainPatch::empty(), ChainPatch::empty()], master_s: 1.0, master_k: 0.004, limiter: limiter::Limiter::new(48000.0), out_hold: [0.0; 2], gr_hold: 0.0 }
     }
 }
 
@@ -416,8 +430,11 @@ impl Plugin for NyashkSynth {
         editor::create(self.params.clone(), self.meters.clone(), self.shared.clone())
     }
 
-    fn initialize(&mut self, _layout: &AudioIOLayout, cfg: &BufferConfig, _ctx: &mut impl InitContext<Self>) -> bool {
+    fn initialize(&mut self, _layout: &AudioIOLayout, cfg: &BufferConfig, ctx: &mut impl InitContext<Self>) -> bool {
         self.fs = cfg.sample_rate;
+        self.limiter = limiter::Limiter::new(self.fs);
+        // the limiter's look-ahead (1.5 ms); the same with the limiter on or off
+        ctx.set_latency_samples(self.limiter.latency() as u32);
         self.meters.fs.store(cfg.sample_rate as u32, Ordering::Relaxed);
         self.shared.fs.store(cfg.sample_rate as u32, Ordering::Relaxed);
         self.shared.sync_from_params(&self.params);
@@ -435,6 +452,7 @@ impl Plugin for NyashkSynth {
     fn reset(&mut self) {
         self.engine.reset();
         self.fx.reset();
+        self.limiter.reset();
         self.cur_ir = None;
     }
 
@@ -668,6 +686,8 @@ impl Plugin for NyashkSynth {
         }
 
         let mut pk = 0.0f32;
+        let (mut pl, mut pr, mut gmin) = (0.0f32, 0.0f32, 1.0f32);
+        let lim_on = self.params.limit.value();
         for i in 0..n {
             // master glides (~5 ms) instead of stepping once per block
             self.master_s += (master - self.master_s) * self.master_k;
@@ -680,11 +700,20 @@ impl Plugin for NyashkSynth {
             }
             // safety only for runaway levels (above +12 dBFS): normal and hot levels pass untouched,
             // the DAW mixes in floating point
-            l = safety(l);
-            r = safety(r);
+            // with the limiter on it alone keeps the level (cleanly); off, the safety still
+            // catches runaway levels above +12 dBFS
+            if !lim_on {
+                l = safety(l);
+                r = safety(r);
+            }
+            let (lo, ro, g) = self.limiter.tick(l, r, lim_on);
+            let (l, r) = (lo, ro);
+            gmin = gmin.min(g);
             l_all[i] = l;
             r_all[i] = r;
             pk = pk.max(l.abs()).max(r.abs());
+            pl = pl.max(l.abs());
+            pr = pr.max(r.abs());
             {
                 let w = self.spec_pos;
                 self.meters.spec[w].store((0.5 * (l + r)).to_bits(), Ordering::Relaxed);
@@ -715,6 +744,18 @@ impl Plugin for NyashkSynth {
         self.meters.sounding[1].store((mask >> 64) as u64, Ordering::Relaxed);
         self.peak_hold = (self.peak_hold * 0.85).max(pk);
         self.meters.peak.store(self.peak_hold.to_bits(), Ordering::Relaxed);
+        // output meters: per-block peaks fall at ~20 dB/s, so short peaks stay readable
+        let fall = (-(n as f32) / self.fs.max(1.0) * 2.3).exp();
+        self.out_hold[0] = (self.out_hold[0] * fall).max(pl);
+        self.out_hold[1] = (self.out_hold[1] * fall).max(pr);
+        self.meters.out_l.store(self.out_hold[0].to_bits(), Ordering::Relaxed);
+        self.meters.out_r.store(self.out_hold[1].to_bits(), Ordering::Relaxed);
+        let gr = -20.0 * gmin.max(1e-6).log10();
+        self.gr_hold = (self.gr_hold * fall).max(gr);
+        self.meters.lim_gr.store(self.gr_hold.to_bits(), Ordering::Relaxed);
+        if pk > 1.0 {
+            self.meters.clipped.store(true, Ordering::Relaxed);
+        }
         self.meters.voices.store(self.engine.active_voices() as u32, Ordering::Relaxed);
         self.beat_clock += n as f64 * beat_per_sample;
         self.meters.beat_now.store(self.beat_clock.to_bits(), Ordering::Relaxed);

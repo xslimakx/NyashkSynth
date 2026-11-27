@@ -935,7 +935,7 @@ fn header(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, s
 
     // output meter + master
     let vc = meters.voices();
-    painter.text(Pos2::new(o.x + 1108.0, o.y + 27.0), Align2::RIGHT_CENTER, format!("{vc:>2} voices"), mono(10.5), DIM());
+    painter.text(Pos2::new(o.x + 1108.0, o.y + 27.0), Align2::RIGHT_CENTER, format!("{vc:>2} {}", if vc == 1 { "voice" } else { "voices" }), mono(10.5), DIM());
     {
         let pr = rect(1036.0, 15.0, 74.0, 24.0);
         let pid = egui::Id::new("panic_click");
@@ -995,29 +995,134 @@ fn header(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, s
         };
         painter.text(Pos2::new(o.x + 1050.0, o.y + 27.0), Align2::LEFT_CENTER, txt, mono(10.0), if st.learn_on { WHITE() } else { DIM() });
     }
-    painter.text(Pos2::new(o.x + 1296.0, o.y + 26.0), Align2::LEFT_CENTER, "MASTER", mono(10.0), DIM());
-    h_slider(ui, setter, &p.master, rect(1359.0, 19.0, 78.0, 14.0), "master_slider", false, "Master volume");
-    {
-        // type a value: click the number (or drag it), Enter to confirm
-        let mut v = p.master.value();
-        let dv = egui::DragValue::new(&mut v).range(-60.0..=6.0).speed(0.1).fixed_decimals(1).suffix(" dB");
-        let resp = ui
-            .scope(|ui| {
-                dark_field_style(ui);
-                ui.put(rect(1352.0, 35.0, 92.0, 18.0), dv)
-            })
-            .inner
-            .on_hover_text("Master volume in dB: click and type a value");
-        if resp.drag_started() || resp.gained_focus() {
+    master_section(ui, setter, p, meters, st, o);
+}
+
+/// Top right, as in Serum 2: MASTER knob with its value (click the value to type one), the
+/// output LIMIT switch and the output meter (L / R, limiter reduction, clip light).
+fn master_section(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, meters: &Meters, st: &mut Gui, o: Pos2) {
+    let pa = ui.painter().clone();
+    let rect = |x: f32, y: f32, w: f32, h: f32| Rect::from_min_size(Pos2::new(o.x + x, o.y + y), Vec2::new(w, h));
+    let _c = CatGuard::new(K::ACCENT);
+    // ---- knob
+    let c = Pos2::new(o.x + 1280.0, o.y + 26.0);
+    let r = 15.0;
+    let kr = Rect::from_center_size(c, Vec2::splat(2.0 * r + 6.0));
+    let resp = ui.interact(kr, egui::Id::new("master_knob"), Sense::click_and_drag()).on_hover_text("MASTER: output level. Drag up / down (Shift: fine), wheel, double-click: 0 dB.");
+    let norm = p.master.unmodulated_normalized_value();
+    let set_norm = |v: f32| setter.set_parameter_normalized(&p.master, v.clamp(0.0, 1.0));
+    if resp.drag_started() {
+        setter.begin_set_parameter(&p.master);
+    }
+    if resp.dragged() {
+        let fine = ui.input(|i| i.modifiers.shift);
+        let dy = -resp.drag_delta().y * if fine { 0.0007 } else { 0.004 };
+        set_norm(norm + dy);
+    }
+    if resp.drag_stopped() {
+        setter.end_set_parameter(&p.master);
+    }
+    if resp.double_clicked() || (resp.clicked() && ui.input(|i| i.modifiers.ctrl)) {
+        setter.begin_set_parameter(&p.master);
+        setter.set_parameter(&p.master, 0.0);
+        setter.end_set_parameter(&p.master);
+    }
+    if resp.hovered() {
+        let w = ui.input(|i| i.raw_scroll_delta.y);
+        if w != 0.0 {
+            // one wheel step = 0.5 dB
             setter.begin_set_parameter(&p.master);
-        }
-        if resp.changed() {
-            setter.set_parameter(&p.master, v);
-        }
-        if resp.drag_stopped() || resp.lost_focus() {
+            setter.set_parameter(&p.master, (p.master.value() + w.signum() * 0.5).clamp(-60.0, 12.0));
             setter.end_set_parameter(&p.master);
         }
     }
+    let a0 = std::f32::consts::PI * 0.75;
+    let span = std::f32::consts::PI * 1.5;
+    let arc = |t0: f32, t1: f32, rr: f32| -> Vec<Pos2> {
+        let n = 32;
+        (0..=n).map(|i| {
+            let a = a0 + span * (t0 + (t1 - t0) * i as f32 / n as f32);
+            c + Vec2::new(a.cos(), a.sin()) * rr
+        }).collect()
+    };
+    pa.add(egui::Shape::line(arc(0.0, 1.0, r), PathStroke::new(3.0_f32, shade(0.11))));
+    // 0 dB mark, and the arc from 0 dB to the value (bipolar around unity)
+    let n0 = p.master.preview_normalized(0.0);
+    let nv = p.master.unmodulated_normalized_value();
+    let (t0, t1) = if nv >= n0 { (n0, nv) } else { (nv, n0) };
+    if t1 - t0 > 0.002 {
+        pa.add(egui::Shape::line(arc(t0, t1, r), PathStroke::new(3.0_f32, base_accent())));
+    }
+    let a_mark = a0 + span * n0;
+    pa.line_segment([c + Vec2::new(a_mark.cos(), a_mark.sin()) * (r + 2.0), c + Vec2::new(a_mark.cos(), a_mark.sin()) * (r + 5.0)], Stroke::new(1.0_f32, DIM()));
+    pa.circle_filled(c, r - 4.5, if resp.hovered() || resp.dragged() { PANEL2() } else { shade(0.07) });
+    pa.circle_stroke(c, r - 4.5, Stroke::new(1.0_f32, LINE()));
+    let av = a0 + span * nv;
+    pa.line_segment([c + Vec2::new(av.cos(), av.sin()) * 3.0, c + Vec2::new(av.cos(), av.sin()) * (r - 6.0)], Stroke::new(2.0_f32, WHITE()));
+    // ---- label and value (click to type)
+    pa.text(Pos2::new(o.x + 1302.0, o.y + 18.0), Align2::LEFT_CENTER, "MASTER", mono(9.5), DIM());
+    {
+        let mut v = p.master.value();
+        let dv = egui::DragValue::new(&mut v).range(-60.0..=12.0).speed(0.1).fixed_decimals(1).suffix(" dB");
+        let vr = ui
+            .scope(|ui| {
+                dark_field_style(ui);
+                ui.put(rect(1300.0, 27.0, 62.0, 17.0), dv)
+            })
+            .inner
+            .on_hover_text("Master volume in dB: drag, or click and type a value");
+        if vr.drag_started() || vr.gained_focus() {
+            setter.begin_set_parameter(&p.master);
+        }
+        if vr.changed() {
+            setter.set_parameter(&p.master, v);
+        }
+        if vr.drag_stopped() || vr.lost_focus() {
+            setter.end_set_parameter(&p.master);
+        }
+    }
+    // ---- limiter switch
+    let lim = p.limit.value();
+    if pill_tip(ui, rect(1367.0, 15.0, 42.0, 24.0), "LIM", lim, "Output limiter (on by default): keeps the output under -0.3 dBFS, so loud chords never clip and crackle in the DAW. Transparent below that; the meter shows how much it works (orange).") {
+        set_b(setter, &p.limit, !lim);
+    }
+    // ---- meter: L, R, limiter reduction; red light = the output clipped (click to clear)
+    let mr = rect(1413.0, 9.0, 31.0, 36.0);
+    let mresp = ui.interact(mr, egui::Id::new("out_meter"), Sense::click());
+    let ld = |v: f32| 20.0 * v.max(1e-6).log10();
+    let ol = f32::from_bits(meters.out_l.load(std::sync::atomic::Ordering::Relaxed));
+    let or = f32::from_bits(meters.out_r.load(std::sync::atomic::Ordering::Relaxed));
+    let gr = f32::from_bits(meters.lim_gr.load(std::sync::atomic::Ordering::Relaxed));
+    let clipped = meters.clipped.load(std::sync::atomic::Ordering::Relaxed);
+    if mresp.clicked() {
+        meters.clipped.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
+    mresp.on_hover_text(format!("Output  L {:.1} / R {:.1} dBFS{}\nlimiter: {:.1} dB reduction{}\n(click to clear the clip light)", ld(ol), ld(or), if clipped { "  CLIPPED" } else { "" }, gr, if p.limit.value() { "" } else { " (off)" }));
+    let bar_h = mr.height() - 6.0;
+    let y_of = |db: f32| mr.bottom() - bar_h * ((db + 48.0) / 48.0).clamp(0.0, 1.0);
+    for (k, v) in [ol, or].iter().enumerate() {
+        let x = mr.left() + 1.0 + k as f32 * 8.0;
+        let bg = Rect::from_min_max(Pos2::new(x, mr.top() + 6.0), Pos2::new(x + 6.0, mr.bottom()));
+        pa.rect_filled(bg, rad(1), shade(0.05));
+        let db = ld(*v);
+        let top = y_of(db);
+        let col = if db > -0.5 { Color32::from_rgb(255, 196, 70) } else if db > -6.0 { shade(0.85) } else { shade(0.55) };
+        pa.rect_filled(Rect::from_min_max(Pos2::new(x, top), Pos2::new(x + 6.0, mr.bottom())), rad(1), col);
+    }
+    // 0 dB tick
+    pa.hline(mr.left()..=mr.left() + 15.0, y_of(0.0), Stroke::new(1.0_f32, DIM()));
+    // limiter reduction, from the top down (orange)
+    let gx = mr.left() + 18.0;
+    let gbg = Rect::from_min_max(Pos2::new(gx, mr.top() + 6.0), Pos2::new(gx + 4.0, mr.bottom()));
+    pa.rect_filled(gbg, rad(1), shade(0.05));
+    if gr > 0.05 {
+        let h = bar_h * (gr / 12.0).clamp(0.0, 1.0);
+        pa.rect_filled(Rect::from_min_size(gbg.min, Vec2::new(4.0, h)), rad(1), Color32::from_rgb(255, 150, 60));
+    }
+    // clip light
+    pa.circle_filled(Pos2::new(mr.left() + 8.0, mr.top() + 2.5), 2.5, if clipped { Color32::from_rgb(240, 60, 60) } else { shade(0.08) });
+    pa.text(Pos2::new(gx + 2.0, mr.top() + 2.5), Align2::CENTER_CENTER, "G", mono(7.0), DIM());
+    let _ = st;
 }
 
 // ===================================================================== overlays
@@ -3113,7 +3218,10 @@ fn out_panel(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, r
     }
     let kw = (r.width() - 120.0) / 2.0;
     knob_s(ui, setter, &p.bass_mono_f, "MONO BELOW", cell(r.left() + 112.0, y, kw), "Bass mono frequency", false);
-    knob_s(ui, setter, &p.master, "MASTER", cell(r.left() + 112.0 + kw, y, kw), "Output level (0 dB = full level; up to +12 dB)", false);
+    // the output limiter here too (MASTER itself is at the top right, as in Serum 2)
+    if pill_tip(ui, Rect::from_min_size(Pos2::new(r.left() + 120.0 + kw, y + 18.0), Vec2::new(kw - 8.0, 22.0)), "LIMITER", p.limit.value(), "Output limiter at -0.3 dBFS: loud chords never clip the DAW") {
+        set_b(setter, &p.limit, !p.limit.value());
+    }
 }
 
 
