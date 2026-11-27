@@ -1,6 +1,6 @@
 //! Shared NyashkTune widgets: palette, knob (drag / shift-fine / wheel / double-click reset / click-to-type),
 //! pill buttons, section titles.
-#![allow(dead_code)]
+
 use crate::params::{ModDst, ModSrc, NoiseType, SynthParams, N_SRC};
 use nih_plug::params::internals::ParamPtr;
 use nih_plug::prelude::*;
@@ -307,9 +307,6 @@ pub fn set_drag(s: Option<usize>, label: &str) {
 pub fn drag_src() -> Option<usize> {
     MC.with(|m| m.borrow().drag)
 }
-pub fn drop_targets() -> Vec<(Rect, usize)> {
-    MC.with(|m| m.borrow().rects.clone())
-}
 
 /// How far a modulation amount of 1.0 moves the knob (in knob-travel units).
 pub fn dst_scale(d: usize) -> f32 {
@@ -411,10 +408,6 @@ pub struct KnobEv {
     pub total: Option<f32>,
 }
 
-pub fn knob<P: Param>(ui: &mut Ui, setter: &ParamSetter, p: &P, label: &str, cell: Rect, tooltip: &str, bipolar: bool) -> KnobEv {
-    knob_r(ui, setter, p, label, cell, tooltip, bipolar, 30.0)
-}
-
 #[allow(clippy::too_many_arguments)]
 pub fn knob_r<P: Param>(ui: &mut Ui, setter: &ParamSetter, p: &P, label: &str, cell: Rect, tooltip: &str, bipolar: bool, r: f32) -> KnobEv {
     knob_impl(ui, setter, p, label, cell, tooltip, bipolar, r, false)
@@ -441,7 +434,7 @@ pub fn learn_widget(ui: &Ui, ptr: ParamPtr, resp: &egui::Response, r: Rect) -> b
             MC.with(|m| m.borrow_mut().learn_unbind = Some(ptr));
         }
         let t = ui.input(|i| i.time);
-        let (w, col) = if is_target { (2.5_f32, WHITE()) } else { (1.0_f32, Color32::from_rgb(79, 85, 104)) };
+        let (w, col) = if is_target { (2.5_f32, WHITE()) } else { (1.0_f32, shade(0.323)) };
         let ph = if is_target { ((t * 5.0).sin() * 0.5 + 0.5) as f32 * 2.0 } else { 0.0 };
         ui.painter().rect_stroke(r.expand(2.0 + ph), rad(5), Stroke::new(w, col), StrokeKind::Outside);
         if is_target {
@@ -736,7 +729,7 @@ fn knob_impl<P: Param>(ui: &mut Ui, setter: &ParamSetter, p: &P, label: &str, ce
             painter.circle_stroke(c, r + 3.0 + ph * 2.0, Stroke::new(2.5_f32, WHITE()));
             ui.ctx().request_repaint();
         } else {
-            painter.circle_stroke(c, r + 3.0, Stroke::new(1.0_f32, Color32::from_rgb(79, 85, 104)));
+            painter.circle_stroke(c, r + 3.0, Stroke::new(1.0_f32, shade(0.323)));
         }
     }
     if let Some(cc) = bound_cc {
@@ -868,7 +861,7 @@ pub fn icon_btn(ui: &mut Ui, rect: Rect, icon: Icon, on: bool, tip: &str) -> boo
     let c = rect.center();
     let s = Stroke::new(1.6_f32, col);
     let r = rect.height().min(rect.width()) * 0.27;
-    let arc = |cx: f32, cy: f32, rad: f32, a0: f32, a1: f32| -> Vec<Pos2> {
+    let _arc = |cx: f32, cy: f32, rad: f32, a0: f32, a1: f32| -> Vec<Pos2> {
         (0..=24).map(|i| { let t = a0 + (a1 - a0) * i as f32 / 24.0; Pos2::new(cx + rad * t.cos(), cy + rad * t.sin()) }).collect()
     };
     match icon {

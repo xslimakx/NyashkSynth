@@ -2,7 +2,7 @@
 //! Used for presets, wavetables and noise samples.
 
 use crate::ui::*;
-use nih_plug_egui::egui::{self, Align2, Color32, CornerRadius, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2};
+use nih_plug_egui::egui::{self, Align2, Color32, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2};
 
 pub struct BItem {
     pub name: String,

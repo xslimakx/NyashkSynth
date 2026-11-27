@@ -275,6 +275,14 @@ impl Patch {
     }
 
     /// Snapshot with the user data in `shared`. If a slot is busy the previous patch's value is kept.
+    /// True when dropping this patch would free a table, sample or curve (it holds the last
+    /// reference): such a patch is handed to the GUI to drop instead of the audio thread.
+    pub fn holds_last_refs(&self) -> bool {
+        self.osc.iter().any(|o| Arc::strong_count(&o.tbl) == 1 || o.sample.as_ref().is_some_and(|x| Arc::strong_count(x) == 1) || o.multi.as_ref().is_some_and(|x| Arc::strong_count(x) == 1))
+            || self.sample.as_ref().is_some_and(|x| Arc::strong_count(x) == 1)
+            || self.lfo_curve.iter().any(|c| c.as_ref().is_some_and(|x| Arc::strong_count(x) == 1))
+    }
+
     pub fn read_with(p: &SynthParams, fs: f32, shared: Option<&Shared>, prev: Option<&Patch>) -> Patch {
         let pick = |o: usize, idx: usize| -> Arc<Table> {
             let builtin = || tables().t[idx.min(tables().t.len() - 1)].clone();
@@ -1080,6 +1088,28 @@ fn filter_coefs(ty: FilterType, fc: f32, res: f32, fs: f32, comb_len: usize) -> 
             f.gl = (1.0 - (-PI * fc / fs).exp()).min(0.45);
             f.kl = res * 3.95;
         }
+        FilterType::Lp18 => {
+            f.gl = (1.0 - (-PI * fc / fs).exp()).min(0.45);
+            // three poles self-oscillate at a loop gain of 8
+            f.kl = res * 7.6;
+        }
+        FilterType::Acid => {
+            f.gl = (1.0 - (-PI * fc / fs).exp()).min(0.45);
+            f.kl = res * 4.4;
+            // high-pass in the feedback: resonance eats less bass than in a plain ladder (the
+            // squelchy 303 character)
+            f.g1 = 1.0 - (-TAU * 180.0 / fs).exp();
+        }
+        FilterType::Ms20 => {
+            // light damping: the resonance is held in check by the saturating integrators
+            let k = 2.0 * (1.0 - res).powf(1.5) + 0.02;
+            f.kc = k;
+            f.c = svf_coefs(g, k);
+        }
+        FilterType::CombDist => {
+            f.comb_d = (fs / fc.max(30.0)).clamp(2.0, (comb_len - 3) as f32);
+            f.comb_g = res.min(0.99) * 0.99;
+        }
         FilterType::Peak => {
             f.kc = 1.1;
             f.c = svf_coefs(g, f.kc);
@@ -1158,6 +1188,64 @@ fn run_filter(f: &Fc, st: &mut Fst, ch: usize, x: f32) -> f32 {
         FilterType::Hp6 => {
             st.op[ch] += f.g1 * (x - st.op[ch]);
             x - st.op[ch]
+        }
+        FilterType::Lp18 => {
+            let l = &mut st.lad[ch];
+            let mut out = 0.0;
+            for _ in 0..2 {
+                let inp = (x - f.kl * l[2]).tanh();
+                let mut u = inp;
+                for s in 0..3 {
+                    l[s] += f.gl * (u - l[s]);
+                    u = l[s];
+                }
+                out = l[2];
+            }
+            out * (1.0 + f.kl * 0.5)
+        }
+        FilterType::Acid => {
+            let l = &mut st.lad[ch];
+            let mut out = 0.0;
+            for _ in 0..2 {
+                // feedback through a one-pole high-pass (state in `op`)
+                st.op[ch] += f.g1 * (l[3] - st.op[ch]);
+                let fb = l[3] - st.op[ch];
+                // asymmetric input stage
+                let v = x * 1.4 - f.kl * fb;
+                let inp = if v > 0.0 { v.tanh() } else { (v * 0.8).tanh() * 1.25 };
+                let mut u = inp;
+                for s in 0..4 {
+                    l[s] += f.gl * (u - l[s]);
+                    u = l[s];
+                }
+                out = l[3];
+            }
+            out * (1.0 + f.kl * 0.2)
+        }
+        FilterType::Ms20 => {
+            let s0 = &mut st.svf[ch][0];
+            let (_, low, _) = svf_tick(s0, x, &f.c);
+            // saturating integrators: loud, screaming but bounded resonance
+            s0[0] = 1.6 * (s0[0] / 1.6).tanh();
+            s0[1] = 1.6 * (s0[1] / 1.6).tanh();
+            low
+        }
+        FilterType::Band24 => {
+            let (b1, _, _) = svf_tick(&mut st.svf[ch][0], x, &f.a);
+            let (b2, _, _) = svf_tick(&mut st.svf[ch][1], b1 * f.k1, &f.a);
+            b2 * f.k1
+        }
+        FilterType::CombDist => {
+            let n = st.comb[ch].len();
+            let rp = st.cw as f32 - f.comb_d;
+            let rp = if rp < 0.0 { rp + n as f32 } else { rp };
+            let i = rp as usize % n;
+            let fr = rp - rp.floor();
+            let d = st.comb[ch][i] + (st.comb[ch][(i + 1) % n] - st.comb[ch][i]) * fr;
+            // the repeats are driven into saturation: a growling, metallic comb
+            let y = x + f.comb_g * (1.8 * d).tanh() * 0.75;
+            st.comb[ch][st.cw] = y.clamp(-4.0, 4.0);
+            y * 0.6
         }
         FilterType::Ladder => {
             let l = &mut st.lad[ch];

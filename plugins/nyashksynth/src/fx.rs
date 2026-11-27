@@ -64,6 +64,8 @@ pub struct FxPatch {
     pub cp_f1: f32,
     pub cp_f2: f32,
     pub cp_mix: f32,
+    /// upward compression amount (0 = off)
+    pub cp_up: f32,
 
     pub rv_size: f32,
     pub rv_damp: f32,
@@ -162,6 +164,7 @@ impl Default for FxPatch {
             cp_f1: 150.0,
             cp_f2: 2500.0,
             cp_mix: 1.0,
+            cp_up: 0.0,
             rv_size: 0.6,
             rv_damp: 0.5,
             rv_pre: 0.5,
@@ -462,6 +465,9 @@ struct Comp {
     hi1: [[Bq; 2]; 2], // high-pass at f1
     lo2: [[Bq; 2]; 2], // low-pass at f2 (applied to the high part)
     hi2: [[Bq; 2]; 2],
+    /// the low band through the same phase turn as mid + high (all-pass at f2), so the three
+    /// bands add up flat
+    lo_ap: [[Bq; 4]; 2],
 }
 
 struct Plate {
@@ -602,7 +608,7 @@ impl Fx {
                 let n = if want(5) { (fs * 2.0) as usize + 8 } else { 8 };
                 Delay { cur: [0.0; 2], dl: [DelayLine::new(n), DelayLine::new(n)], lp: [OnePole::default(); 2], hp: [OnePole::default(); 2] }
             },
-            comp: Comp { bands: [CompBand::default(); 3], lo: [[Bq::default(); 2]; 2], hi1: [[Bq::default(); 2]; 2], lo2: [[Bq::default(); 2]; 2], hi2: [[Bq::default(); 2]; 2] },
+            comp: Comp { bands: [CompBand::default(); 3], lo: [[Bq::default(); 2]; 2], hi1: [[Bq::default(); 2]; 2], lo2: [[Bq::default(); 2]; 2], hi2: [[Bq::default(); 2]; 2], lo_ap: [[Bq::default(); 4]; 2] },
             plate: Plate::new(if want(7) { fs } else { 2000.0 }),
             eq: EqM { ls: [Bq::default(); 2], pk: [Bq::default(); 2], hs: [Bq::default(); 2] },
             ff: FiltFx { s: [[0.0; 2]; 4] },
@@ -928,17 +934,24 @@ impl Fx {
         let slope = 1.0 - 1.0 / p.cp_ratio.max(1.0);
         let (cl1, ch1) = (BqCoef::lowpass(p.cp_f1, std::f32::consts::FRAC_1_SQRT_2, fs), BqCoef::highpass(p.cp_f1, std::f32::consts::FRAC_1_SQRT_2, fs));
         let (cl2, ch2) = (BqCoef::lowpass(p.cp_f2, std::f32::consts::FRAC_1_SQRT_2, fs), BqCoef::highpass(p.cp_f2, std::f32::consts::FRAC_1_SQRT_2, fs));
+        let up = p.cp_up.clamp(0.0, 1.0);
         let gain_for = |band: &mut CompBand, level: f32| -> f32 {
             let db = 20.0 * level.max(1e-6).log10();
             let over = db - p.cp_thresh;
             // 6 dB soft knee
-            let gr = if over <= -3.0 {
+            let mut gr = if over <= -3.0 {
                 0.0
             } else if over < 3.0 {
                 slope * (over + 3.0) * (over + 3.0) / 12.0
             } else {
                 slope * over
             };
+            if up > 0.0 && over < 0.0 {
+                // upward: lift what is below the threshold, at most +30 dB, and leave near-silence
+                // (below -78 dBFS) alone so the noise floor is not pumped up
+                let gate = ((db + 78.0) / 12.0).clamp(0.0, 1.0);
+                gr -= ((-over) * up * 0.8).min(30.0 * up) * gate;
+            }
             let coef = if gr > band.env { at } else { rl };
             band.env = gr + coef * (band.env - gr);
             10f32.powf(-band.env / 20.0)
@@ -957,6 +970,12 @@ impl Fx {
                     let x = dry[ch];
                     let t1 = c.lo[ch][0].tick(&cl1, x);
                     let lo = c.lo[ch][1].tick(&cl1, t1);
+                    // all-pass at f2 (LR4 low + high summed) for the low band
+                    let a = c.lo_ap[ch][0].tick(&cl2, lo);
+                    let a = c.lo_ap[ch][1].tick(&cl2, a);
+                    let b = c.lo_ap[ch][2].tick(&ch2, lo);
+                    let b = c.lo_ap[ch][3].tick(&ch2, b);
+                    let lo = a + b;
                     let t1 = c.hi1[ch][0].tick(&ch1, x);
                     let rest = c.hi1[ch][1].tick(&ch1, t1);
                     let t1 = c.lo2[ch][0].tick(&cl2, rest);
@@ -1278,6 +1297,15 @@ impl ChainPatch {
     /// The classic fixed-order bank: modules in `order`, each at most once.
     pub fn from_legacy(l: &FxPatch) -> Self {
         let mut c = ChainPatch::empty();
+        c.fill_legacy(l);
+        c
+    }
+
+    /// `from_legacy` into this chain (which is emptied first).
+    pub fn fill_legacy(&mut self, l: &FxPatch) {
+        let c = self;
+        c.s.clear();
+        c.n = 0;
         let mut used = [false; 12];
         for &m in l.order.iter() {
             let m = m.min(11);
@@ -1289,7 +1317,6 @@ impl ChainPatch {
                 c.push(m, true, l.clone());
             }
         }
-        c
     }
 
     /// Global modulation: every target moves the first effect of its kind.

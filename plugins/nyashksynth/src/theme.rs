@@ -420,15 +420,11 @@ pub struct UiCfg {
     pub imgs: Imgs,
     pub top: [usize; 5],
     pub bot: [usize; 3],
-    /// keyboard and wheels row at the bottom
-    pub keys: bool,
-    /// initial window width for new instances (0 = default)
-    pub width: u32,
 }
 
 impl Default for UiCfg {
     fn default() -> Self {
-        UiCfg { theme: "Studio".into(), pal: Pal::default(), imgs: Vec::new(), top: [0, 1, 2, 3, 4], bot: [0, 1, 2], keys: true, width: 0 }
+        UiCfg { theme: "Studio".into(), pal: Pal::default(), imgs: Vec::new(), top: [0, 1, 2, 3, 4], bot: [0, 1, 2] }
     }
 }
 
@@ -453,12 +449,10 @@ impl UiCfg {
     pub fn to_text(&self) -> String {
         let j = |a: &[usize]| a.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(",");
         format!(
-            "# SyntiTyzer editor settings\ntheme = {}\ntop = {}\nbottom = {}\nkeyboard = {}\nwidth = {}\n[colours]\n{}",
+            "# SyntiTyzer editor settings\ntheme = {}\ntop = {}\nbottom = {}\n[colours]\n{}",
             self.theme,
             j(&self.top),
             j(&self.bot),
-            self.keys as u8,
-            self.width,
             to_text_full(&self.pal, &self.imgs)
         )
     }
@@ -473,8 +467,6 @@ impl UiCfg {
                 "theme" => c.theme = val.to_string(),
                 "top" => c.top = parse_order(val).unwrap_or(c.top),
                 "bottom" => c.bot = parse_order(val).unwrap_or(c.bot),
-                "keyboard" => c.keys = val != "0",
-                "width" => c.width = val.parse().unwrap_or(0),
                 _ => {}
             }
         }
@@ -753,8 +745,6 @@ mod tests {
         let mut c = UiCfg::default();
         c.top = [4, 1, 0, 3, 2];
         c.bot = [2, 0, 1];
-        c.keys = false;
-        c.width = 1600;
         c.pal.c[k::ENV] = rgb(1, 2, 3);
         assert_eq!(UiCfg::from_text(&c.to_text()), c);
         let bad = UiCfg::from_text("top = 0,0,1,2,3\nbottom = 1,2\n");

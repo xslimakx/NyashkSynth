@@ -185,6 +185,16 @@ pub enum FilterType {
     Formant,
     #[name = "Points (EQ)"]
     Custom,
+    #[name = "LP 18"]
+    Lp18,
+    #[name = "Acid"]
+    Acid,
+    #[name = "MS-20 LP"]
+    Ms20,
+    #[name = "Band 24"]
+    Band24,
+    #[name = "Comb Dist"]
+    CombDist,
 }
 
 /// Kind of one point of the custom filter.
@@ -1803,6 +1813,9 @@ pub struct SynthParams {
     pub arp_pat: Arc<std::sync::Mutex<String>>,
     #[persist = "clips"]
     pub clips: Arc<std::sync::Mutex<String>>,
+    /// names of the 8 macros, separated by `|` (empty = "MACRO n")
+    #[persist = "macro-names"]
+    pub macro_names: Arc<std::sync::Mutex<String>>,
     #[id = "clp_on"]
     pub clip_on: BoolParam,
     #[id = "mout"]
@@ -1928,6 +1941,7 @@ impl Default for SynthParams {
             ir: Arc::new(std::sync::Mutex::new(String::new())),
             arp_pat: Arc::new(std::sync::Mutex::new(String::new())),
             clips: Arc::new(std::sync::Mutex::new(String::new())),
+            macro_names: Arc::new(std::sync::Mutex::new(String::new())),
             clip_on: BoolParam::new("Clip On", false),
             midi_out: BoolParam::new("MIDI Out", false),
             show_wheels: BoolParam::new("Show Wheels", true).non_automatable(),
@@ -1948,3 +1962,22 @@ trait Pipe: Sized {
     }
 }
 impl<T> Pipe for T {}
+
+/// Display name of macro `i` (its own name, or "MACRO n").
+pub fn macro_name(p: &SynthParams, i: usize) -> String {
+    let all = p.macro_names.lock().map(|g| g.clone()).unwrap_or_default();
+    match all.split('|').nth(i).map(str::trim) {
+        Some(n) if !n.is_empty() => n.to_string(),
+        _ => format!("MACRO {}", i + 1),
+    }
+}
+
+/// Renames macro `i` (an empty name goes back to "MACRO n"). `|` is not allowed in names.
+pub fn set_macro_name(p: &SynthParams, i: usize, name: &str) {
+    if let Ok(mut g) = p.macro_names.lock() {
+        let mut v: Vec<String> = g.split('|').map(String::from).collect();
+        v.resize(8, String::new());
+        v[i.min(7)] = name.replace('|', "/").trim().chars().take(14).collect();
+        *g = if v.iter().all(|x| x.is_empty()) { String::new() } else { v.join("|") };
+    }
+}

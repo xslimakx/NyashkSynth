@@ -49,3 +49,16 @@ fn garbage_state_is_rejected_not_fatal() {
         assert!(patch.osc[0].tbl.frames() >= 2);
     }
 }
+
+#[test]
+fn macro_names_round_trip() {
+    use nyashksynth::params::{macro_name, set_macro_name, SynthParams};
+    let p = SynthParams::default();
+    assert_eq!(macro_name(&p, 0), "MACRO 1");
+    set_macro_name(&p, 2, "Wob|ble rate long name");
+    assert_eq!(macro_name(&p, 2), "Wob/ble rate l");
+    assert_eq!(macro_name(&p, 7), "MACRO 8");
+    set_macro_name(&p, 2, "");
+    assert_eq!(macro_name(&p, 2), "MACRO 3");
+    assert!(p.macro_names.lock().unwrap().is_empty());
+}

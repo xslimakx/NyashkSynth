@@ -25,7 +25,7 @@ The mod-source chips, macros, voice settings, keyboard and wheels stay visible o
 2. **Tuning mode**: click the small label under the SEMI knob to switch SEMI -> HARM (harmonic number) -> RATIO (frequency ratio) -> STEP (steps of the KEY LOCK scale).
 3. **Filters**: two filters (tabs **1** and **2**), `SER` toggles series / parallel. 16 types plus **Custom (points)**: drag up to 8 EQ-style points on the graph. `ROUTE` picks which sources feed the selected filter.
 4. **MIDI LEARN** (plug icon): switch it on, click any knob, then move a knob/fader on your MIDI keyboard. The knob shows `CCn`. Right-click a bound knob to unbind, the bin icon removes all bindings. Bindings are saved with the project.
-5. **Presets**: browse (`<` `>` or the list), save (floppy icon), HIDE factory presets, DELETE your own, export and import packs. 146 factory presets in 11 categories.
+5. **Presets**: browse (`<` `>` or the list), save (floppy icon), HIDE factory presets, DELETE your own, export and import packs. 150 factory presets in 11 categories.
 6. **TOOLS** (under SUB / NOISE): INIT, RANDOM (a whole new patch), COPY and **HYBRID** (mix the current sound with another preset).
 7. **Mod sources**: drag a chip onto any knob; drag vertically on the knob to set the depth. Right-click the modulation ring to remove it. Besides envelopes, LFOs, macros, velocity, key, wheel, aftertouch and random there are `OSC A/B/C`, `FILT 1/2` (outputs) and `LANE` (clip automation).
 8. **8 macros**: assign them like any other source.
@@ -218,7 +218,7 @@ The undo and redo arrows (header, or Ctrl+Z / Ctrl+Y) step through your paramete
 
 | What | Where | Delete? |
 |---|---|---|
-| 146 factory presets | built into the plugin (not files) | no, but **HIDE** removes one from the browser and **RESTORE n** brings them all back (the list of hidden ones is `hidden.txt` in the data folder) |
+| 150 factory presets | built into the plugin (not files) | no, but **HIDE** removes one from the browser and **RESTORE n** brings them all back (the list of hidden ones is `hidden.txt` in the data folder) |
 | Your presets | `~/.config/NyashkSynth/Presets/<Category>/<Name>.nyp` (Windows `%APPDATA%\NyashkSynth\Presets`) | yes, **DELETE** in the browser or delete the file |
 | Packs | `.../NyashkSynth/Packs/*.nypack` | yes, plain files |
 | Tables, noises, `.sfz` | `.../NyashkSynth/Tables`, `.../Noises` | yes, plain files |
@@ -245,4 +245,4 @@ Modes: **Shift** (all partials move by the same number of Hz, so harmonic sounds
 - **Mono** mode restarts the sound when you go back to a key that is still held (Legato just changes the pitch).
 
 ### 75 new factory presets
-Leads, pads, keys, plucks, arps, bells, synth chords and FX / textures (146 presets in total), mostly mid and high register and with a wide choice of effects (phaser, flanger, chorus, Hyper, distortion types, synced delay, reverb), warps (Sync, Pinch, Mirror, Ripple, Twist, FM / AM / RM with a chosen source) and LFO modulation.
+Leads, pads, keys, plucks, arps, bells, synth chords and FX / textures (150 presets in total), mostly mid and high register and with a wide choice of effects (phaser, flanger, chorus, Hyper, distortion types, synced delay, reverb), warps (Sync, Pinch, Mirror, Ripple, Twist, FM / AM / RM with a chosen source) and LFO modulation.

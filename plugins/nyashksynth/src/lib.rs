@@ -142,6 +142,12 @@ pub struct NyashkSynth {
     peak_hold: f32,
     fx_mod_s: [f32; 12],
     fx_mod_s2: [f32; 12],
+    /// effect chains of both buses, and their modulated copies (memory kept between blocks)
+    fxp: [ChainPatch; 2],
+    fxc: [ChainPatch; 2],
+    /// smoothed master gain
+    master_s: f32,
+    master_k: f32,
     gui_prev: [bool; 128],
     tmap: [u8; 128],
     /// GUI keyboard: key -> sounding note, and how many held keys currently use each sounding note
@@ -166,7 +172,7 @@ impl Default for NyashkSynth {
     fn default() -> Self {
         let params = Arc::new(SynthParams::default());
         let patch = Patch::read(&params, 44100.0);
-        Self { engine: Engine::new(44100.0, patch), fx: FxRack::new(44100.0), params, meters: Arc::new(Meters::new()), shared: Arc::new(shared::Shared::new()), fs: 44100.0, peak_hold: 0.0, fx_mod_s: [0.0; 12], fx_mod_s2: [0.0; 12], gui_prev: [false; 128], tmap: std::array::from_fn(|i| i as u8), gmap: std::array::from_fn(|i| i as u8), mheld: [false; 128], nref: [0; 128], cc_count: 1, gui_bend_prev: f32::NAN.to_bits(), gui_mod_prev: f32::NAN.to_bits(), beat_last: 0, beat_age: 0, dec_n: 0, dec_acc: 0.0, spec_pos: 0, cur_ir: None, beat_clock: 0.0, bm: [0.0; 2] }
+        Self { engine: Engine::new(44100.0, patch), fx: FxRack::new(44100.0), params, meters: Arc::new(Meters::new()), shared: Arc::new(shared::Shared::new()), fs: 44100.0, peak_hold: 0.0, fx_mod_s: [0.0; 12], fx_mod_s2: [0.0; 12], gui_prev: [false; 128], tmap: std::array::from_fn(|i| i as u8), gmap: std::array::from_fn(|i| i as u8), mheld: [false; 128], nref: [0; 128], cc_count: 1, gui_bend_prev: f32::NAN.to_bits(), gui_mod_prev: f32::NAN.to_bits(), beat_last: 0, beat_age: 0, dec_n: 0, dec_acc: 0.0, spec_pos: 0, cur_ir: None, beat_clock: 0.0, bm: [0.0; 2], fxp: [ChainPatch::empty(), ChainPatch::empty()], fxc: [ChainPatch::empty(), ChainPatch::empty()], master_s: 1.0, master_k: 0.004 }
     }
 }
 
@@ -245,6 +251,7 @@ pub fn fx_patch_from_bank(p: &params::FxBank, bpm: f32) -> FxPatch {
             cp_f1: p.cp_f1.value(),
             cp_f2: p.cp_f2.value(),
             cp_mix: p.cp_mix.value(),
+            cp_up: 0.0,
             rv_size: p.rv_size.value(),
             rv_damp: p.rv_damp.value(),
             rv_pre: p.rv_pre.value(),
@@ -283,10 +290,20 @@ pub fn fx_patch_from_bank(p: &params::FxBank, bpm: f32) -> FxPatch {
 
 /// The effect chain of one bus (0 or 1): from the rack slots, or from the old fixed bank while the rack is unused.
 pub fn chain_from_params(p: &SynthParams, bus: usize, bpm: f32) -> ChainPatch {
-    if p.rackver.value() == 0 {
-        return ChainPatch::from_legacy(&fx_patch_from_bank(p.bank(bus), bpm));
-    }
     let mut c = ChainPatch::empty();
+    chain_into(p, bus, bpm, &mut c);
+    c
+}
+
+/// Same as `chain_from_params`, into an existing chain (keeps its memory: no allocation on the
+/// audio thread).
+pub fn chain_into(p: &SynthParams, bus: usize, bpm: f32, c: &mut ChainPatch) {
+    c.s.clear();
+    c.n = 0;
+    if p.rackver.value() == 0 {
+        c.fill_legacy(&fx_patch_from_bank(p.bank(bus), bpm));
+        return;
+    }
     for slot in &p.rk[bus * params::RACK_SLOTS..(bus + 1) * params::RACK_SLOTS] {
         let ty = slot.ty.value();
         if ty <= 0 {
@@ -299,7 +316,6 @@ pub fn chain_from_params(p: &SynthParams, bus: usize, bpm: f32) -> ChainPatch {
         }
         c.push(kind, slot.on.value(), fxdesc::patch_for(kind, &fxdesc::reals(kind, &v), bpm));
     }
-    c
 }
 
 pub fn fx_patch_from(p: &SynthParams, bpm: f32) -> FxPatch {
@@ -407,6 +423,8 @@ impl Plugin for NyashkSynth {
         let patch = Patch::read_with(&self.params, self.fs, Some(&self.shared), None);
         self.engine = Engine::new(self.fs, patch);
         self.fx = FxRack::new(self.fs);
+        self.master_k = 1.0 - (-1.0 / (0.005 * self.fs)).exp();
+        self.master_s = util::db_to_gain(self.params.master.value());
         self.cur_ir = None;
         rebuild_cc_map(&self.params, &self.meters);
         let _ = wavetable::tables();
@@ -423,7 +441,10 @@ impl Plugin for NyashkSynth {
         let bpm = ctx.transport().tempo.map(|t| t as f32).unwrap_or(120.0);
         self.engine.bpm = bpm;
         let np = Patch::read_with(&self.params, self.fs, Some(&self.shared), Some(&self.engine.patch));
-        self.engine.patch = np;
+        let old = std::mem::replace(&mut self.engine.patch, np);
+        if old.holds_last_refs() {
+            self.shared.retire_patch(old);
+        }
         if let Some(v) = self.shared.ir.try_get() {
             let same = match (&v, &self.cur_ir) {
                 (Some(a), Some(b)) => Arc::ptr_eq(a, b),
@@ -432,11 +453,13 @@ impl Plugin for NyashkSynth {
             };
             if !same {
                 self.fx.set_ir(v.clone());
-                self.cur_ir = v;
+                if let Some(old) = std::mem::replace(&mut self.cur_ir, v) {
+                    self.shared.retire_ir(old);
+                }
             }
         }
-        let fxp = chain_from_params(&self.params, 0, bpm);
-        let fxp2 = chain_from_params(&self.params, 1, bpm);
+        chain_into(&self.params, 0, bpm, &mut self.fxp[0]);
+        chain_into(&self.params, 1, bpm, &mut self.fxp[1]);
         let (route, split, split2, lvl2) = (self.params.fx_route.value(), self.params.fx_split.value(), self.params.fx_split2.value(), self.params.fx2_level.value());
         let master = util::db_to_gain(self.params.master.value());
 
@@ -604,7 +627,7 @@ impl Plugin for NyashkSynth {
         if m1.is_none() && m2.is_none() {
             self.fx_mod_s = [0.0; 12];
             self.fx_mod_s2 = [0.0; 12];
-            self.fx.process(&fxp, &fxp2, route, split, split2, lvl2, l_all, r_all);
+            self.fx.process(&self.fxp[0], &self.fxp[1], route, split, split2, lvl2, l_all, r_all);
         } else {
             // effect modulation: update the parameters every 64 samples
             let (t1, t2) = (m1.unwrap_or([0.0; 12]), m2.unwrap_or([0.0; 12]));
@@ -615,11 +638,12 @@ impl Plugin for NyashkSynth {
                     self.fx_mod_s[k] += (t1[k] - self.fx_mod_s[k]) * 0.35;
                     self.fx_mod_s2[k] += (t2[k] - self.fx_mod_s2[k]) * 0.35;
                 }
-                let mut cur = fxp.clone();
-                cur.apply_mod(&self.fx_mod_s);
-                let mut cur2 = fxp2.clone();
-                cur2.apply_mod(&self.fx_mod_s2);
-                self.fx.process(&cur, &cur2, route, split, split2, lvl2, &mut l_all[s..e], &mut r_all[s..e]);
+                // clone_from reuses the buffers' memory
+                self.fxc[0].clone_from(&self.fxp[0]);
+                self.fxc[0].apply_mod(&self.fx_mod_s);
+                self.fxc[1].clone_from(&self.fxp[1]);
+                self.fxc[1].apply_mod(&self.fx_mod_s2);
+                self.fx.process(&self.fxc[0], &self.fxc[1], route, split, split2, lvl2, &mut l_all[s..e], &mut r_all[s..e]);
                 s = e;
             }
         }
@@ -644,7 +668,9 @@ impl Plugin for NyashkSynth {
 
         let mut pk = 0.0f32;
         for i in 0..n {
-            let (mut l, mut r) = (l_all[i] * master, r_all[i] * master);
+            // master glides (~5 ms) instead of stepping once per block
+            self.master_s += (master - self.master_s) * self.master_k;
+            let (mut l, mut r) = (l_all[i] * self.master_s, r_all[i] * self.master_s);
             if !l.is_finite() {
                 l = 0.0;
             }

@@ -54,11 +54,47 @@ pub struct Shared {
     pub lfo: [Slot<LfoCurve>; NLFO],
     /// Bumped whenever a slot is changed from state/preset (lets the GUI notice host state loads).
     pub version: std::sync::atomic::AtomicU32,
+    /// Things the audio thread let go of whose memory it should not free itself (a replaced
+    /// wavetable, sample or impulse response can be megabytes): the GUI drops them. The vectors
+    /// have room reserved up front, the audio thread only pushes with `try_lock`.
+    pub trash: std::sync::Mutex<Trash>,
+}
+
+pub struct Trash {
+    pub patches: Vec<crate::engine::Patch>,
+    pub irs: Vec<std::sync::Arc<crate::convolve::ConvIr>>,
+}
+
+impl Shared {
+    /// Hands `x` to the GUI thread to drop, if there is room; otherwise drops it here.
+    pub fn retire_patch(&self, p: crate::engine::Patch) {
+        if let Ok(mut t) = self.trash.try_lock() {
+            if t.patches.len() < t.patches.capacity() {
+                t.patches.push(p);
+            }
+        }
+    }
+    pub fn retire_ir(&self, ir: std::sync::Arc<crate::convolve::ConvIr>) {
+        if let Ok(mut t) = self.trash.try_lock() {
+            if t.irs.len() < t.irs.capacity() {
+                t.irs.push(ir);
+            }
+        }
+    }
+    /// GUI side: free what the audio thread retired (keeps the reserved room).
+    pub fn empty_trash(&self) {
+        let (p, i): (Vec<_>, Vec<_>) = {
+            let Ok(mut t) = self.trash.lock() else { return };
+            (t.patches.drain(..).collect(), t.irs.drain(..).collect())
+        };
+        drop(p);
+        drop(i);
+    }
 }
 
 impl Shared {
     pub fn new() -> Self {
-        Self { waves: [Slot::new(), Slot::new(), Slot::new()], noise: Slot::new(), ir: Slot::new(), fs: std::sync::atomic::AtomicU32::new(44100), smp: [Slot::new(), Slot::new(), Slot::new()], ms: [Slot::new(), Slot::new(), Slot::new()], lfo: std::array::from_fn(|_| Slot::new()), version: std::sync::atomic::AtomicU32::new(0) }
+        Self { waves: [Slot::new(), Slot::new(), Slot::new()], noise: Slot::new(), ir: Slot::new(), fs: std::sync::atomic::AtomicU32::new(44100), smp: [Slot::new(), Slot::new(), Slot::new()], ms: [Slot::new(), Slot::new(), Slot::new()], lfo: std::array::from_fn(|_| Slot::new()), version: std::sync::atomic::AtomicU32::new(0), trash: std::sync::Mutex::new(Trash { patches: Vec::with_capacity(32), irs: Vec::with_capacity(8) }) }
     }
 
     pub fn build_ir(&self, n: &NSample) -> crate::convolve::ConvIr {

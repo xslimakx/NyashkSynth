@@ -750,11 +750,11 @@ fn bode_map(ui: &mut Ui, g: Rect, fp: &crate::fx::FxPatch) {
     match fp.bd_mode {
         1 => {
             line(sh, WHITE());
-            line(-sh, Color32::from_rgb(167, 179, 214));
+            line(-sh, shade(0.745));
         }
         2 => {
             line(sh, WHITE());
-            line(-sh, Color32::from_rgb(114, 122, 148));
+            line(-sh, shade(0.490));
         }
         _ => line(sh, WHITE()),
     }
@@ -774,29 +774,78 @@ fn bode_map(ui: &mut Ui, g: Rect, fp: &crate::fx::FxPatch) {
     pa.text(Pos2::new(sq.right() - 6.0, sq.bottom() - 8.0), Align2::RIGHT_CENTER, "x: input Hz   y: output Hz   (0 - 6 kHz)", mono(8.5), DIM());
 }
 
+/// Static curve of the compressor exactly as the DSP computes it (soft knee, upward part, the
+/// quiet gate), and with MULTIBAND the three bands on a frequency axis.
 fn comp_curve(ui: &mut Ui, g: Rect, fp: &crate::fx::FxPatch) {
     dark_box(ui, g);
     let pa = ui.painter().with_clip_rect(g.shrink(1.0));
     let side = g.height().min(g.width()) - 16.0;
     let sq = Rect::from_min_size(Pos2::new(g.left() + 14.0, g.top() + 8.0), Vec2::splat(side));
-    let xy = |inp: f32, out: f32| Pos2::new(sq.left() + sq.width() * ((inp + 60.0) / 60.0).clamp(0.0, 1.0), sq.bottom() - sq.height() * ((out + 60.0) / 60.0).clamp(0.0, 1.0));
-    for db in [-48.0f32, -36.0, -24.0, -12.0] {
-        pa.line_segment([xy(db, -60.0), xy(db, 0.0)], Stroke::new(1.0_f32, shade(0.035)));
-        pa.line_segment([xy(-60.0, db), xy(0.0, db)], Stroke::new(1.0_f32, shade(0.035)));
+    let lo = -84.0f32;
+    let xy = |inp: f32, out: f32| Pos2::new(sq.left() + sq.width() * ((inp - lo) / -lo).clamp(0.0, 1.0), sq.bottom() - sq.height() * ((out - lo) / -lo).clamp(0.0, 1.0));
+    for db in [-72.0f32, -60.0, -48.0, -36.0, -24.0, -12.0] {
+        pa.line_segment([xy(db, lo), xy(db, 0.0)], Stroke::new(1.0_f32, shade(0.035)));
+        pa.line_segment([xy(lo, db), xy(0.0, db)], Stroke::new(1.0_f32, shade(0.035)));
     }
-    pa.line_segment([xy(-60.0, -60.0), xy(0.0, 0.0)], Stroke::new(1.0_f32, shade(0.127)));
-    let pts: Vec<Pos2> = (0..=60)
-        .map(|i| {
-            let inp = -60.0 + i as f32;
-            let out = if inp > fp.cp_thresh { fp.cp_thresh + (inp - fp.cp_thresh) / fp.cp_ratio.max(1.0) } else { inp } + fp.cp_gain;
-            xy(inp, out)
-        })
-        .collect();
+    pa.line_segment([xy(lo, lo), xy(0.0, 0.0)], Stroke::new(1.0_f32, shade(0.127)));
+    let slope = 1.0 - 1.0 / fp.cp_ratio.max(1.0);
+    let up = fp.cp_up.clamp(0.0, 1.0);
+    let out_of = |inp: f32| -> f32 {
+        let over = inp - fp.cp_thresh;
+        let mut gr = if over <= -3.0 {
+            0.0
+        } else if over < 3.0 {
+            slope * (over + 3.0) * (over + 3.0) / 12.0
+        } else {
+            slope * over
+        };
+        if up > 0.0 && over < 0.0 {
+            let gate = ((inp + 78.0) / 12.0).clamp(0.0, 1.0);
+            gr -= ((-over) * up * 0.8).min(30.0 * up) * gate;
+        }
+        inp - gr + fp.cp_gain
+    };
+    let pts: Vec<Pos2> = (0..=168).map(|i| {
+        let inp = lo + i as f32 * 0.5;
+        xy(inp, out_of(inp))
+    }).collect();
     pa.add(egui::Shape::line(pts, PathStroke::new(1.8_f32, ACCENT())));
-    let tp = xy(fp.cp_thresh, fp.cp_thresh + fp.cp_gain);
+    let tp = xy(fp.cp_thresh, out_of(fp.cp_thresh));
     pa.circle_filled(tp, 4.0, Color32::BLACK);
     pa.circle_stroke(tp, 4.0, Stroke::new(1.5_f32, WHITE()));
-    pa.text(Pos2::new(sq.right() + 14.0, sq.top() + 6.0), Align2::LEFT_CENTER, "INPUT dB  >  OUTPUT dB (dot = threshold)", mono(9.0), DIM());
+    let tx = sq.right() + 14.0;
+    pa.text(Pos2::new(tx, sq.top() + 6.0), Align2::LEFT_CENTER, "INPUT dB  >  OUTPUT dB (dot = threshold)", mono(9.0), DIM());
+    let mode = match (fp.cp_multi, up > 0.0) {
+        (true, true) => "3 bands, down + up: the 'OTT' sound (loud parts held down, quiet details lifted)",
+        (true, false) => "3 bands, downward",
+        (false, true) => "one band, down + up",
+        (false, false) => "one band, downward",
+    };
+    pa.text(Pos2::new(tx, sq.top() + 22.0), Align2::LEFT_CENTER, mode, mono(9.0), shade(0.7));
+    if fp.cp_multi {
+        // the three bands on a log frequency axis
+        let fr = Rect::from_min_max(Pos2::new(tx, sq.top() + 44.0), Pos2::new(g.right() - 14.0, sq.bottom() - 4.0));
+        if fr.width() > 120.0 {
+            let xf = |f: f32| fr.left() + fr.width() * ((f / 20.0).ln() / 1000f32.ln()).clamp(0.0, 1.0);
+            let (x1, x2) = (xf(fp.cp_f1), xf(fp.cp_f2));
+            let names = [("LOW", fr.left(), x1), ("MID", x1, x2), ("HIGH", x2, fr.right())];
+            for (k, (n, a, b)) in names.iter().enumerate() {
+                let r = Rect::from_min_max(Pos2::new(*a, fr.top()), Pos2::new(*b, fr.bottom()));
+                pa.rect_filled(r.shrink2(Vec2::new(1.0, 0.0)), rad(3), with_alpha(ACCENT(), [14, 10, 7][k]));
+                pa.text(r.center(), Align2::CENTER_CENTER, *n, mono(10.0), shade(0.8));
+            }
+            for (x, f) in [(x1, fp.cp_f1), (x2, fp.cp_f2)] {
+                pa.line_segment([Pos2::new(x, fr.top()), Pos2::new(x, fr.bottom())], Stroke::new(1.5_f32, ACCENT()));
+                let lr = Rect::from_center_size(Pos2::new(x, fr.bottom() - 10.0), Vec2::new(40.0, 15.0));
+                pa.rect_filled(lr, rad(3), shade(0.03));
+                pa.rect_stroke(lr, rad(3), Stroke::new(1.0_f32, ACCENT()), StrokeKind::Inside);
+                pa.text(lr.center(), Align2::CENTER_CENTER, if f >= 1000.0 { format!("{:.1}k", f / 1000.0) } else { format!("{f:.0}") }, mono(8.5), WHITE());
+            }
+            for f in [100.0f32, 1000.0, 10000.0] {
+                pa.text(Pos2::new(xf(f), fr.top() + 8.0), Align2::CENTER_CENTER, if f >= 1000.0 { format!("{}k", f / 1000.0) } else { format!("{f}") }, mono(8.0), DIM());
+            }
+        }
+    }
 }
 
 /// Repeats of the delay: bar height = level, left channel up, right channel down.
@@ -824,7 +873,7 @@ fn delay_taps(ui: &mut Ui, g: Rect, fp: &crate::fx::FxPatch) {
             pa.line_segment([Pos2::new(xt(tl), mid), Pos2::new(xt(tl), mid - h * amp)], Stroke::new(3.0_f32, shade(0.907)));
         }
         if show_r && tr <= tmax {
-            pa.line_segment([Pos2::new(xt(tr) + 4.0, mid), Pos2::new(xt(tr) + 4.0, mid + h * amp)], Stroke::new(3.0_f32, Color32::from_rgb(132, 141, 170)));
+            pa.line_segment([Pos2::new(xt(tr) + 4.0, mid), Pos2::new(xt(tr) + 4.0, mid + h * amp)], Stroke::new(3.0_f32, shade(0.575)));
         }
     }
     pa.text(Pos2::new(g.left() + 8.0, g.top() + 9.0), Align2::LEFT_CENTER, format!("REPEATS  (L up, R down)   0 - {:.0} ms", tmax), mono(9.0), DIM());
@@ -964,7 +1013,7 @@ fn hyper_view(ui: &mut Ui, g: Rect, fp: &crate::fx::FxPatch) {
         pa.line_segment([Pos2::new(x, mid + h * 0.5), Pos2::new(x, mid - h * 0.5)], Stroke::new(3.0_f32, shade(0.952)));
         // dimension: the same copy mirrored a little to the other side
         let xd = cx - pos * half * fp.hy_dim.clamp(0.0, 1.0) * 0.6;
-        pa.circle_filled(Pos2::new(xd, mid + h * 0.5 + 10.0), 2.5, Color32::from_rgb(114, 122, 148));
+        pa.circle_filled(Pos2::new(xd, mid + h * 0.5 + 10.0), 2.5, shade(0.490));
     }
     pa.text(Pos2::new(cx - half, g.bottom() - 10.0), Align2::LEFT_CENTER, "flat", mono(8.5), DIM());
     pa.text(Pos2::new(cx + half, g.bottom() - 10.0), Align2::RIGHT_CENTER, "sharp", mono(8.5), DIM());
@@ -994,7 +1043,7 @@ fn utility_view(ui: &mut Ui, g: Rect, fp: &crate::fx::FxPatch) {
         let a = i as f32 / 64.0 * std::f32::consts::TAU;
         Pos2::new(c.x + ox + rx * a.cos(), c.y - ry * a.sin())
     }).collect();
-    let col = if fp.ut_invert { Color32::from_rgb(176, 188, 225) } else { WHITE() };
+    let col = if fp.ut_invert { shade(0.786) } else { WHITE() };
     if rx < 1.5 {
         pa.line_segment([Pos2::new(c.x + ox, c.y - ry), Pos2::new(c.x + ox, c.y + ry)], Stroke::new(3.0_f32, col));
     } else {

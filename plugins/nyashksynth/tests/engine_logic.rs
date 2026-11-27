@@ -1147,3 +1147,85 @@ fn every_factory_preset_uses_only_existing_parameters_and_unique_names() {
         }
     }
 }
+
+/// Compressor: the multiband split adds up flat (ratio 1 = no change), and UPWARD lifts quiet
+/// material while loud material is still held down (the "OTT" behaviour).
+#[test]
+fn compressor_multiband_is_flat_and_upward_lifts_quiet_parts() {
+    use nyashksynth::fx::ChainPatch;
+    use nyashksynth::fxdesc;
+    let fs = 48000.0f32;
+    let comp = |ratio: f32, multi: bool, up: f32, thresh: f32| {
+        let mut r = [0.0f32; fxdesc::NV];
+        r[..10].copy_from_slice(&[thresh, ratio, 5.0, 120.0, 0.0, if multi { 1.0 } else { 0.0 }, 150.0, 2500.0, 1.0, up]);
+        let mut c = ChainPatch::empty();
+        c.push(6, true, fxdesc::patch_for(6, &r, 120.0));
+        c
+    };
+    let rms = |x: &[f32]| (x.iter().map(|v| v * v).sum::<f32>() / x.len() as f32).sqrt();
+    // flatness: sines at several frequencies keep their level through a ratio-1 multiband split
+    for f in [60.0f32, 150.0, 700.0, 2500.0, 9000.0] {
+        let n = 48000;
+        let s: Vec<f32> = (0..n).map(|i| (std::f32::consts::TAU * f * i as f32 / fs).sin() * 0.3).collect();
+        let (mut l, mut r) = (s.clone(), s.clone());
+        run_chain(&comp(1.0, true, 0.0, -18.0), fs, &mut l, &mut r);
+        let g = 20.0 * (rms(&l[24000..]) / rms(&s[24000..])).log10();
+        assert!(g.abs() < 0.3, "{f} Hz: multiband split changes the level by {g:.2} dB");
+    }
+    // upward: a quiet (-40 dBFS) tone comes up, a loud one is still pressed down
+    let tone = |amp: f32| -> Vec<f32> { (0..48000).map(|i| (std::f32::consts::TAU * 440.0 * i as f32 / fs).sin() * amp).collect() };
+    let level = |amp: f32, up: f32| {
+        let s = tone(amp);
+        let (mut l, mut r) = (s.clone(), s.clone());
+        run_chain(&comp(4.0, true, up, -24.0), fs, &mut l, &mut r);
+        20.0 * (rms(&l[24000..]) / rms(&s[24000..])).log10()
+    };
+    let (q0, q1) = (level(0.01, 0.0), level(0.01, 1.0));
+    let (l0, l1) = (level(0.9, 0.0), level(0.9, 1.0));
+    assert!(q0.abs() < 1.0 && q1 > 10.0, "quiet tone: {q0:.1} dB without, {q1:.1} dB with UPWARD");
+    assert!(l0 < -6.0 && l1 < -6.0, "loud tone must still be compressed: {l0:.1} / {l1:.1} dB");
+    // silence stays silent
+    let (mut l, mut r) = (vec![1e-6f32; 48000], vec![1e-6f32; 48000]);
+    run_chain(&comp(4.0, true, 1.0, -24.0), fs, &mut l, &mut r);
+    assert!(rms(&l[24000..]) < 1e-4, "noise floor pumped up");
+}
+
+/// Every filter type stays bounded at full resonance with a hot saw, passes sound with the
+/// cutoff open, and the low-passes cut highs when closed.
+#[test]
+fn every_filter_type_is_stable_and_does_its_job() {
+    use nih_plug::prelude::Enum;
+    use nyashksynth::params::FilterType;
+    let run = |ty: FilterType, cutoff: f32, res: f32, note: u8| {
+        let mut e = engine();
+        e.patch.osc[0].pos = 0.5; // saw
+        e.patch.sub_on = false;
+        e.patch.fl[0].on = true;
+        e.patch.fl[0].ty = ty;
+        e.patch.fl[0].cutoff = cutoff;
+        e.patch.fl[0].res = res;
+        e.patch.fl[0].drive = 1.0;
+        e.note_on(note, 1.0);
+        let v = render_vec(&mut e, 48000);
+        assert!(v.iter().all(|x| x.is_finite()), "{ty:?} produced NaN");
+        let pk = v.iter().fold(0.0f32, |a, b| a.max(b.abs()));
+        (rms(&v[24000..]), pk)
+    };
+    for i in 0..FilterType::variants().len() {
+        let ty = FilterType::from_index(i);
+        if ty == FilterType::Custom {
+            continue;
+        }
+        for (cut, note) in [(60.0, 24u8), (800.0, 48), (5000.0, 60), (18000.0, 84)] {
+            let (_, pk) = run(ty, cut, 1.0, note);
+            assert!(pk < 12.0, "{ty:?} at cutoff {cut}, res 100%: peak {pk}");
+        }
+        let open = [30.0, 1000.0, 12000.0].iter().map(|c| run(ty, *c, 0.3, 48).0).fold(0.0f32, f32::max);
+        assert!(open > 0.01, "{ty:?} is silent at every cutoff ({open})");
+    }
+    for ty in [FilterType::Lp18, FilterType::Acid, FilterType::Ms20] {
+        let (open, _) = run(ty, 16000.0, 0.0, 72);
+        let (closed, _) = run(ty, 300.0, 0.0, 72);
+        assert!(closed < open * 0.4, "{ty:?} closed {closed} vs open {open}");
+    }
+}

@@ -127,7 +127,7 @@ static DELAY: [D; 13] = [
     d("MIX", "Dry / wet", 0.0, 1.0, 0.3, Lin, Pct),
     tg("HQ", "Cubic interpolation (cleaner when the time is modulated)", false),
 ];
-static COMP: [D; 9] = [
+static COMP: [D; 10] = [
     d("THRESH", "Level where compression starts", -60.0, 0.0, -18.0, Lin, Db),
     d("RATIO", "Compression ratio", 1.0, 20.0, 4.0, Log, Ratio),
     d("ATTACK", "How fast it clamps down", 0.1, 200.0, 5.0, Log, Ms),
@@ -137,6 +137,7 @@ static COMP: [D; 9] = [
     d("SPLIT 1", "Low / mid crossover (multiband)", 60.0, 500.0, 150.0, Log, Hz),
     d("SPLIT 2", "Mid / high crossover (multiband)", 800.0, 8000.0, 2500.0, Log, Hz),
     d("MIX", "Dry / wet (parallel compression)", 0.0, 1.0, 1.0, Lin, Pct),
+    d("UPWARD", "Upward compression: quiet parts below the threshold are lifted (with MULTIBAND this is the 'OTT' sound)", 0.0, 1.0, 0.0, Lin, Pct),
 ];
 static REVERB: [D; 8] = [
     ch("TYPE", "Reverb algorithm", &REVERB_NAMES, 0),
@@ -425,6 +426,7 @@ pub fn patch_for(kind: usize, r: &[f32; NV], bpm: f32) -> FxPatch {
             p.cp_f1 = r[6];
             p.cp_f2 = r[7];
             p.cp_mix = r[8];
+            p.cp_up = r[9];
         }
         7 => {
             p.rv_type = <ReverbType as Enum>::from_index((r[0] as usize).min(4));
