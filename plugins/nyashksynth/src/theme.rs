@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// Colour slots of a theme.
-pub const N_COL: usize = 20;
+pub const N_COL: usize = 22;
 pub mod k {
     pub const BG: usize = 0;
     pub const PANEL: usize = 1;
@@ -37,6 +37,63 @@ pub mod k {
     pub const MACRO: usize = 17;
     pub const MATRIX: usize = 18;
     pub const SEQ: usize = 19;
+    // added in 1.1: own colours for OSC B and C (default: the OSC A colour)
+    pub const OSC_B: usize = 20;
+    pub const OSC_C: usize = 21;
+}
+
+/// Picture slots: the window and every module on its own.
+pub mod pic {
+    pub const WINDOW: usize = 0;
+    pub const OSC_A: usize = 1;
+    pub const OSC_B: usize = 2;
+    pub const OSC_C: usize = 3;
+    pub const SUB: usize = 4;
+    pub const NOISE: usize = 5;
+    pub const FILTER: usize = 6;
+    pub const ENV: usize = 7;
+    pub const LFO: usize = 8;
+    pub const VOICING: usize = 9;
+    pub const MACROS: usize = 10;
+    pub const MIX: usize = 11;
+    pub const FX: usize = 12;
+    pub const MATRIX: usize = 13;
+    pub const SEQ: usize = 14;
+    pub const GLOBAL: usize = 15;
+    pub const N: usize = 16;
+}
+/// (key in the theme file, label)
+pub const PICS: [(&str, &str); pic::N] = [
+    ("window", "WINDOW"),
+    ("osc_a", "OSC A"),
+    ("osc_b", "OSC B"),
+    ("osc_c", "OSC C"),
+    ("sub", "SUB"),
+    ("noise", "NOISE"),
+    ("filter", "FILTER"),
+    ("env", "ENVELOPES"),
+    ("lfo", "LFOS"),
+    ("voicing", "VOICING"),
+    ("macros", "MACROS"),
+    ("mix", "MIX PAGE"),
+    ("fx", "FX PAGE"),
+    ("matrix", "MATRIX PAGE"),
+    ("seq", "SEQ PAGE"),
+    ("global", "GLOBAL PAGE"),
+];
+/// Picture keys of 1.1.0 theme files (one picture per colour category) -> today's slots.
+fn old_pic_key(key: &str) -> &'static [usize] {
+    match key {
+        "background" => &[pic::WINDOW],
+        "osc" => &[pic::OSC_A, pic::OSC_B, pic::OSC_C],
+        "voice" => &[pic::VOICING, pic::MIX, pic::GLOBAL],
+        "macro" => &[pic::MACROS],
+        _ => &[],
+    }
+}
+/// Colour of the module a picture slot belongs to (for its tile on the theme page).
+pub fn pic_cat(p: usize) -> usize {
+    [k::ACCENT, k::OSC, k::OSC_B, k::OSC_C, k::SUB, k::NOISE, k::FILTER, k::ENV, k::LFO, k::VOICE, k::MACRO, k::VOICE, k::FX, k::MATRIX, k::SEQ, k::VOICE][p.min(pic::N - 1)]
 }
 
 /// (file key, label on the theme page, tooltip)
@@ -50,7 +107,7 @@ pub const SLOTS: [(&str, &str, &str); N_COL] = [
     ("mid", "MID GREY", "Inactive symbols"),
     ("accent", "ACCENT", "Header, presets and everything without a category (and every module when COLOUR BY CATEGORY is off)"),
     ("modulation", "MODULATION", "Modulation rings, source chips, live dots"),
-    ("osc", "OSCILLATORS", "OSC A / B / C"),
+    ("osc", "OSC A", "Oscillator A (and B / C unless they have their own colour)"),
     ("sub", "SUB", "Sub oscillator"),
     ("noise", "NOISE", "Noise oscillator"),
     ("filter", "FILTER", "Filters"),
@@ -61,7 +118,11 @@ pub const SLOTS: [(&str, &str, &str); N_COL] = [
     ("macro", "MACROS", "Macro knobs"),
     ("matrix", "MATRIX", "Modulation matrix"),
     ("seq", "ARP / SEQ", "Arpeggiator and clip sequencer"),
+    ("osc_b", "OSC B", "Oscillator B"),
+    ("osc_c", "OSC C", "Oscillator C"),
 ];
+/// Order of the colours on the theme page (the three oscillators together).
+pub const SLOT_ORDER: [usize; N_COL] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 20, 21, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19];
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Pal {
@@ -78,6 +139,8 @@ pub struct Pal {
     pub soft: f32,
     /// strength of the per-module pictures
     pub mod_img: f32,
+    /// strength of each picture on its own (multiplies MODULE PICTURES; the window picture: its opacity)
+    pub pic_a: [f32; pic::N],
 }
 
 /// A picture of a theme, already scaled down to a sensible size (RGBA, not premultiplied).
@@ -116,14 +179,8 @@ pub fn prepare(bytes: &[u8], mw: usize, mh: usize) -> Result<Img, String> {
     Ok(Img { b64, ..fitted })
 }
 
-/// Picture slots: 0 = the window background, otherwise the category of a module (k::OSC ..).
-pub const IMG_SLOTS: [usize; 12] = [k::BG, k::OSC, k::SUB, k::NOISE, k::FILTER, k::ENV, k::LFO, k::FX, k::VOICE, k::MACRO, k::MATRIX, k::SEQ];
 pub fn img_label(slot: usize) -> &'static str {
-    if slot == k::BG {
-        "WINDOW"
-    } else {
-        SLOTS[slot].1
-    }
+    PICS[slot.min(pic::N - 1)].1
 }
 pub type Imgs = Vec<(usize, Arc<Img>)>;
 
@@ -149,8 +206,10 @@ fn make(g: [Color32; 7], accent: Color32, modc: Color32, cats: [Color32; 11], ro
     c[..7].copy_from_slice(&g);
     c[k::ACCENT] = accent;
     c[k::MODC] = modc;
-    c[9..].copy_from_slice(&cats);
-    Pal { c, round, by_cat, alpha: 1.0, dim: 0.55, soft: 0.25, mod_img: 0.3 }
+    c[9..20].copy_from_slice(&cats);
+    c[k::OSC_B] = cats[0];
+    c[k::OSC_C] = cats[0];
+    Pal { c, round, by_cat, alpha: 1.0, dim: 0.55, soft: 0.25, mod_img: 0.3, pic_a: [1.0; pic::N] }
 }
 
 pub fn builtins() -> Vec<Theme> {
@@ -202,7 +261,17 @@ pub fn builtins() -> Vec<Theme> {
         rgb(255, 80, 80),
     ];
     vec![
-        Theme { name: "Studio".into(), pal: make(studio_g, rgb(236, 236, 240), rgb(170, 140, 255), studio_c, 1.0, true), imgs: Vec::new(), builtin: true },
+        Theme {
+            name: "Studio".into(),
+            pal: {
+                let mut p = make(studio_g, rgb(236, 236, 240), rgb(170, 140, 255), studio_c, 1.0, true);
+                p.c[k::OSC_B] = rgb(124, 146, 255);
+                p.c[k::OSC_C] = rgb(76, 204, 236);
+                p
+            },
+            imgs: Vec::new(),
+            builtin: true,
+        },
         Theme { name: "Mono".into(), pal: make(mono_g, white, rgb(190, 190, 190), [white; 11], 0.6, true), imgs: Vec::new(), builtin: true },
         Theme { name: "Coral".into(), pal: make(coral_g, coral, rgb(170, 140, 255), [coral; 11], 1.0, false), imgs: Vec::new(), builtin: true },
         Theme { name: "Ocean".into(), pal: make(ocean_g, rgb(120, 200, 255), rgb(160, 130, 255), ocean_c, 1.2, true), imgs: Vec::new(), builtin: true },
@@ -246,6 +315,11 @@ pub fn to_text(pal: &Pal) -> String {
     t.push_str(&format!("bg_darken   = {:.2}   # 0 = picture as it is, 1 = black\n", pal.dim));
     t.push_str(&format!("bg_soft     = {:.2}   # blur of the background picture\n", pal.soft));
     t.push_str(&format!("module_img  = {:.2}   # strength of the per-module pictures\n", pal.mod_img));
+    for (i, (key, _)) in PICS.iter().enumerate() {
+        if (pal.pic_a[i] - 1.0).abs() > 0.004 {
+            t.push_str(&format!("pic_{key:<9} = {:.2}   # strength of this picture\n", pal.pic_a[i]));
+        }
+    }
     t
 }
 
@@ -254,7 +328,7 @@ pub fn to_text_full(pal: &Pal, imgs: &Imgs) -> String {
     let mut t = to_text(pal);
     for (slot, img) in imgs {
         if let Some(b) = img.stored() {
-            t.push_str(&format!("\n[image {}]\n", SLOTS[*slot].0));
+            t.push_str(&format!("\n[image {}]\n", PICS[*slot].0));
             for ch in b.as_bytes().chunks(100) {
                 t.push_str(std::str::from_utf8(ch).unwrap_or(""));
                 t.push('\n');
@@ -269,45 +343,47 @@ pub fn to_text_full(pal: &Pal, imgs: &Imgs) -> String {
 pub fn from_text_full(txt: &str) -> (Pal, Imgs) {
     let mut imgs: Imgs = Vec::new();
     let mut plain = String::new();
-    let mut cur: Option<(usize, String)> = None;
+    // slots of the picture being read, and its base64
+    let mut cur: Option<(Vec<usize>, String)> = None;
     for line in txt.lines() {
         let l = line.trim();
-        if let Some((slot, mut data)) = cur.take() {
+        if let Some((slots, mut data)) = cur.take() {
             if l == "[end]" {
-                if let Some(img) = b64_decode(&data).and_then(|b| decode_bytes(&b).ok()).map(|i| {
-                    // a shared file could hold a huge picture: keep it to the usual size
-                    let (mw, mh) = if slot == k::BG { MAX_BG } else { MAX_MOD };
-                    if i.w > mw || i.h > mh { fit(&i, mw, mh) } else { Img { b64: data.clone(), ..i } }
-                }) {
-                    imgs.retain(|(s, _)| *s != slot);
-                    imgs.push((slot, Arc::new(img)));
+                if let Some(img) = b64_decode(&data).and_then(|b| decode_bytes(&b).ok()) {
+                    for slot in slots {
+                        // a shared file could hold a huge picture: keep it to the usual size
+                        let (mw, mh) = if slot == pic::WINDOW { MAX_BG } else { MAX_MOD };
+                        let im = if img.w > mw || img.h > mh { fit(&img, mw, mh) } else { Img { b64: data.clone(), ..img.clone() } };
+                        imgs.retain(|(s, _)| *s != slot);
+                        imgs.push((slot, Arc::new(im)));
+                    }
                 }
             } else {
                 data.push_str(l);
-                cur = Some((slot, data));
+                cur = Some((slots, data));
             }
             continue;
         }
         if let Some(key) = l.strip_prefix("[image ").and_then(|r| r.strip_suffix(']')) {
-            if let Some(i) = SLOTS.iter().position(|(k, _, _)| *k == key.trim()) {
-                if IMG_SLOTS.contains(&i) {
-                    cur = Some((i, String::new()));
-                    continue;
-                }
-            }
-            // unknown picture: skip its data
-            cur = Some((usize::MAX, String::new()));
+            let key = key.trim();
+            let slots: Vec<usize> = match PICS.iter().position(|(k, _)| *k == key) {
+                // keys shared by both versions (sub, noise, filter ...) are the same slot
+                Some(i) => vec![i],
+                None => old_pic_key(key).to_vec(),
+            };
+            // an unknown picture is read and skipped
+            cur = Some((slots, String::new()));
             continue;
         }
         plain.push_str(line);
         plain.push('\n');
     }
-    imgs.retain(|(s, _)| *s != usize::MAX);
     (from_text(&plain), imgs)
 }
 
 pub fn from_text(txt: &str) -> Pal {
     let mut pal = Pal::default();
+    let (mut have_b, mut have_c) = (false, false);
     for line in txt.lines() {
         if line.trim_start().starts_with('#') {
             continue;
@@ -320,6 +396,12 @@ pub fn from_text(txt: &str) -> Pal {
         if let Some(i) = SLOTS.iter().position(|(k, _, _)| *k == key) {
             if let Some(c) = parse_hex(&val) {
                 pal.c[i] = c;
+                have_b |= i == k::OSC_B;
+                have_c |= i == k::OSC_C;
+            }
+        } else if let Some(pi) = key.strip_prefix("pic_").and_then(|pk| PICS.iter().position(|(k, _)| *k == pk)) {
+            if let Ok(v) = val.parse::<f32>() {
+                pal.pic_a[pi] = v.clamp(0.0, 1.0);
             }
         } else if key == "roundness" {
             if let Ok(v) = val.parse::<f32>() {
@@ -339,6 +421,13 @@ pub fn from_text(txt: &str) -> Pal {
         ) {
             *slot = v.clamp(0.0, 1.0);
         }
+    }
+    // files from before OSC B / C had their own colour: they follow OSC A
+    if !have_b {
+        pal.c[k::OSC_B] = pal.c[k::OSC];
+    }
+    if !have_c {
+        pal.c[k::OSC_C] = pal.c[k::OSC];
     }
     pal
 }
@@ -716,18 +805,40 @@ mod tests {
         let img = Img::new(3, 2, (0..24).map(|i| (i * 10) as u8).collect());
         let mut pal = builtins()[3].pal;
         pal.alpha = 0.6;
-        let imgs: Imgs = vec![(k::BG, Arc::new(img.clone())), (k::FILTER, Arc::new(img.clone()))];
+        let imgs: Imgs = vec![(pic::WINDOW, Arc::new(img.clone())), (pic::FILTER, Arc::new(img.clone()))];
         let txt = to_text_full(&pal, &imgs);
         let (p2, i2) = from_text_full(&txt);
         assert_eq!(p2, pal);
         assert_eq!(i2.len(), 2);
         assert_eq!(*i2[0].1, img);
-        assert_eq!(i2[1].0, k::FILTER);
+        assert_eq!(i2[1].0, pic::FILTER);
         // a damaged picture is dropped, the colours still load
         let bad = txt.replacen("[image filter]\n", "[image filter]\n!!!!\n", 1);
         let (p3, i3) = from_text_full(&bad);
         assert_eq!(p3, pal);
         assert_eq!(i3.len(), 1);
+    }
+
+    #[test]
+    fn old_theme_files_still_load() {
+        // 1.1.0: one picture for all oscillators, no OSC B / C colours
+        let img = Img::new(2, 2, vec![9u8; 16]);
+        let png = b64_encode(&encode_png(&img).unwrap());
+        let txt = format!("osc = #102030\n\n[image osc]\n{png}\n[end]\n[image voice]\n{png}\n[end]\n[image background]\n{png}\n[end]\n");
+        let (p, imgs) = from_text_full(&txt);
+        assert_eq!(p.c[k::OSC_B], rgb(16, 32, 48));
+        assert_eq!(p.c[k::OSC_C], rgb(16, 32, 48));
+        let mut got: Vec<usize> = imgs.iter().map(|(s, _)| *s).collect();
+        got.sort();
+        assert_eq!(got, vec![pic::WINDOW, pic::OSC_A, pic::OSC_B, pic::OSC_C, pic::VOICING, pic::MIX, pic::GLOBAL]);
+    }
+
+    #[test]
+    fn picture_strengths_round_trip() {
+        let mut p = Pal::default();
+        p.pic_a[pic::OSC_B] = 0.4;
+        p.pic_a[pic::WINDOW] = 0.75;
+        assert_eq!(from_text(&to_text(&p)), p);
     }
 
     #[test]

@@ -94,8 +94,24 @@ pub fn rad(n: u8) -> CornerRadius {
 pub fn radu(n: u8) -> u8 {
     (n as f32 * palette().round).round().clamp(0.0, 40.0) as u8
 }
-pub fn cur_cat() -> usize {
-    CAT.with(|c| c.get())
+thread_local! {
+    /// picture slot of the module being drawn (usize::MAX = none)
+    static PIC: Cell<usize> = const { Cell::new(usize::MAX) };
+}
+pub fn cur_pic() -> usize {
+    PIC.with(|c| c.get())
+}
+/// Modules drawn inside use the picture `slot` of the theme; restores the previous one on drop.
+pub struct PicGuard(usize);
+impl PicGuard {
+    pub fn new(slot: usize) -> PicGuard {
+        PicGuard(PIC.with(|c| c.replace(slot)))
+    }
+}
+impl Drop for PicGuard {
+    fn drop(&mut self) {
+        PIC.with(|c| c.set(self.0));
+    }
 }
 
 // ---------------------------------------------------------------- theme pictures
@@ -133,7 +149,7 @@ pub fn paint_cover(painter: &egui::Painter, slot: usize, r: Rect, corner: Corner
 /// The panel colour: see-through by the theme's PANEL OPACITY when a window picture is set.
 pub fn panel_fill() -> Color32 {
     let c = PANEL();
-    if texture(crate::theme::k::BG).is_some() {
+    if texture(crate::theme::pic::WINDOW).is_some() {
         with_alpha(c, (palette().alpha * 255.0) as u8)
     } else {
         c
@@ -145,9 +161,12 @@ pub fn module_back(ui: &Ui, r: Rect) {
     let pa = ui.painter();
     pa.rect_filled(r, rad(6), panel_fill());
     let pal = palette();
-    if pal.mod_img > 0.0 {
-        let a = (pal.mod_img * 255.0) as u8;
-        paint_cover(pa, cur_cat(), r, rad(6), Color32::from_rgba_unmultiplied(255, 255, 255, a));
+    let slot = cur_pic();
+    if slot < crate::theme::pic::N && slot != crate::theme::pic::WINDOW {
+        let a = (pal.mod_img * pal.pic_a[slot] * 255.0) as u8;
+        if a > 0 {
+            paint_cover(pa, slot, r, rad(6), Color32::from_rgba_unmultiplied(255, 255, 255, a));
+        }
     }
     pa.rect_stroke(r, rad(6), Stroke::new(1.0_f32, LINE()), StrokeKind::Inside);
 }

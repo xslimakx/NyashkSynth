@@ -18,7 +18,7 @@ use crate::presets::{self, PresetRef};
 use crate::sample::{LfoCurve, NSample, LFO_POINTS};
 use crate::shared::Shared;
 use crate::ui::*;
-use crate::theme::{self, k as K, UiCfg};
+use crate::theme::{self, k as K, pic as PIC, UiCfg};
 use crate::wavedit::WavEdit;
 use crate::wavetable::{self, Table, NAMES};
 use crate::Meters;
@@ -68,6 +68,8 @@ pub struct Gui {
     img_tiles: Vec<(usize, Rect)>,
     /// macro being renamed: (index, text)
     mac_edit: Option<(usize, String)>,
+    /// an open file window and what its answer is for
+    pick: Option<(crate::pick::Pending, PickFor)>,
     auto_loaded: bool,
     auto_chaos: bool,
     pub tab: usize,
@@ -404,8 +406,8 @@ impl Gui {
                 }
                 if let Ok(img) = std::env::var("NYASHK_BGIMG") {
                     if let Ok(i) = std::fs::read(&img).map_err(|e| e.to_string()).and_then(|b| theme::prepare(&b, theme::MAX_BG.0, theme::MAX_BG.1)) {
-                        c.imgs.retain(|(s, _)| *s != K::BG);
-                        c.imgs.push((K::BG, Arc::new(i)));
+                        c.imgs.retain(|(s, _)| *s != PIC::WINDOW);
+                        c.imgs.push((PIC::WINDOW, Arc::new(i)));
                         c.pal.alpha = 0.72;
                     }
                 }
@@ -422,9 +424,10 @@ impl Gui {
             cfg_dirty: false,
             layout_edit: std::env::var("NYASHK_LAYOUT").is_ok(),
             lay_drag: None,
-            img_sel: K::BG,
+            img_sel: PIC::WINDOW,
             img_tiles: Vec::new(),
             mac_edit: None,
+            pick: None,
             status_until: 0.0,
             auto: if std::env::var("NYASHK_AUTOTEST").is_ok() { Some((0, -1.0, 0.0, String::new())) } else { None },
         }
@@ -488,10 +491,11 @@ pub fn create(params: Arc<SynthParams>, meters: Arc<Meters>, shared: Arc<Shared>
             shared.empty_trash();
             egui::CentralPanel::default().frame(egui::Frame::NONE.fill(BG())).show(ctx, |ui| {
                 let full = ui.max_rect();
-                if texture(K::BG).is_some() {
-                    // window picture, darkened by the theme
+                if texture(PIC::WINDOW).is_some() {
+                    // window picture, darkened by the theme, at its own strength
                     let d = ((1.0 - palette().dim) * 255.0) as u8;
-                    paint_cover(ui.painter(), K::BG, full, CornerRadius::ZERO, Color32::from_rgb(d, d, d));
+                    let a = (palette().pic_a[PIC::WINDOW] * 255.0) as u8;
+                    paint_cover(ui.painter(), PIC::WINDOW, full, CornerRadius::ZERO, Color32::from_rgba_unmultiplied(d, d, d, a));
                 }
                 let o_real = full.min;
                 // everything below the header sits one page bar lower
@@ -597,17 +601,21 @@ pub fn create(params: Arc<SynthParams>, meters: Arc<Meters>, shared: Arc<Shared>
                                 0 => {
                                     {
                                         let _c = CatGuard::new(K::SUB);
+                                        let _p = PicGuard::new(PIC::SUB);
                                         sub_panel(ui, setter, p, Rect::from_min_size(r.min, Vec2::new(r.width(), 176.0)));
                                     }
                                     let _c = CatGuard::new(K::NOISE);
+                                    let _p = PicGuard::new(PIC::NOISE);
                                     noise_panel(ui, setter, p, st, Rect::from_min_size(r.min + Vec2::new(0.0, 182.0), Vec2::new(r.width(), 154.0)));
                                 }
                                 1..=3 => {
-                                    let _c = CatGuard::new(K::OSC);
+                                    let _c = CatGuard::new([K::OSC, K::OSC_B, K::OSC_C][m - 1]);
+                                    let _p = PicGuard::new([PIC::OSC_A, PIC::OSC_B, PIC::OSC_C][m - 1]);
                                     osc_panel(ui, setter, p, &shared, st, r, m - 1);
                                 }
                                 _ => {
                                     let _c = CatGuard::new(K::FILTER);
+                                    let _p = PicGuard::new(PIC::FILTER);
                                     filter_panel(ui, setter, p, st, r);
                                 }
                             }
@@ -616,14 +624,17 @@ pub fn create(params: Arc<SynthParams>, meters: Arc<Meters>, shared: Arc<Shared>
                             match m {
                                 0 => {
                                     let _c = CatGuard::new(K::ENV);
+                                    let _p = PicGuard::new(PIC::ENV);
                                     env_module(ui, setter, p, st, *r, now);
                                 }
                                 1 => {
                                     let _c = CatGuard::new(K::LFO);
+                                    let _p = PicGuard::new(PIC::LFO);
                                     lfo_module(ui, setter, p, &shared, &meters, st, *r);
                                 }
                                 _ => {
                                     let _c = CatGuard::new(K::VOICE);
+                                    let _p = PicGuard::new(PIC::VOICING);
                                     voicing_module(ui, setter, p, st, *r);
                                 }
                             }
@@ -634,11 +645,13 @@ pub fn create(params: Arc<SynthParams>, meters: Arc<Meters>, shared: Arc<Shared>
                     }
                     6 => {
                         let _c = CatGuard::new(K::VOICE);
+                        let _p = PicGuard::new(PIC::MIX);
                         let c = page_panel(ui, "MIX", rect(14.0, 56.0, 1430.0, 690.0));
                         mix_page(ui, setter, p, st, c);
                     }
                     1 => {
                         let _c = CatGuard::new(K::LFO);
+                        let _p = PicGuard::new(PIC::LFO);
                         let c = page_panel(ui, "LFO 1-4", rect(14.0, 56.0, 1430.0, 340.0));
                         lfo_tab(ui, setter, p, &shared, &meters, st, c, 0);
                         let c = page_panel(ui, "LFO 5-8", rect(14.0, 404.0, 1430.0, 342.0));
@@ -646,11 +659,13 @@ pub fn create(params: Arc<SynthParams>, meters: Arc<Meters>, shared: Arc<Shared>
                     }
                     2 => {
                         let _c = CatGuard::new(K::MATRIX);
+                        let _p = PicGuard::new(PIC::MATRIX);
                         let c = page_panel(ui, "MODULATION MATRIX  (all routes. Add one here, or drag a chip from the bottom strip onto a knob on SOUND / FX / SETTINGS)", rect(14.0, 56.0, 1430.0, 690.0));
                         matrix_tab(ui, setter, p, st, c);
                     }
                     3 => {
                         let _c = CatGuard::new(K::FX);
+                        let _p = PicGuard::new(PIC::FX);
                         let c = page_panel(ui, "EFFECTS", rect(14.0, 56.0, 1430.0, 690.0));
                         let sr = fxui::fx_tab(ui, setter, p, st, c);
                         painter.rect_filled(sr, rad(4), shade(-0.023));
@@ -672,6 +687,7 @@ pub fn create(params: Arc<SynthParams>, meters: Arc<Meters>, shared: Arc<Shared>
                     }
                     4 => {
                         let _c = CatGuard::new(K::SEQ);
+                        let _p = PicGuard::new(PIC::SEQ);
                         let c = page_panel(ui, "ARPEGGIATOR", rect(14.0, 56.0, 1430.0, 340.0));
                         arp_tab(ui, setter, p, &meters, c);
                         let c = page_panel(ui, "CLIP SEQUENCER", rect(14.0, 404.0, 1430.0, 342.0));
@@ -679,6 +695,7 @@ pub fn create(params: Arc<SynthParams>, meters: Arc<Meters>, shared: Arc<Shared>
                     }
                     _ => {
                         let _c = CatGuard::new(K::VOICE);
+                        let _p = PicGuard::new(PIC::GLOBAL);
                         let c = page_panel(ui, if st.set_page == 1 { "THEME & LAYOUT" } else { "SETTINGS" }, rect(14.0, 56.0, 1430.0, 690.0));
                         // sub-pages: general settings | theme & layout
                         for (k, (n, tip)) in [("GENERAL", "Tuning, MIDI, sound quality, MIDI bindings"), ("THEME & LAYOUT", "Colours, pictures, roundness, module order: make your own look, save it as a theme and share the file")].iter().enumerate() {
@@ -700,6 +717,7 @@ pub fn create(params: Arc<SynthParams>, meters: Arc<Meters>, shared: Arc<Shared>
                 // ================================================= bottom strip: sources, macros, voice
                 {
                     let _c = CatGuard::new(K::MACRO);
+                    let _p = PicGuard::new(PIC::MACROS);
                     strip(ui, setter, p, st, rect(14.0, 752.0, 1430.0, 80.0), now);
                 }
                 if p.show_wheels.value() {
@@ -904,10 +922,12 @@ fn header(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Shared, s
     }
     // status toast: lives in the tab row (where the hint text is), never over the preset button
     if now < st.status_until {
-        let stxt: String = if st.status.chars().count() > 46 { st.status.chars().take(45).collect::<String>() + "~" } else { st.status.clone() };
+        let stxt: String = if st.status.chars().count() > 120 { st.status.chars().take(119).collect::<String>() + "~" } else { st.status.clone() };
         let g = painter.layout_no_wrap(stxt, mono(11.0), WHITE());
         let size = g.size() + Vec2::new(16.0, 4.0);
-        let rc = Rect::from_min_size(Pos2::new(o.x + 520.0, o.y + 49.0 - size.y * 0.5), size);
+        // long messages move left so they stay inside the window
+        let x = (o.x + 520.0).min(o.x + 1440.0 - size.x).max(o.x + 10.0);
+        let rc = Rect::from_min_size(Pos2::new(x, o.y + 49.0 - size.y * 0.5), size);
         painter.rect_filled(rc, rad(5), Color32::BLACK);
         painter.rect_stroke(rc, rad(5), Stroke::new(1.0_f32, WHITE()), egui::StrokeKind::Inside);
         painter.galley(rc.center() - g.size() * 0.5, g, WHITE());
@@ -1018,12 +1038,33 @@ fn drop_files(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Share
         }
         painter.text(Pos2::new(o.x + 560.0, o.y + 560.0), Align2::CENTER_CENTER, "Drop a .nyp preset or a .theme anywhere; a PNG / JPG picture onto a module (or the header = window)", mono(11.0), DIM());
     }
-    let dropped: Vec<PathBuf> = ui.input(|i| i.raw.dropped_files.iter().filter_map(|f| f.path.clone()).collect());
+    let mut dropped: Vec<PathBuf> = ui.input(|i| i.raw.dropped_files.iter().filter_map(|f| f.path.clone()).collect());
+    let mut pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or(area_a.center());
+    // a file window that closed: its files are handled as if dropped where its button is
+    let picked = st.pick.as_ref().and_then(|(pend, _)| pend.poll());
+    if let Some(res) = picked {
+        let (_, what) = st.pick.take().unwrap();
+        match (res, what) {
+            (Err(e), _) => st.say(now, e),
+            (Ok(v), _) if v.is_empty() => {}
+            (Ok(v), PickFor::At(p)) => {
+                dropped = v;
+                pos = p;
+            }
+            (Ok(v), PickFor::ExportTheme) => {
+                let path = &v[0];
+                match std::fs::write(path, theme::to_text_full(&st.ucfg.pal, &st.ucfg.imgs)) {
+                    Ok(()) => st.say(now, format!("theme saved to {} (pictures inside: send this file)", path.display())),
+                    Err(e) => st.say(now, format!("could not save the theme: {e}")),
+                }
+                return;
+            }
+        }
+    }
     if dropped.is_empty() {
         return;
     }
-    let pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or(area_a.center());
-    st.say(now, format!("dropped {} file(s)", dropped.len()));
+    st.say(now, format!("loading {} file(s)", dropped.len()));
     let mut msgs: Vec<String> = Vec::new();
     for path in dropped {
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
@@ -1034,19 +1075,22 @@ fn drop_files(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Share
             let slot = if st.tab == 5 && st.set_page == 1 {
                 st.img_tiles.iter().find(|(_, r)| r.contains(pos)).map(|(s, _)| *s).unwrap_or(st.img_sel)
             } else if st.tab == 0 && pos.y > o.y + 52.0 {
-                let top_c = [if pos.y < top_r[0].top() + 182.0 { K::SUB } else { K::NOISE }, K::OSC, K::OSC, K::OSC, K::FILTER];
-                let bot_c = [K::ENV, K::LFO, K::VOICE];
-                top_r.iter().position(|r| r.contains(pos)).map(|m| top_c[m]).or_else(|| bot_r.iter().position(|r| r.contains(pos)).map(|m| bot_c[m])).unwrap_or(if pos.y > o.y + 750.0 { K::MACRO } else { K::BG })
+                let top_p = [if pos.y < top_r[0].top() + 182.0 { PIC::SUB } else { PIC::NOISE }, PIC::OSC_A, PIC::OSC_B, PIC::OSC_C, PIC::FILTER];
+                let bot_p = [PIC::ENV, PIC::LFO, PIC::VOICING];
+                top_r.iter().position(|r| r.contains(pos)).map(|m| top_p[m]).or_else(|| bot_r.iter().position(|r| r.contains(pos)).map(|m| bot_p[m])).unwrap_or(if pos.y > o.y + 750.0 { PIC::MACROS } else { PIC::WINDOW })
             } else if pos.y > o.y + 52.0 && pos.y < o.y + 748.0 {
                 match st.tab {
-                    1 => K::LFO,
-                    2 => K::MATRIX,
-                    3 => K::FX,
-                    4 => K::SEQ,
-                    _ => K::VOICE,
+                    1 => PIC::LFO,
+                    2 => PIC::MATRIX,
+                    3 => PIC::FX,
+                    4 => PIC::SEQ,
+                    6 => PIC::MIX,
+                    _ => PIC::GLOBAL,
                 }
+            } else if pos.y > o.y + 748.0 {
+                PIC::MACROS
             } else {
-                K::BG
+                PIC::WINDOW
             };
             match set_theme_img(st, slot, &path) {
                 Ok(()) => msgs.push(format!("picture for {} set (THEME & LAYOUT page: strength, darkening, save)", theme::img_label(slot))),
@@ -1070,6 +1114,15 @@ fn drop_files(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Share
                     msgs.push(format!("theme {saved} loaded and added to your themes"));
                 }
                 Err(e) => msgs.push(format!("theme failed: {e}")),
+            }
+            continue;
+        }
+        if ext == "sfz" {
+            // a multisample: into the oscillator its browser was opened for (or OSC A)
+            let o_i = if st.smp_target == Some(98) { st.multi_target } else { 0 };
+            match load_multi(setter, p, shared, o_i, &path) {
+                Ok(n) => msgs.push(format!("multisample {n} loaded into OSC {}", OSC_NAMES[o_i.min(2)])),
+                Err(e) => msgs.push(format!("multisample failed: {e}")),
             }
             continue;
         }
@@ -1279,6 +1332,7 @@ fn preset_overlay(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &S
             Err(e) => st.say(now, e),
         }
     }
+    file_btn(ui, st, Rect::from_min_size(Pos2::new(f.right() - 340.0, y), Vec2::new(124.0, 24.0)), "OPEN FILE...", "Choose a .nyp preset anywhere on your computer: it is loaded and copied into your presets", "Open a SyntiTyzer preset", crate::pick::PRESETS, false, area.center());
     if pill_tip(ui, Rect::from_min_size(Pos2::new(f.right() - 210.0, y), Vec2::new(116.0, 24.0)), "OPEN FOLDER", false, "Open the preset folder in your file manager. Drop .nyp files (or whole category folders) in there.") {
         if let Some(d) = files::presets_dir() {
             files::open_folder(&d);
@@ -1355,6 +1409,7 @@ fn table_overlay(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Sh
             st.frame_size = *v;
         }
     }
+    file_btn(ui, st, Rect::from_min_size(Pos2::new(f.right() - 340.0, y), Vec2::new(124.0, 24.0)), "OPEN FILE...", "Choose a .wav anywhere on your computer: it is loaded into this oscillator (and copied to the wavetable folder)", "Open a wavetable (.wav)", crate::pick::WAVS, false, area.center());
     if pill_tip(ui, Rect::from_min_size(Pos2::new(f.right() - 210.0, y), Vec2::new(116.0, 24.0)), "OPEN FOLDER", false, "Open the wavetable folder. Drop .wav files in there.") {
         if let Some(d) = files::tables_dir() {
             files::open_folder(&d);
@@ -1390,6 +1445,11 @@ fn noise_overlay(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, shared: &Sh
     let act = browse::browser(ui, area, if want_sfz { "MULTISAMPLES (.sfz)" } else { "NOISE / SAMPLES" }, &items, sel, &mut st.nbs, false, "noises");
     let f = browse::footer(area);
     let y = f.top() + 4.0;
+    if want_sfz {
+        file_btn(ui, st, Rect::from_min_size(Pos2::new(f.right() - 340.0, y), Vec2::new(124.0, 24.0)), "OPEN FILE...", "Choose an .sfz anywhere on your computer (its .wav files stay where they are)", "Open a multisample (.sfz)", crate::pick::SFZ, false, area.center());
+    } else {
+        file_btn(ui, st, Rect::from_min_size(Pos2::new(f.right() - 340.0, y), Vec2::new(124.0, 24.0)), "OPEN FILE...", "Choose a .wav anywhere on your computer (it is copied to the noise / sample folder)", "Open a sample (.wav)", crate::pick::WAVS, false, area.center());
+    }
     if pill_tip(ui, Rect::from_min_size(Pos2::new(f.right() - 210.0, y), Vec2::new(116.0, 24.0)), "OPEN FOLDER", false, "Open the noise folder. Drop .wav files in there.") {
         if let Some(d) = files::noises_dir() {
             files::open_folder(&d);
@@ -1609,7 +1669,7 @@ fn theme_frame(ctx: &egui::Context, st: &mut Gui) {
             .imgs
             .iter()
             .map(|(slot, img)| {
-                let im = if *slot == K::BG { theme::softened(img, st.ucfg.pal.soft) } else { (**img).clone() };
+                let im = if *slot == PIC::WINDOW { theme::softened(img, st.ucfg.pal.soft) } else { (**img).clone() };
                 let ci = egui::ColorImage::from_rgba_unmultiplied([im.w, im.h], &im.rgba);
                 (*slot, ctx.load_texture(format!("theme_img_{slot}"), ci, egui::TextureOptions::LINEAR))
             })
@@ -1705,7 +1765,7 @@ pub fn module_bg(ui: &Ui, r: Rect) {
     module_back(ui, r);
     // header band, and a thin line in the colour of the module's category
     let hb = Rect::from_min_size(r.min, Vec2::new(r.width(), 30.0));
-    let a = if texture(crate::theme::k::BG).is_some() { (palette().alpha * 200.0) as u8 } else { 255 };
+    let a = if texture(PIC::WINDOW).is_some() { (palette().alpha * 200.0) as u8 } else { 255 };
     ui.painter().rect_filled(hb, CornerRadius { nw: radu(6), ne: radu(6), sw: 0, se: 0 }, with_alpha(shade(0.065), a));
     ui.painter().hline(r.left() + radu(6) as f32..=r.right() - radu(6) as f32, r.top() + 0.5, Stroke::new(1.5_f32, with_alpha(ACCENT(), 170)));
 }
@@ -4086,7 +4146,9 @@ fn mix_page(ui: &mut Ui, setter: &ParamSetter, p: &SynthParams, st: &mut Gui, c:
     for (k, (name, si)) in srcs.iter().enumerate() {
         let r = strip_rect(k);
         let _cg = CatGuard::new(match si {
-            0..=2 => K::OSC,
+            0 => K::OSC,
+            1 => K::OSC_B,
+            2 => K::OSC_C,
             3 => K::SUB,
             _ => K::NOISE,
         });
@@ -4819,15 +4881,15 @@ fn autotest(setter: &ParamSetter, p: &SynthParams, shared: &Shared, st: &mut Gui
 /// Loads a picture into a slot of the active theme (scaled down, stored inside the theme).
 fn set_theme_img(st: &mut Gui, slot: usize, path: &std::path::Path) -> Result<(), String> {
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
-    let (mw, mh) = if slot == K::BG { theme::MAX_BG } else { theme::MAX_MOD };
+    let (mw, mh) = if slot == PIC::WINDOW { theme::MAX_BG } else { theme::MAX_MOD };
     let img = theme::prepare(&bytes, mw, mh)?;
     st.ucfg.imgs.retain(|(s, _)| *s != slot);
     st.ucfg.imgs.push((slot, Arc::new(img)));
-    if slot == K::BG && st.ucfg.pal.alpha > 0.95 {
+    if slot == PIC::WINDOW && st.ucfg.pal.alpha > 0.95 {
         // a window picture is pointless behind solid panels
         st.ucfg.pal.alpha = 0.72;
     }
-    if slot != K::BG && st.ucfg.pal.mod_img < 0.05 {
+    if slot != PIC::WINDOW && st.ucfg.pal.mod_img < 0.05 {
         st.ucfg.pal.mod_img = 0.3;
     }
     st.tex_gen += 1;
@@ -4873,7 +4935,7 @@ fn theme_page(ui: &mut Ui, st: &mut Gui, c: Rect, now: f64) {
     let cols = [(c.left() - 6.0, 330.0), (c.left() + 334.0, 520.0), (c.left() + 864.0, c.width() - 864.0 + 6.0)];
     for (x, w) in cols {
         let r = Rect::from_min_size(Pos2::new(x, c.top() - 8.0), Vec2::new(w, c.height() + 6.0));
-        pa.rect_filled(r, rad(7), with_alpha(shade(0.005), if texture(K::BG).is_some() { 150 } else { 255 }));
+        pa.rect_filled(r, rad(7), with_alpha(shade(0.005), if texture(PIC::WINDOW).is_some() { 150 } else { 255 }));
         pa.rect_stroke(r, rad(7), Stroke::new(1.0_f32, shade(0.085)), StrokeKind::Inside);
     }
 
@@ -4962,10 +5024,15 @@ fn theme_page(ui: &mut Ui, st: &mut Gui, c: Rect, now: f64) {
         }
     }
     ui.set_opacity(1.0);
+    file_btn(ui, st, Rect::from_min_size(Pos2::new(x0, sy + 60.0), Vec2::new(154.0, 22.0)), "IMPORT THEME...", "Open a .theme file someone sent you: it is used now and added to your themes (pictures included)", "Import a SyntiTyzer theme", crate::pick::THEMES, false, c.center());
+    if pill_tip(ui, Rect::from_min_size(Pos2::new(x0 + 160.0, sy + 60.0), Vec2::new(154.0, 22.0)), if st.pick.is_some() { "..." } else { "EXPORT THEME..." }, false, "Save the current look (colours, pictures, settings) as one .theme file anywhere, to send it to somebody") && st.pick.is_none() {
+        let nm = if st.theme_name.trim().is_empty() { st.ucfg.theme.clone() } else { st.theme_name.clone() };
+        st.pick = Some((crate::pick::save("Export the theme", &format!("{}.theme", theme::safe_name(&nm)), "theme"), PickFor::ExportTheme));
+    }
     pa.text(
-        Pos2::new(x0, sy + 66.0),
+        Pos2::new(x0, sy + 92.0),
         Align2::LEFT_TOP,
-        "Share a theme: SAVE, then send its .theme file.\nThe pictures are inside the file, so the other\nperson sees exactly your look.\nGot one? Drop the .theme onto the synth window.",
+        "The pictures travel inside the .theme file: whoever\ngets it sees exactly your look.",
         mono(8.5),
         DIM(),
     );
@@ -4993,70 +5060,75 @@ fn theme_page(ui: &mut Ui, st: &mut Gui, c: Rect, now: f64) {
     head(x1, c.top() + 6.0, "COLOURS");
     pa.text(Pos2::new(x1 + 500.0, c.top() + 6.0), Align2::RIGHT_CENTER, "click a colour to change it", mono(8.5), DIM());
     let mut pal = st.ucfg.pal;
-    for (i, (_, label, tip)) in theme::SLOTS.iter().enumerate() {
-        let (col, row) = (i / 10, i % 10);
+    for (n, &i) in theme::SLOT_ORDER.iter().enumerate() {
+        let (_, label, tip) = theme::SLOTS[i];
+        let (col, row) = (n / 11, n % 11);
         let x = x1 + 252.0 * col as f32;
-        let y = c.top() + 26.0 + 27.0 * row as f32;
-        let r = Rect::from_min_size(Pos2::new(x, y), Vec2::new(244.0, 23.0));
+        let y = c.top() + 24.0 + 25.0 * row as f32;
+        let r = Rect::from_min_size(Pos2::new(x, y), Vec2::new(244.0, 22.0));
         let used = !(i >= K::OSC && !pal.by_cat);
-        pa.text(Pos2::new(r.left() + 2.0, r.center().y), Align2::LEFT_CENTER, *label, mono(9.5), if used { shade(0.8) } else { MID() });
+        pa.text(Pos2::new(r.left() + 2.0, r.center().y), Align2::LEFT_CENTER, label, mono(9.5), if used { shade(0.8) } else { MID() });
         pa.text(Pos2::new(r.right() - 64.0, r.center().y), Align2::RIGHT_CENTER, theme::hex(pal.c[i]), mono(8.5), DIM());
-        let br = Rect::from_min_size(Pos2::new(r.right() - 56.0, r.top() + 1.0), Vec2::new(52.0, 21.0));
+        let br = Rect::from_min_size(Pos2::new(r.right() - 56.0, r.top() + 1.0), Vec2::new(52.0, 20.0));
         ui.scope_builder(egui::UiBuilder::new().max_rect(br), |ui| {
             ui.spacing_mut().interact_size = br.size();
             let resp = egui::color_picker::color_edit_button_srgba(ui, &mut pal.c[i], egui::color_picker::Alpha::Opaque);
-            resp.on_hover_text(*tip);
+            resp.on_hover_text(tip);
         });
     }
     // style
-    let sy = c.top() + 26.0 + 27.0 * 10.0 + 14.0;
+    let sy = c.top() + 24.0 + 25.0 * 11.0 + 12.0;
     head(x1, sy, "STYLE");
-    if pill_tip(ui, Rect::from_min_size(Pos2::new(x1, sy + 14.0), Vec2::new(240.0, 24.0)), if pal.by_cat { "COLOUR BY CATEGORY: ON" } else { "COLOUR BY CATEGORY: OFF" }, pal.by_cat, "On: oscillators, filter, envelopes, LFOs, effects ... each in their own colour. Off: ACCENT everywhere.") {
+    if pill_tip(ui, Rect::from_min_size(Pos2::new(x1, sy + 14.0), Vec2::new(240.0, 24.0)), if pal.by_cat { "COLOUR BY CATEGORY: ON" } else { "COLOUR BY CATEGORY: OFF" }, pal.by_cat, "On: every oscillator, the filter, envelopes, LFOs, effects ... in their own colour. Off: ACCENT everywhere.") {
         pal.by_cat = !pal.by_cat;
     }
-    let sl = |k: usize| Rect::from_min_size(Pos2::new(x1, sy + 48.0 + 30.0 * k as f32), Vec2::new(500.0, 24.0));
+    if pill_tip(ui, Rect::from_min_size(Pos2::new(x1 + 252.0, sy + 14.0), Vec2::new(240.0, 24.0)), "OSC B / C = OSC A", false, "Give OSC B and OSC C the colour of OSC A") {
+        pal.c[K::OSC_B] = pal.c[K::OSC];
+        pal.c[K::OSC_C] = pal.c[K::OSC];
+    }
+    let sl = |k: usize| Rect::from_min_size(Pos2::new(x1, sy + 46.0 + 28.0 * k as f32), Vec2::new(500.0, 24.0));
     theme_slider(ui, sl(0), "ROUNDNESS", &mut pal.round, 0.0, 2.0, 1.0, "Corner roundness of modules, buttons and boxes (0 = square)");
     theme_slider(ui, sl(1), "PANEL OPACITY", &mut pal.alpha, 0.15, 1.0, 1.0, "How solid the modules are over the window picture (100% = the picture only shows between them)");
     theme_slider(ui, sl(2), "PICTURE DARKEN", &mut pal.dim, 0.0, 0.95, 0.55, "Darkens the window picture so the controls stay easy to read");
     theme_slider(ui, sl(3), "PICTURE SOFTNESS", &mut pal.soft, 0.0, 1.0, 0.25, "Blurs the window picture: soft colour instead of busy detail");
-    theme_slider(ui, sl(4), "MODULE PICTURES", &mut pal.mod_img, 0.0, 1.0, 0.3, "Strength of the pictures inside the modules");
-    if pal != st.ucfg.pal {
-        st.ucfg.pal = pal;
-        st.cfg_dirty = true;
-    }
+    theme_slider(ui, sl(4), "MODULE PICTURES", &mut pal.mod_img, 0.0, 1.0, 0.3, "Strength of all pictures inside the modules (each one also has its own strength, under the pictures)");
 
     // ------------------------------------------------ pictures
     let x2 = c.left() + 874.0;
     let w2 = c.right() - x2 - 4.0;
     head(x2, c.top() + 6.0, "PICTURES");
-    pa.text(Pos2::new(c.right() - 4.0, c.top() + 6.0), Align2::RIGHT_CENTER, "PNG / JPG: drop onto a tile", mono(8.5), DIM());
+    pa.text(Pos2::new(c.right() - 4.0, c.top() + 6.0), Align2::RIGHT_CENTER, "PNG / JPG: click a tile, then CHOOSE FILE (or drop one on it)", mono(8.5), DIM());
     st.img_tiles.clear();
-    let (tw, th) = ((w2 - 12.0) / 3.0, 92.0);
+    let (tw, th) = ((w2 - 18.0) / 4.0, 70.0);
     let mut remove: Option<usize> = None;
-    for (j, slot) in theme::IMG_SLOTS.iter().enumerate() {
-        let r = Rect::from_min_size(Pos2::new(x2 + (tw + 6.0) * (j % 3) as f32, c.top() + 22.0 + (th + 6.0) * (j / 3) as f32), Vec2::new(tw, th));
-        st.img_tiles.push((*slot, r));
-        let resp = ui.interact(r, egui::Id::new(("imgtile", *slot)), Sense::click()).on_hover_text(format!("{}: drop a PNG / JPG here, or select the tile and type a path below", theme::img_label(*slot)));
-        let sel = st.img_sel == *slot;
-        let has = texture(*slot).is_some();
-        let _cg = CatGuard::new(if *slot == K::BG { K::ACCENT } else { *slot });
+    for slot in 0..PIC::N {
+        let r = Rect::from_min_size(Pos2::new(x2 + (tw + 6.0) * (slot % 4) as f32, c.top() + 20.0 + (th + 6.0) * (slot / 4) as f32), Vec2::new(tw, th));
+        st.img_tiles.push((slot, r));
+        let resp = ui.interact(r, egui::Id::new(("imgtile", slot)), Sense::click()).on_hover_text(format!("{}: click to select, then CHOOSE FILE; or drop a PNG / JPG here. Double-click: choose a file now.", theme::img_label(slot)));
+        let sel = st.img_sel == slot;
+        let has = texture(slot).is_some();
+        let _cg = CatGuard::new(theme::pic_cat(slot));
         pa.rect_filled(r, rad(5), shade(-0.01));
         if has {
-            paint_cover(&pa, *slot, r, rad(5), Color32::WHITE);
+            paint_cover(&pa, slot, r, rad(5), Color32::WHITE);
             pa.rect_filled(Rect::from_min_size(r.min, Vec2::new(r.width(), 20.0)), CornerRadius { nw: radu(5), ne: radu(5), sw: 0, se: 0 }, Color32::from_black_alpha(150));
         } else {
-            pa.text(r.center() + Vec2::new(0.0, 8.0), Align2::CENTER_CENTER, "drop picture", mono(8.5), MID());
+            pa.text(r.center() + Vec2::new(0.0, 9.0), Align2::CENTER_CENTER, "no picture", mono(8.5), MID());
         }
         pa.circle_filled(Pos2::new(r.left() + 10.0, r.top() + 10.0), 3.5, ACCENT());
-        pa.text(Pos2::new(r.left() + 19.0, r.top() + 10.0), Align2::LEFT_CENTER, theme::img_label(*slot), mono(9.0), WHITE());
-        pa.rect_stroke(r, rad(5), Stroke::new(if sel { 1.8_f32 } else { 1.0 }, if sel { ACCENT() } else if resp.hovered() { DIM() } else { LINE() }), StrokeKind::Inside);
+        pa.text(Pos2::new(r.left() + 19.0, r.top() + 10.0), Align2::LEFT_CENTER, theme::img_label(slot), mono(9.0), WHITE());
+        pa.rect_stroke(r, rad(5), Stroke::new(if sel { 2.0_f32 } else { 1.0 }, if sel { ACCENT() } else if resp.hovered() { DIM() } else { LINE() }), StrokeKind::Inside);
         if resp.clicked() {
-            st.img_sel = *slot;
+            st.img_sel = slot;
+        }
+        if resp.double_clicked() && st.pick.is_none() {
+            st.img_sel = slot;
+            st.pick = Some((crate::pick::open(&format!("Picture for {}", theme::img_label(slot)), crate::pick::PICTURES, false), PickFor::At(r.center())));
         }
         if has {
             let xr = Rect::from_min_size(Pos2::new(r.right() - 20.0, r.top() + 2.0), Vec2::new(17.0, 16.0));
             if pill_tip(ui, xr, "x", false, "Remove this picture") {
-                remove = Some(*slot);
+                remove = Some(slot);
             }
         }
     }
@@ -5065,24 +5137,47 @@ fn theme_page(ui: &mut Ui, st: &mut Gui, c: Rect, now: f64) {
         st.tex_gen += 1;
         st.cfg_dirty = true;
     }
-    let py = c.top() + 22.0 + (th + 6.0) * 4.0 + 4.0;
-    pa.text(Pos2::new(x2, py + 11.0), Align2::LEFT_CENTER, "PATH", mono(9.5), DIM());
-    let te = egui::TextEdit::singleline(&mut st.img_path).hint_text("/home/me/Pictures/sky.jpg").font(mono(10.0)).margin(egui::Margin::symmetric(6, 3));
-    let ter = ui.put(Rect::from_min_size(Pos2::new(x2 + 40.0, py), Vec2::new(w2 - 40.0 - 98.0, 22.0)), te);
+    // the selected tile: choose a file, its strength, a typed path
+    let sel = st.img_sel;
+    let tile_c = st.img_tiles.iter().find(|(s, _)| *s == sel).map(|(_, r)| r.center()).unwrap_or(c.center());
+    let py = c.top() + 20.0 + (th + 6.0) * 4.0 + 6.0;
+    pa.text(Pos2::new(x2, py + 11.0), Align2::LEFT_CENTER, format!("SELECTED: {}", theme::img_label(sel)), mono(10.0), WHITE());
+    file_btn(ui, st, Rect::from_min_size(Pos2::new(x2 + w2 - 300.0, py), Vec2::new(150.0, 22.0)), "CHOOSE FILE...", "Pick a PNG / JPG for the selected tile", &format!("Picture for {}", theme::img_label(sel)), crate::pick::PICTURES, false, tile_c);
+    let others: Vec<usize> = [PIC::OSC_A, PIC::OSC_B, PIC::OSC_C].iter().copied().filter(|x| *x != sel).collect();
+    let is_osc = matches!(sel, PIC::OSC_A | PIC::OSC_B | PIC::OSC_C);
+    ui.set_opacity(if is_osc && texture(sel).is_some() { 1.0 } else { 0.4 });
+    if pill_tip(ui, Rect::from_min_size(Pos2::new(x2 + w2 - 144.0, py), Vec2::new(144.0, 22.0)), "COPY TO B / C / A", false, "Use this oscillator's picture for the other two oscillators too") && is_osc {
+        if let Some(img) = st.ucfg.imgs.iter().find(|(s, _)| *s == sel).map(|(_, i)| i.clone()) {
+            for o in others {
+                st.ucfg.imgs.retain(|(s, _)| *s != o);
+                st.ucfg.imgs.push((o, img.clone()));
+            }
+            st.tex_gen += 1;
+            st.cfg_dirty = true;
+        }
+    }
+    ui.set_opacity(1.0);
+    theme_slider(ui, Rect::from_min_size(Pos2::new(x2, py + 30.0), Vec2::new(w2, 22.0)), if sel == PIC::WINDOW { "THIS PICTURE (OPACITY)" } else { "THIS PICTURE" }, &mut pal.pic_a[sel], 0.0, 1.0, 1.0, "Strength of the selected picture on its own");
+    if pal != st.ucfg.pal {
+        st.ucfg.pal = pal;
+        st.cfg_dirty = true;
+    }
+    pa.text(Pos2::new(x2, py + 64.0), Align2::LEFT_CENTER, "PATH", mono(9.5), DIM());
+    let te = egui::TextEdit::singleline(&mut st.img_path).hint_text("or type a path: /home/me/Pictures/sky.jpg").font(mono(10.0)).margin(egui::Margin::symmetric(6, 3));
+    let ter = ui.put(Rect::from_min_size(Pos2::new(x2 + 40.0, py + 53.0), Vec2::new(w2 - 40.0 - 74.0, 22.0)), te);
     let enter = ter.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-    if pill_tip(ui, Rect::from_min_size(Pos2::new(x2 + w2 - 92.0, py), Vec2::new(92.0, 22.0)), &format!("LOAD > {}", if st.img_sel == K::BG { "WIN" } else { &theme::SLOTS[st.img_sel].0[..3.min(theme::SLOTS[st.img_sel].0.len())] }), false, "Load the picture of the path into the selected tile") || enter {
+    if pill_tip(ui, Rect::from_min_size(Pos2::new(x2 + w2 - 68.0, py + 53.0), Vec2::new(68.0, 22.0)), "LOAD", false, "Load the picture of the typed path into the selected tile") || enter {
         let pth = st.img_path.trim().trim_matches('"').trim_matches('\'').to_string();
         let pth = pth.strip_prefix("file://").unwrap_or(&pth).to_string();
-        let sel = st.img_sel;
         match set_theme_img(st, sel, std::path::Path::new(&pth)) {
             Ok(()) => st.say(now, format!("picture for {} loaded", theme::img_label(sel))),
             Err(e) => st.say(now, format!("picture failed: {e}")),
         }
     }
     pa.text(
-        Pos2::new(x2, py + 32.0),
+        Pos2::new(x2, py + 86.0),
         Align2::LEFT_TOP,
-        "WINDOW fills the whole background; lower PANEL OPACITY to let it\nshine through the modules. The other tiles sit inside their modules\n(OSC = all three oscillators). Dropping a picture straight onto a\nmodule of the OSC page works too. Big pictures are scaled down.",
+        "WINDOW fills the whole background (lower PANEL OPACITY to let it show\nthrough). Every module has its own picture: each oscillator, the filter,\nenvelopes, LFOs, macros and every page. Dropping a picture straight onto\na module of the OSC page works too. Big pictures are scaled down.",
         mono(8.5),
         DIM(),
     );
@@ -5146,5 +5241,22 @@ mod filter_menu_tests {
             let c = menu.matches(&format!("F::{v},")).count() + menu.matches(&format!("F::{v}]")).count();
             assert_eq!(c, 1, "{n} ({v}) appears {c} times in the filter menu");
         }
+    }
+}
+
+/// What the answer of a file window is for.
+pub enum PickFor {
+    /// handle the chosen files as if dropped at this point
+    At(Pos2),
+    /// write the current theme to the chosen file
+    ExportTheme,
+}
+
+/// A small "open file" button: opens the system file window; the chosen files are then handled
+/// like files dropped at `at` (so they go to the same place a drop there would).
+fn file_btn(ui: &mut Ui, st: &mut Gui, r: Rect, label: &str, tip: &str, title: &str, filter: crate::pick::Filter, multi: bool, at: Pos2) {
+    let busy = st.pick.is_some();
+    if pill_tip(ui, r, if busy { "..." } else { label }, false, tip) && !busy {
+        st.pick = Some((crate::pick::open(title, filter, multi), PickFor::At(at)));
     }
 }

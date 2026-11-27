@@ -1,7 +1,7 @@
 [package]
 name = "nyashksynth"
 description = "SyntiTyzer - wavetable synthesizer"
-version = "1.1.0"
+version = "1.1.1"
 edition.workspace = true
 license.workspace = true
 
@@ -14,6 +14,10 @@ nih_plug_egui = { path = "../../vendor/nih_plug_egui" }
 # background images for themes (pure Rust decoders)
 png = "0.17"
 jpeg-decoder = { version = "0.3", default-features = false }
+
+# native file windows (Linux uses zenity / kdialog instead, see pick.rs)
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+rfd = { version = "0.15", default-features = false }
 
 [features]
 standalone = ["nih_plug/standalone"]
