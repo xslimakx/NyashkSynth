@@ -1,4 +1,4 @@
-# NyashkSynth manual
+# SyntiTyzer manual (formerly NyashkSynth)
 
 Quick visual guide. Every numbered badge in a picture is explained under it. The look is monochrome (black, white and silver-grey); every control has the same dark field style, and the header uses icon buttons: floppy disk = save preset, plug = MIDI learn, bin = clear MIDI bindings, arrows = previous / next preset, curved arrows = undo / redo.
 
@@ -219,9 +219,9 @@ The undo and redo arrows (header, or Ctrl+Z / Ctrl+Y) step through your paramete
 | What | Where | Delete? |
 |---|---|---|
 | 150 factory presets | built into the plugin (not files) | no, but **HIDE** removes one from the browser and **RESTORE n** brings them all back (the list of hidden ones is `hidden.txt` in the data folder) |
-| Your presets | `~/.config/NyashkSynth/Presets/<Category>/<Name>.nyp` (Windows `%APPDATA%\NyashkSynth\Presets`) | yes, **DELETE** in the browser or delete the file |
-| Packs | `.../NyashkSynth/Packs/*.nypack` | yes, plain files |
-| Tables, noises, `.sfz` | `.../NyashkSynth/Tables`, `.../Noises` | yes, plain files |
+| Your presets | `~/.config/SyntiTyzer/Presets/<Category>/<Name>.nyp` (Windows `%APPDATA%\SyntiTyzer\Presets`) | yes, **DELETE** in the browser or delete the file |
+| Packs | `.../SyntiTyzer/Packs/*.nypack` | yes, plain files |
+| Tables, noises, `.sfz` | `.../SyntiTyzer/Tables`, `.../Noises` | yes, plain files |
 
 
 ## What is new in 1.0.4

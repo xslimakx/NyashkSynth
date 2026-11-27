@@ -4,12 +4,12 @@
 
 SyntiTyzer (formerly NyashkSynth) is a Serum-style wavetable synthesizer VST3 plugin.
 
-[![Build](https://github.com/xslimakx/NyashkSynth/actions/workflows/build.yml/badge.svg)](https://github.com/xslimakx/NyashkSynth/actions/workflows/build.yml)
+[![Build](https://github.com/xslimakx/SyntiTyzer/actions/workflows/build.yml/badge.svg)](https://github.com/xslimakx/SyntiTyzer/actions/workflows/build.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 ![Format](https://img.shields.io/badge/format-VST3-8a2be2)
 ![Rust](https://img.shields.io/badge/made%20with-Rust-orange?logo=rust)
 
-[**Download**](https://github.com/xslimakx/NyashkSynth/releases/latest)
+[**Download**](https://github.com/xslimakx/SyntiTyzer/releases/latest)
 
 </div>
 
@@ -66,7 +66,7 @@ User data: `~/.config/SyntiTyzer/{Presets,Tables,Noises,Packs,Themes}` (Windows:
 
 ## Installation
 
-Download the archive for your OS from [Releases](https://github.com/xslimakx/NyashkSynth/releases/latest), unzip it and copy `SyntiTyzer.vst3` into your VST3 folder (remove an old `NyashkSynth.vst3`: both are the same plugin):
+Download the archive for your OS from [Releases](https://github.com/xslimakx/SyntiTyzer/releases/latest), unzip it and copy `SyntiTyzer.vst3` into your VST3 folder (remove an old `NyashkSynth.vst3`: both are the same plugin):
 
 | OS | Path |
 |---|---|
@@ -79,7 +79,7 @@ Download the archive for your OS from [Releases](https://github.com/xslimakx/Nya
 Needs [Rust](https://rustup.rs/) (stable). Linux: `libasound2-dev libgl-dev libx11-xcb-dev libxcb1-dev libxcb-icccm4-dev libxcursor-dev libxkbcommon-dev libxcb-dri2-0-dev`.
 
 ```bash
-git clone https://github.com/xslimakx/NyashkSynth.git
+git clone https://github.com/xslimakx/SyntiTyzer.git
 cd NyashkSynth
 cargo xtask bundle -p nyashksynth --release   # -> target/bundled/SyntiTyzer.vst3
 cargo run --release -p nyashksynth --features standalone   # standalone test app
